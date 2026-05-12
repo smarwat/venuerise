@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "venuerise",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "/Users/yusufmarwat/venuerise/start-dev.sh"
+      ],
+      "port": 3100
+    }
+  ]
+}

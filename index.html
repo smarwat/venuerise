@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VenueRise — Fill Your Calendar. Grow Your Venue.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;0,700;1,300;1,400;1,600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:        #1A7FFF;
+      --blue-light:  #5BA3FF;
+      --blue-pale:   #A8CAFF;
+      --blue-dim:    #1055CC;
+      --blue-deep:   #0A3D9E;
+      --white:       #FFFFFF;
+      --off-white:   #F6F8FF;
+      --off-white-2: #EBF1FF;
+      --off-white-3: #DDE8FF;
+      --ink:         #0D1628;
+      --ink-2:       #192540;
+      --ink-muted:   #4A5878;
+      --navy:        #050E24;
+      --navy-2:      #0A1832;
+      --border-light: rgba(26,127,255,0.14);
+      --border-dark:  rgba(26,127,255,0.22);
+      --glow:        rgba(26,127,255,0.4);
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--white);
+      color: var(--ink);
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--off-white); }
+    ::-webkit-scrollbar-thumb { background: var(--blue); border-radius: 2px; }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+      padding: 0 6%; height: 72px;
+      display: flex; align-items: center; justify-content: space-between;
+      transition: all 0.5s cubic-bezier(0.4,0,0.2,1);
+    }
+    nav.scrolled {
+      background: rgba(255,255,255,0.94);
+      backdrop-filter: blur(24px);
+      border-bottom: 1px solid var(--border-light);
+      box-shadow: 0 4px 40px rgba(26,127,255,0.07);
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: 0.65rem;
+      text-decoration: none; transition: opacity 0.2s;
+    }
+    .nav-logo:hover { opacity: 0.85; }
+    .nav-logo-icon {
+      width: 34px; height: 30px; color: white;
+      transition: color 0.4s;
+    }
+    nav.scrolled .nav-logo-icon { color: var(--blue); }
+    .nav-logo-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.65rem; font-weight: 700;
+      color: white; letter-spacing: 0.01em;
+      transition: color 0.4s;
+    }
+    nav.scrolled .nav-logo-text { color: var(--ink); }
+    .nav-logo-text span { color: var(--blue-light); }
+    nav.scrolled .nav-logo-text span { color: var(--blue); }
+
+    .nav-links { display: flex; gap: 2.5rem; list-style: none; align-items: center; }
+    .nav-links a {
+      color: rgba(255,255,255,0.75); text-decoration: none;
+      font-size: 0.85rem; font-weight: 500;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      transition: color 0.2s;
+    }
+    nav.scrolled .nav-links a { color: var(--ink-muted); }
+    .nav-links a:hover { color: var(--blue-light) !important; }
+    .nav-cta {
+      background: rgba(255,255,255,0.12) !important;
+      border: 1px solid rgba(255,255,255,0.28) !important;
+      color: white !important; padding: 0.55rem 1.4rem;
+      border-radius: 100px; font-weight: 600 !important;
+      backdrop-filter: blur(8px); transition: all 0.3s !important;
+    }
+    nav.scrolled .nav-cta {
+      background: var(--blue) !important;
+      border-color: var(--blue) !important; color: white !important;
+    }
+    .nav-cta:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px var(--glow) !important;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      position: relative; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 8rem 6% 5rem; overflow: hidden;
+      background: linear-gradient(150deg, #020B1E 0%, #041436 30%, #071E52 60%, #020B1E 100%);
+    }
+
+    /* Animated orbs */
+    .orb {
+      position: absolute; border-radius: 50%;
+      filter: blur(80px); pointer-events: none;
+      animation: orbFloat 14s ease-in-out infinite;
+    }
+    .orb-1 {
+      width: 650px; height: 650px; opacity: 0.45;
+      background: radial-gradient(circle, rgba(26,127,255,0.5) 0%, transparent 70%);
+      top: -20%; left: -15%; animation-duration: 16s;
+    }
+    .orb-2 {
+      width: 500px; height: 500px; opacity: 0.3;
+      background: radial-gradient(circle, rgba(91,163,255,0.4) 0%, transparent 70%);
+      top: 10%; right: -10%; animation-duration: 20s; animation-delay: -7s;
+    }
+    .orb-3 {
+      width: 400px; height: 400px; opacity: 0.25;
+      background: radial-gradient(circle, rgba(168,202,255,0.3) 0%, transparent 70%);
+      bottom: 5%; left: 25%; animation-duration: 18s; animation-delay: -4s;
+    }
+    .orb-4 {
+      width: 300px; height: 300px; opacity: 0.2;
+      background: radial-gradient(circle, rgba(16,85,204,0.5) 0%, transparent 70%);
+      top: 55%; left: 5%; animation-duration: 22s; animation-delay: -10s;
+    }
+    @keyframes orbFloat {
+      0%,100% { transform: translate(0,0) scale(1); }
+      25%      { transform: translate(35px,-45px) scale(1.06); }
+      50%      { transform: translate(-25px,35px) scale(0.94); }
+      75%      { transform: translate(45px,20px) scale(1.03); }
+    }
+
+    /* Grid */
+    .hero-grid {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(26,127,255,0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(26,127,255,0.07) 1px, transparent 1px);
+      background-size: 70px 70px;
+      mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 20%, transparent 75%);
+    }
+
+    /* Particles */
+    #particles { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+
+    /* ── LIGHT STREAKS ── */
+    .light-streaks {
+      position: absolute; inset: 0; overflow: hidden;
+      pointer-events: none; z-index: 2;
+    }
+    .streak {
+      position: absolute;
+      left: -80%;
+      height: 1px;
+      border-radius: 100%;
+      animation: streakFly linear infinite;
+      opacity: 0;
+    }
+    /* Core thin line */
+    .streak::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(168,202,255,0.0) 20%,
+        rgba(168,202,255,0.9) 45%,
+        #ffffff 50%,
+        rgba(168,202,255,0.9) 55%,
+        rgba(168,202,255,0.0) 80%,
+        transparent 100%
+      );
+      filter: blur(0.3px);
+    }
+    /* Glow halo */
+    .streak::after {
+      content: '';
+      position: absolute;
+      top: -3px; left: 0; right: 0; height: 7px;
+      background: inherit;
+      filter: blur(5px);
+      opacity: 0.6;
+    }
+
+    @keyframes streakFly {
+      0%   { transform: translateX(0)    scaleX(0.3); opacity: 0; }
+      5%   { opacity: 1; }
+      95%  { opacity: 1; }
+      100% { transform: translateX(250vw) scaleX(1.2); opacity: 0; }
+    }
+
+    /* Each streak: different position, size, timing, color tint */
+    .streak-1 {
+      top: 22%; width: 45vw;
+      background: linear-gradient(90deg, transparent, rgba(91,163,255,0.95), #fff, rgba(91,163,255,0.95), transparent);
+      box-shadow: 0 0 12px 3px rgba(91,163,255,0.5), 0 0 40px 8px rgba(91,163,255,0.2);
+      animation-duration: 3.4s; animation-delay: 0s;
+      transform: rotate(-0.3deg);
+    }
+    .streak-2 {
+      top: 38%; width: 30vw;
+      background: linear-gradient(90deg, transparent, rgba(168,202,255,0.8), #fff, rgba(168,202,255,0.8), transparent);
+      box-shadow: 0 0 8px 2px rgba(168,202,255,0.5), 0 0 28px 6px rgba(168,202,255,0.15);
+      animation-duration: 4.1s; animation-delay: 0.8s;
+      transform: rotate(0.2deg);
+    }
+    .streak-3 {
+      top: 55%; width: 60vw;
+      background: linear-gradient(90deg, transparent, rgba(26,127,255,0.7), rgba(168,202,255,0.95), #fff, rgba(168,202,255,0.95), rgba(26,127,255,0.7), transparent);
+      box-shadow: 0 0 16px 4px rgba(26,127,255,0.4), 0 0 50px 12px rgba(26,127,255,0.15);
+      animation-duration: 2.8s; animation-delay: 1.6s;
+      transform: rotate(-0.5deg);
+    }
+    .streak-4 {
+      top: 30%; width: 20vw;
+      background: linear-gradient(90deg, transparent, rgba(168,202,255,0.6), #fff, rgba(168,202,255,0.6), transparent);
+      box-shadow: 0 0 6px 2px rgba(168,202,255,0.4);
+      animation-duration: 5.2s; animation-delay: 2.3s;
+      transform: rotate(0.4deg);
+    }
+    .streak-5 {
+      top: 68%; width: 38vw;
+      background: linear-gradient(90deg, transparent, rgba(91,163,255,0.85), #fff, rgba(91,163,255,0.85), transparent);
+      box-shadow: 0 0 10px 3px rgba(91,163,255,0.45), 0 0 35px 8px rgba(91,163,255,0.15);
+      animation-duration: 3.7s; animation-delay: 3.1s;
+      transform: rotate(-0.2deg);
+    }
+    .streak-6 {
+      top: 15%; width: 25vw;
+      background: linear-gradient(90deg, transparent, rgba(168,202,255,0.7), #fff, rgba(168,202,255,0.7), transparent);
+      box-shadow: 0 0 8px 2px rgba(168,202,255,0.4);
+      animation-duration: 4.8s; animation-delay: 0.4s;
+      transform: rotate(0.1deg);
+    }
+    .streak-7 {
+      top: 48%; width: 50vw;
+      background: linear-gradient(90deg, transparent, rgba(91,163,255,0.6), rgba(200,220,255,0.9), #fff, rgba(200,220,255,0.9), rgba(91,163,255,0.6), transparent);
+      box-shadow: 0 0 14px 4px rgba(91,163,255,0.35), 0 0 45px 10px rgba(91,163,255,0.1);
+      animation-duration: 3.1s; animation-delay: 2.0s;
+      transform: rotate(0.3deg);
+    }
+    .streak-8 {
+      top: 77%; width: 18vw;
+      background: linear-gradient(90deg, transparent, rgba(168,202,255,0.55), #fff, rgba(168,202,255,0.55), transparent);
+      box-shadow: 0 0 5px 1px rgba(168,202,255,0.3);
+      animation-duration: 5.8s; animation-delay: 1.1s;
+      transform: rotate(-0.1deg);
+    }
+
+    .hero-content { position: relative; z-index: 2; max-width: 960px; }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 0.6rem;
+      background: rgba(26,127,255,0.15);
+      border: 1px solid rgba(91,163,255,0.4);
+      border-radius: 100px; padding: 0.45rem 1.2rem;
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--blue-pale); margin-bottom: 2rem;
+      animation: badgePulse 3s ease-in-out infinite;
+      backdrop-filter: blur(8px);
+    }
+    .hero-badge-dot {
+      width: 7px; height: 7px; background: var(--blue-light);
+      border-radius: 50%; animation: dotPulse 2s ease-in-out infinite;
+    }
+    @keyframes dotPulse {
+      0%,100% { opacity:1; transform:scale(1); box-shadow: 0 0 0 0 rgba(91,163,255,0.5); }
+      50%      { opacity:0.7; transform:scale(0.85); box-shadow: 0 0 0 6px rgba(91,163,255,0); }
+    }
+    @keyframes badgePulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(26,127,255,0.1); }
+      50%      { box-shadow: 0 0 24px 6px rgba(26,127,255,0.18); }
+    }
+
+    .hero h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(3.2rem, 7.5vw, 7rem);
+      font-weight: 700; line-height: 1.02;
+      color: #fff; letter-spacing: -0.01em; margin-bottom: 1.5rem;
+    }
+    .shimmer-text {
+      font-style: italic;
+      background: linear-gradient(120deg, #A8CAFF 0%, #5BA3FF 25%, #1A7FFF 50%, #5BA3FF 75%, #A8CAFF 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      animation: shimmer 4s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 200% center; } }
+
+    .hero-sub {
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      color: rgba(255,255,255,0.58); max-width: 620px;
+      margin: 0 auto 2.8rem; font-weight: 300; line-height: 1.75;
+    }
+    .hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--blue-light) 0%, var(--blue) 50%, var(--blue-dim) 100%);
+      color: #fff; padding: 1rem 2.2rem; border-radius: 100px;
+      font-weight: 700; font-size: 0.95rem; text-decoration: none;
+      letter-spacing: 0.02em; transition: all 0.4s cubic-bezier(0.4,0,0.2,1);
+      box-shadow: 0 4px 30px rgba(26,127,255,0.45), 0 0 0 0 rgba(26,127,255,0.2);
+      position: relative; overflow: hidden;
+    }
+    .btn-primary::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.22), transparent);
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .btn-primary:hover {
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 14px 44px rgba(26,127,255,0.55), 0 0 0 8px rgba(26,127,255,0.1);
+    }
+    .btn-primary:hover::after { opacity: 1; }
+
+    .btn-ghost {
+      background: rgba(255,255,255,0.08); backdrop-filter: blur(12px);
+      color: rgba(255,255,255,0.85); padding: 1rem 2.2rem;
+      border-radius: 100px; font-weight: 500; font-size: 0.95rem;
+      text-decoration: none; border: 1px solid rgba(255,255,255,0.18);
+      transition: all 0.4s; display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+    .btn-ghost:hover {
+      background: rgba(26,127,255,0.15); border-color: rgba(91,163,255,0.5);
+      transform: translateY(-3px); color: #fff;
+    }
+
+    .hero-scroll {
+      position: absolute; bottom: 2.5rem; left: 50%; transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+      color: rgba(255,255,255,0.3); font-size: 0.7rem; letter-spacing: 0.15em;
+      text-transform: uppercase; z-index: 2;
+    }
+    .scroll-mouse {
+      width: 22px; height: 36px;
+      border: 1px solid rgba(255,255,255,0.22); border-radius: 11px;
+      display: flex; justify-content: center; padding-top: 6px;
+    }
+    .scroll-wheel {
+      width: 3px; height: 8px;
+      background: rgba(91,163,255,0.7); border-radius: 2px;
+      animation: scrollWheel 2s ease-in-out infinite;
+    }
+    @keyframes scrollWheel {
+      0%   { transform: translateY(0); opacity: 1; }
+      80%  { transform: translateY(12px); opacity: 0; }
+      81%  { transform: translateY(0); opacity: 0; }
+      100% { opacity: 1; }
+    }
+
+    /* ── LOGOS ── */
+    .logos-bar {
+      background: var(--off-white);
+      border-bottom: 1px solid var(--border-light);
+      padding: 2.5rem 6%; overflow: hidden;
+    }
+    .logos-label {
+      text-align: center; font-size: 0.72rem; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--ink-muted); margin-bottom: 1.8rem;
+    }
+    .logos-track-wrap { overflow: hidden; position: relative; }
+    .logos-track-wrap::before, .logos-track-wrap::after {
+      content: ''; position: absolute; top: 0; bottom: 0; width: 80px; z-index: 1;
+    }
+    .logos-track-wrap::before { left: 0; background: linear-gradient(to right, var(--off-white), transparent); }
+    .logos-track-wrap::after  { right: 0; background: linear-gradient(to left, var(--off-white), transparent); }
+    .logos-track {
+      display: flex; gap: 5rem; align-items: center; width: max-content;
+      animation: logoScroll 26s linear infinite;
+    }
+    @keyframes logoScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    .logo-item {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.05rem; font-weight: 600;
+      color: var(--ink-muted); letter-spacing: 0.05em; white-space: nowrap;
+      opacity: 0.45; transition: opacity 0.3s;
+    }
+    .logo-item:hover { opacity: 0.85; }
+
+    /* ── STATS ── */
+    .stats-section { background: var(--navy); padding: 5rem 6%; }
+    .stats-grid {
+      max-width: 1100px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(4,1fr);
+      border: 1px solid rgba(26,127,255,0.2); border-radius: 20px; overflow: hidden;
+      background: rgba(26,127,255,0.04);
+    }
+    .stat-item {
+      padding: 3rem 2rem; text-align: center;
+      border-right: 1px solid rgba(26,127,255,0.12);
+      transition: background 0.4s; position: relative; overflow: hidden;
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-item::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(circle at 50% 0%, rgba(26,127,255,0.1) 0%, transparent 70%);
+      opacity: 0; transition: opacity 0.4s;
+    }
+    .stat-item:hover::before { opacity: 1; }
+    .stat-number {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 3.8rem; font-weight: 700;
+      color: var(--blue-light); line-height: 1; margin-bottom: 0.4rem; display: block;
+    }
+    .stat-label { font-size: 0.78rem; color: rgba(255,255,255,0.38); text-transform: uppercase; letter-spacing: 0.12em; }
+
+    /* ── SECTIONS ── */
+    section { padding: 8rem 6%; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .section-tag {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.22em;
+      text-transform: uppercase; color: var(--blue); margin-bottom: 1rem;
+      display: flex; align-items: center; gap: 0.8rem;
+    }
+    .section-tag::before { content: ''; width: 28px; height: 1px; background: var(--blue); }
+    .section-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2.4rem, 4.5vw, 3.8rem);
+      font-weight: 700; line-height: 1.1; margin-bottom: 1.2rem; color: var(--ink);
+    }
+    .section-title em { font-style: italic; color: var(--blue); }
+    .section-sub { font-size: 1.02rem; color: var(--ink-muted); max-width: 520px; line-height: 1.75; font-weight: 300; }
+
+    /* ── PROBLEM ── */
+    .problem { background: var(--white); }
+    .problem-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 6rem; align-items: center; }
+    .problem-list { list-style: none; margin-top: 2.5rem; display: flex; flex-direction: column; gap: 0.8rem; }
+    .problem-list li {
+      display: flex; align-items: flex-start; gap: 1rem;
+      padding: 1.1rem 1.5rem; background: var(--off-white);
+      border-radius: 12px; border: 1px solid var(--border-light);
+      font-size: 0.93rem; color: var(--ink-muted);
+      transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
+    }
+    .problem-list li:hover {
+      border-color: rgba(26,127,255,0.35); color: var(--ink);
+      transform: translateX(6px); box-shadow: 0 4px 20px rgba(26,127,255,0.08);
+    }
+    .problem-list li .x { color: #E05757; font-weight: 700; flex-shrink: 0; }
+
+    .before-after {
+      background: white; border: 1px solid var(--border-light);
+      border-radius: 24px; overflow: hidden;
+      box-shadow: 0 20px 60px rgba(26,127,255,0.07), 0 4px 20px rgba(0,0,0,0.04);
+    }
+    .ba-header { display: grid; grid-template-columns: 1fr 1fr; }
+    .ba-col {
+      padding: 2rem; border-bottom: 1px solid var(--border-light);
+    }
+    .ba-col:first-child { border-right: 1px solid var(--border-light); }
+    .ba-col-label { font-size: 0.72rem; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; margin-bottom: 0.5rem; }
+    .ba-col:first-child .ba-col-label { color: #E05757; }
+    .ba-col:last-child  .ba-col-label { color: var(--blue); }
+    .ba-big { font-family: 'Cormorant Garamond', serif; font-size: 2.8rem; font-weight: 700; line-height: 1; }
+    .ba-col:first-child .ba-big { color: #E05757; }
+    .ba-col:last-child  .ba-big { color: var(--blue); }
+    .ba-sub { font-size: 0.75rem; color: var(--ink-muted); margin-top: 0.3rem; }
+    .ba-metrics { padding: 2rem; display: flex; flex-direction: column; gap: 1.2rem; }
+    .ba-metric-row { display: flex; flex-direction: column; gap: 0.4rem; }
+    .ba-metric-label { font-size: 0.75rem; color: var(--ink-muted); display: flex; justify-content: space-between; }
+    .ba-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+    .ba-bar-wrap { height: 8px; background: var(--off-white-2); border-radius: 4px; overflow: hidden; }
+    .ba-bar { height: 100%; border-radius: 4px; }
+    .ba-bar.bad  { background: rgba(224,87,87,0.4); }
+    .ba-bar.good { background: linear-gradient(90deg, var(--blue-dim), var(--blue-light)); }
+
+    /* ── SERVICES ── */
+    .services { background: var(--off-white); }
+    .services-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1.5rem; margin-top: 4rem; }
+    .service-card {
+      background: white; border: 1px solid var(--border-light);
+      border-radius: 20px; padding: 2.5rem 2rem;
+      transition: all 0.4s cubic-bezier(0.4,0,0.2,1);
+      position: relative; overflow: hidden;
+    }
+    .service-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--blue-dim), var(--blue-light));
+      transform: scaleX(0); transform-origin: left;
+      transition: transform 0.4s cubic-bezier(0.4,0,0.2,1);
+    }
+    .service-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 24px 60px rgba(26,127,255,0.12), 0 4px 20px rgba(0,0,0,0.05);
+      border-color: rgba(26,127,255,0.3);
+    }
+    .service-card:hover::before { transform: scaleX(1); }
+    .service-icon {
+      width: 52px; height: 52px;
+      background: linear-gradient(135deg, var(--off-white), var(--off-white-2));
+      border: 1px solid var(--border-light);
+      border-radius: 14px; display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem; margin-bottom: 1.5rem;
+      transition: transform 0.3s; box-shadow: 0 2px 8px rgba(26,127,255,0.07);
+    }
+    .service-card:hover .service-icon { transform: scale(1.1) rotate(-5deg); }
+    .service-card h3 { font-family: 'Cormorant Garamond', serif; font-size: 1.45rem; font-weight: 600; margin-bottom: 0.7rem; color: var(--ink); }
+    .service-card p { font-size: 0.875rem; color: var(--ink-muted); line-height: 1.7; }
+    .service-card ul { list-style: none; margin-top: 1.2rem; display: flex; flex-direction: column; gap: 0.4rem; }
+    .service-card ul li { font-size: 0.8rem; color: var(--ink-muted); display: flex; align-items: center; gap: 0.5rem; }
+    .service-card ul li::before { content: '→'; color: var(--blue); flex-shrink: 0; }
+
+    /* ── PROCESS ── */
+    .process { background: var(--navy); position: relative; overflow: hidden; }
+    .process::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(26,127,255,0.1) 0%, transparent 60%);
+    }
+    .process .section-title { color: white; }
+    .process .section-tag { color: var(--blue-light); }
+    .process .section-tag::before { background: var(--blue-light); }
+    .process .section-sub { color: rgba(255,255,255,0.45); }
+    .process-steps { display: grid; grid-template-columns: repeat(4,1fr); gap: 0; margin-top: 5rem; position: relative; }
+    .process-line {
+      position: absolute; top: 2.5rem; left: 12.5%; right: 12.5%;
+      height: 1px; z-index: 0; overflow: hidden;
+    }
+    .process-line-fill {
+      height: 100%;
+      background: linear-gradient(90deg, transparent, var(--blue-dim), var(--blue), var(--blue-light), var(--blue), var(--blue-dim), transparent);
+      background-size: 200% 100%;
+      animation: linePulse 3s linear infinite;
+    }
+    @keyframes linePulse { from { background-position: -200% center; } to { background-position: 200% center; } }
+
+    .step { text-align: center; padding: 0 1.5rem; position: relative; z-index: 1; }
+    .step-num {
+      width: 52px; height: 52px; border-radius: 50%;
+      background: rgba(26,127,255,0.1);
+      border: 1px solid rgba(26,127,255,0.3);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cormorant Garamond', serif; font-size: 1.4rem; font-weight: 700;
+      color: var(--blue-light); margin: 0 auto 1.8rem;
+      transition: all 0.4s; position: relative;
+    }
+    .step-num::after {
+      content: ''; position: absolute; inset: -4px; border-radius: 50%;
+      border: 1px solid rgba(26,127,255,0.15);
+      animation: stepPing 3s ease-in-out infinite;
+    }
+    @keyframes stepPing {
+      0%,100% { transform: scale(1); opacity: 0.5; }
+      50%      { transform: scale(1.3); opacity: 0; }
+    }
+    .step:hover .step-num {
+      background: rgba(26,127,255,0.2); border-color: var(--blue);
+      transform: scale(1.12); box-shadow: 0 0 32px rgba(26,127,255,0.35);
+    }
+    .step h3 { font-family: 'Cormorant Garamond', serif; font-size: 1.25rem; font-weight: 600; margin-bottom: 0.7rem; color: white; }
+    .step p { font-size: 0.83rem; color: rgba(255,255,255,0.42); line-height: 1.65; }
+
+    /* ── RESULTS ── */
+    .results { background: var(--white); }
+    .results-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1.5rem; margin-top: 4rem; }
+    .result-card {
+      background: white; border: 1px solid var(--border-light);
+      border-radius: 20px; padding: 2rem;
+      transition: all 0.4s cubic-bezier(0.4,0,0.2,1); position: relative; overflow: hidden;
+    }
+    .result-card::after {
+      content: '"'; position: absolute; top: -0.5rem; right: 1.5rem;
+      font-family: 'Cormorant Garamond', serif; font-size: 7rem;
+      color: rgba(26,127,255,0.05); line-height: 1; pointer-events: none;
+    }
+    .result-card:hover {
+      transform: translateY(-6px); border-color: rgba(26,127,255,0.35);
+      box-shadow: 0 24px 60px rgba(26,127,255,0.1), 0 4px 20px rgba(0,0,0,0.04);
+    }
+    .result-stars { color: var(--blue); font-size: 0.9rem; letter-spacing: 0.05em; margin-bottom: 1rem; }
+    .result-metric {
+      display: flex; margin-bottom: 1.5rem;
+      border: 1px solid var(--border-light); border-radius: 12px; overflow: hidden;
+    }
+    .metric-item {
+      text-align: center; flex: 1; padding: 1rem 0.5rem;
+      border-right: 1px solid var(--border-light); background: var(--off-white);
+    }
+    .metric-item:last-child { border-right: none; }
+    .metric-num { font-family: 'Cormorant Garamond', serif; font-size: 1.8rem; font-weight: 700; color: var(--blue); line-height: 1; }
+    .metric-label { font-size: 0.65rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.2rem; }
+    .result-quote { font-size: 0.9rem; color: var(--ink-muted); line-height: 1.7; margin-bottom: 1.5rem; font-style: italic; }
+    .result-author { display: flex; align-items: center; gap: 0.8rem; }
+    .author-avatar {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--blue-dim), var(--off-white-2));
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Cormorant Garamond', serif; font-size: 1.1rem; font-weight: 700;
+      color: var(--blue-light); border: 1px solid var(--border-light); flex-shrink: 0;
+    }
+    .author-name { font-size: 0.9rem; font-weight: 600; color: var(--ink); }
+    .author-venue { font-size: 0.75rem; color: var(--ink-muted); }
+
+    /* ── WHY ── */
+    .why { background: var(--off-white); }
+    .why-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 6rem; align-items: center; }
+    .why-points { display: flex; flex-direction: column; gap: 1.5rem; margin-top: 2.5rem; }
+    .why-point {
+      display: flex; gap: 1.2rem; align-items: flex-start;
+      padding: 1.5rem; background: white; border: 1px solid var(--border-light);
+      border-radius: 16px; transition: all 0.35s;
+    }
+    .why-point:hover {
+      border-color: rgba(26,127,255,0.35); transform: translateX(4px);
+      box-shadow: 0 8px 30px rgba(26,127,255,0.08);
+    }
+    .why-icon {
+      width: 46px; height: 46px; border-radius: 12px;
+      background: linear-gradient(135deg, var(--off-white), var(--off-white-2));
+      border: 1px solid var(--border-light);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem; flex-shrink: 0;
+    }
+    .why-text h4 { font-size: 1rem; font-weight: 600; margin-bottom: 0.3rem; color: var(--ink); }
+    .why-text p { font-size: 0.85rem; color: var(--ink-muted); line-height: 1.65; }
+
+    /* Dashboard */
+    .dashboard-mock {
+      background: var(--navy); border-radius: 24px; padding: 1.5rem;
+      box-shadow: 0 30px 80px rgba(5,14,36,0.25), 0 4px 20px rgba(26,127,255,0.15);
+      border: 1px solid rgba(26,127,255,0.18); position: relative; overflow: hidden;
+    }
+    .dashboard-mock::before {
+      content: ''; position: absolute; top: -50%; left: -30%;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(26,127,255,0.07) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .dash-header {
+      display: flex; align-items: center; gap: 0.5rem;
+      margin-bottom: 1.5rem; padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(26,127,255,0.1);
+    }
+    .dash-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dash-title { font-size: 0.78rem; color: rgba(255,255,255,0.28); margin-left: auto; }
+    .dash-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 0.8rem; margin-bottom: 1.5rem; }
+    .dash-stat {
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(26,127,255,0.12);
+      border-radius: 12px; padding: 1rem; text-align: center;
+    }
+    .dash-stat-num { font-family: 'Cormorant Garamond', serif; font-size: 1.9rem; font-weight: 700; color: var(--blue-light); line-height: 1; }
+    .dash-stat-label { font-size: 0.62rem; color: rgba(255,255,255,0.28); margin-top: 0.3rem; text-transform: uppercase; letter-spacing: 0.08em; }
+    .dash-graph-label { font-size: 0.68rem; color: rgba(255,255,255,0.28); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.8rem; }
+    .dash-graph { display: flex; align-items: flex-end; gap: 0.35rem; height: 80px; }
+    .g-bar {
+      flex: 1; border-radius: 3px 3px 0 0;
+      background: linear-gradient(to top, var(--blue-dim), var(--blue-light));
+      transition: all 0.3s; opacity: 0.6;
+      animation: barGrow 1.5s cubic-bezier(0.4,0,0.2,1) backwards;
+    }
+    .g-bar:hover { opacity: 1; transform: scaleY(1.05); transform-origin: bottom; }
+    @keyframes barGrow { from { transform: scaleY(0); transform-origin: bottom; } to { transform: scaleY(1); } }
+
+    .live-dot {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      font-size: 0.7rem; color: #4ADE80; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.5rem;
+    }
+    .live-dot::before {
+      content: ''; width: 6px; height: 6px; background: #4ADE80;
+      border-radius: 50%; box-shadow: 0 0 0 3px rgba(74,222,128,0.2);
+      animation: livePulse 2s ease-in-out infinite;
+    }
+    @keyframes livePulse {
+      0%,100% { box-shadow: 0 0 0 3px rgba(74,222,128,0.2); }
+      50%      { box-shadow: 0 0 0 7px rgba(74,222,128,0); }
+    }
+
+    /* ── FAQ ── */
+    .faq { background: var(--white); }
+    .faq-list { max-width: 760px; margin: 4rem auto 0; display: flex; flex-direction: column; gap: 0.8rem; }
+    .faq-item {
+      border: 1px solid var(--border-light); border-radius: 16px;
+      overflow: hidden; background: white; transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .faq-item.open {
+      border-color: rgba(26,127,255,0.4);
+      box-shadow: 0 8px 30px rgba(26,127,255,0.08);
+    }
+    .faq-q {
+      padding: 1.4rem 1.8rem; font-size: 0.97rem; font-weight: 500;
+      cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      transition: color 0.2s; user-select: none; color: var(--ink);
+    }
+    .faq-q:hover { color: var(--blue); }
+    .faq-arrow {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--off-white); border: 1px solid var(--border-light);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1rem; color: var(--blue); flex-shrink: 0;
+      transition: all 0.4s cubic-bezier(0.4,0,0.2,1);
+    }
+    .faq-item.open .faq-arrow { transform: rotate(45deg); background: var(--blue); color: white; border-color: var(--blue); }
+    .faq-a {
+      max-height: 0; overflow: hidden;
+      transition: max-height 0.45s ease, padding 0.3s;
+      font-size: 0.88rem; color: var(--ink-muted); line-height: 1.75; padding: 0 1.8rem;
+    }
+    .faq-item.open .faq-a { max-height: 200px; padding: 0 1.8rem 1.5rem; }
+
+    /* ── CTA ── */
+    .cta-section {
+      position: relative; text-align: center; padding: 10rem 6%; overflow: hidden;
+      background: linear-gradient(150deg, #020B1E 0%, #041436 30%, #071E52 60%, #020B1E 100%);
+    }
+    .cta-inner { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; }
+    .cta-section h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(2.8rem, 5.5vw, 4.5rem);
+      font-weight: 700; line-height: 1.08; margin-bottom: 1.2rem; color: white;
+    }
+    .cta-section p { font-size: 1.1rem; color: rgba(255,255,255,0.52); margin-bottom: 2.8rem; font-weight: 300; line-height: 1.7; }
+    .cta-trust {
+      display: flex; align-items: center; justify-content: center;
+      gap: 2rem; margin-top: 2.5rem; flex-wrap: wrap;
+    }
+    .trust-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: rgba(255,255,255,0.38); }
+    .trust-icon { color: var(--blue-light); font-size: 1rem; }
+
+    /* ── FOOTER ── */
+    footer { background: var(--navy-2); border-top: 1px solid rgba(26,127,255,0.1); padding: 3rem 6%; }
+    .footer-inner { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; }
+    .footer-logo { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; }
+    .footer-logo-icon { width: 26px; height: 22px; color: var(--blue); }
+    .footer-logo-text { font-family: 'Cormorant Garamond', serif; font-size: 1.4rem; font-weight: 700; color: rgba(255,255,255,0.75); }
+    .footer-logo-text span { color: var(--blue-light); }
+    .footer-links { display: flex; gap: 2rem; list-style: none; }
+    .footer-links a { color: rgba(255,255,255,0.3); text-decoration: none; font-size: 0.8rem; transition: color 0.2s; }
+    .footer-links a:hover { color: var(--blue-light); }
+    .footer-copy { color: rgba(255,255,255,0.18); font-size: 0.78rem; }
+
+    /* ── REVEAL ANIMATIONS ── */
+    .reveal {
+      opacity: 0; transform: translateY(40px);
+      transition: opacity 0.8s cubic-bezier(0.4,0,0.2,1), transform 0.8s cubic-bezier(0.4,0,0.2,1);
+    }
+    .reveal.visible { opacity: 1; transform: none; }
+    .reveal-left  { opacity: 0; transform: translateX(-40px); transition: opacity 0.8s cubic-bezier(0.4,0,0.2,1), transform 0.8s cubic-bezier(0.4,0,0.2,1); }
+    .reveal-left.visible { opacity: 1; transform: none; }
+    .reveal-right { opacity: 0; transform: translateX(40px);  transition: opacity 0.8s cubic-bezier(0.4,0,0.2,1), transform 0.8s cubic-bezier(0.4,0,0.2,1); }
+    .reveal-right.visible { opacity: 1; transform: none; }
+    .d1 { transition-delay: 0.1s; } .d2 { transition-delay: 0.2s; }
+    .d3 { transition-delay: 0.3s; } .d4 { transition-delay: 0.4s; }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 960px) {
+      .nav-links { display: none; }
+      .stats-grid { grid-template-columns: repeat(2,1fr); }
+      .services-grid { grid-template-columns: 1fr; }
+      .process-steps { grid-template-columns: repeat(2,1fr); }
+      .process-line { display: none; }
+      .results-grid { grid-template-columns: 1fr; }
+      .problem-inner, .why-inner { grid-template-columns: 1fr; gap: 3rem; }
+    }
+    @media (max-width: 600px) {
+      .stats-grid { grid-template-columns: 1fr; }
+      .process-steps { grid-template-columns: 1fr; }
+      section { padding: 5rem 5%; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav id="nav">
+    <a href="#" class="nav-logo">
+      <svg class="nav-logo-icon" viewBox="0 0 300 270" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="8,26 58,26 33,72"/>
+        <polygon points="78,20 122,20 170,210 146,242 94,54"/>
+        <path d="M158,20 L204,20 Q268,20 268,96 L237,242 L208,210 L234,96 Q228,56 194,50 L158,50 Z"/>
+      </svg>
+      <span class="nav-logo-text">Venue<span>Rise</span></span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#services">Services</a></li>
+      <li><a href="#process">Process</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="#contact" class="nav-cta">Free Strategy Call</a></li>
+    </ul>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="orb orb-4"></div>
+    <div class="hero-grid"></div>
+    <canvas id="particles"></canvas>
+    <div class="light-streaks">
+      <div class="streak streak-1"></div>
+      <div class="streak streak-2"></div>
+      <div class="streak streak-3"></div>
+      <div class="streak streak-4"></div>
+      <div class="streak streak-5"></div>
+      <div class="streak streak-6"></div>
+      <div class="streak streak-7"></div>
+      <div class="streak streak-8"></div>
+    </div>
+    <div class="hero-content">
+      <div class="hero-badge"><div class="hero-badge-dot"></div>Venue Marketing Specialists</div>
+      <h1>Turn Empty Dates Into<br/><span class="shimmer-text">Fully Booked</span> Events</h1>
+      <p class="hero-sub">VenueRise is the premier social media marketing agency exclusively for venues and event halls — driving a consistent pipeline of qualified bookings, every single month.</p>
+      <div class="hero-actions">
+        <a href="#contact" class="btn-primary">Get My Free Strategy Call →</a>
+        <a href="#results" class="btn-ghost">See Client Results</a>
+      </div>
+    </div>
+    <div class="hero-scroll">
+      <div class="scroll-mouse"><div class="scroll-wheel"></div></div>
+    </div>
+  </section>
+
+  <!-- LOGOS -->
+  <div class="logos-bar">
+    <p class="logos-label">Trusted by leading venues across the country</p>
+    <div class="logos-track-wrap">
+      <div class="logos-track">
+        <span class="logo-item">The Grand Pavilion</span>
+        <span class="logo-item">Elara Event Hall</span>
+        <span class="logo-item">Monarch Ballroom</span>
+        <span class="logo-item">The Ivory Suite</span>
+        <span class="logo-item">Crystal Gardens</span>
+        <span class="logo-item">Arcadia Events</span>
+        <span class="logo-item">Harlow Estate</span>
+        <span class="logo-item">The Grand Pavilion</span>
+        <span class="logo-item">Elara Event Hall</span>
+        <span class="logo-item">Monarch Ballroom</span>
+        <span class="logo-item">The Ivory Suite</span>
+        <span class="logo-item">Crystal Gardens</span>
+        <span class="logo-item">Arcadia Events</span>
+        <span class="logo-item">Harlow Estate</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats-section">
+    <div class="stats-grid reveal">
+      <div class="stat-item">
+        <span class="stat-number" data-count="320" data-suffix="+">0</span>
+        <div class="stat-label">Venues Scaled</div>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number" data-prefix="$" data-count="14" data-suffix="M+">0</span>
+        <div class="stat-label">Bookings Generated</div>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number" data-count="63" data-suffix="%">0</span>
+        <div class="stat-label">Avg. Booking Lift</div>
+      </div>
+      <div class="stat-item">
+        <span class="stat-number" data-count="4.9" data-suffix="★" data-decimal="1">0</span>
+        <div class="stat-label">Client Satisfaction</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROBLEM -->
+  <section class="problem" id="about">
+    <div class="container">
+      <div class="problem-inner">
+        <div class="reveal-left">
+          <p class="section-tag">The Problem</p>
+          <h2 class="section-title">Your venue is stunning.<br/><em>Your calendar shouldn't be empty.</em></h2>
+          <p class="section-sub">Most venues rely on word-of-mouth and hope. That's not a strategy — it's a gamble leaving thousands on the table every month.</p>
+          <ul class="problem-list">
+            <li><span class="x">✕</span> Inconsistent bookings with no predictable pipeline</li>
+            <li><span class="x">✕</span> Losing events to competitors with stronger online presence</li>
+            <li><span class="x">✕</span> Wasting ad budget on campaigns that don't convert</li>
+            <li><span class="x">✕</span> No time to manage social media while running events</li>
+            <li><span class="x">✕</span> Relying on one channel and hoping for the best</li>
+          </ul>
+        </div>
+        <div class="reveal-right d2">
+          <div class="before-after">
+            <div class="ba-header">
+              <div class="ba-col">
+                <div class="ba-col-label">Before VenueRise</div>
+                <div class="ba-big">↓ 7</div>
+                <div class="ba-sub">bookings / month</div>
+              </div>
+              <div class="ba-col">
+                <div class="ba-col-label">After VenueRise</div>
+                <div class="ba-big">↑ 31</div>
+                <div class="ba-sub">bookings / month</div>
+              </div>
+            </div>
+            <div class="ba-metrics">
+              <div class="ba-metric-row">
+                <div class="ba-metric-label"><span>Instagram Reach</span><span>22% → 87%</span></div>
+                <div class="ba-bars"><div class="ba-bar-wrap"><div class="ba-bar bad" style="width:22%"></div></div><div class="ba-bar-wrap"><div class="ba-bar good" style="width:87%"></div></div></div>
+              </div>
+              <div class="ba-metric-row">
+                <div class="ba-metric-label"><span>Lead Conversion</span><span>8% → 64%</span></div>
+                <div class="ba-bars"><div class="ba-bar-wrap"><div class="ba-bar bad" style="width:8%"></div></div><div class="ba-bar-wrap"><div class="ba-bar good" style="width:64%"></div></div></div>
+              </div>
+              <div class="ba-metric-row">
+                <div class="ba-metric-label"><span>Return on Ad Spend</span><span>1.4x → 9.2x</span></div>
+                <div class="ba-bars"><div class="ba-bar-wrap"><div class="ba-bar bad" style="width:14%"></div></div><div class="ba-bar-wrap"><div class="ba-bar good" style="width:92%"></div></div></div>
+              </div>
+              <div class="ba-metric-row">
+                <div class="ba-metric-label"><span>Google Reviews</span><span>3.6★ → 4.9★</span></div>
+                <div class="ba-bars"><div class="ba-bar-wrap"><div class="ba-bar bad" style="width:36%"></div></div><div class="ba-bar-wrap"><div class="ba-bar good" style="width:98%"></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SERVICES -->
+  <section class="services" id="services">
+    <div class="container">
+      <div class="reveal" style="text-align:center; display:flex; flex-direction:column; align-items:center;">
+        <p class="section-tag">What We Do</p>
+        <h2 class="section-title">Everything your venue needs<br/>to <em>dominate</em> its market</h2>
+        <p class="section-sub">A complete, done-for-you marketing system built specifically for event venues and banquet halls.</p>
+      </div>
+      <div class="services-grid">
+        <div class="service-card reveal d1"><div class="service-icon">🎯</div><h3>Paid Social Advertising</h3><p>Precision Meta & Instagram campaigns reaching engaged couples, corporate planners, and event hosts in your area.</p><ul><li>Facebook & Instagram Ads</li><li>Retargeting Sequences</li><li>Lookalike Audience Scaling</li><li>Creative A/B Testing</li></ul></div>
+        <div class="service-card reveal d2"><div class="service-icon">🔍</div><h3>Google Ads & SEO</h3><p>Capture high-intent searchers the moment they're looking for a venue and dominate local search results.</p><ul><li>Google Search & Display</li><li>Local SEO Optimization</li><li>Google Business Profile</li><li>Review Generation</li></ul></div>
+        <div class="service-card reveal d3"><div class="service-icon">📸</div><h3>Content Creation</h3><p>Scroll-stopping visuals, reels, and copy that showcase your venue's atmosphere and drive real inquiries.</p><ul><li>Professional Copywriting</li><li>Reel & Video Scripts</li><li>Branded Template Design</li><li>Monthly Content Calendar</li></ul></div>
+        <div class="service-card reveal d1"><div class="service-icon">📲</div><h3>Social Media Management</h3><p>Full-service social presence across Instagram, TikTok, and Facebook — all handled for you.</p><ul><li>Daily Posting & Scheduling</li><li>Community Engagement</li><li>DM & Inquiry Management</li><li>Platform Growth Strategy</li></ul></div>
+        <div class="service-card reveal d2"><div class="service-icon">⚡</div><h3>Booking Funnel Setup</h3><p>We build and optimize your entire lead-to-booking pipeline so no inquiry slips through the cracks.</p><ul><li>Landing Page Optimization</li><li>CRM Integration</li><li>Automated Follow-up</li><li>Inquiry Response Templates</li></ul></div>
+        <div class="service-card reveal d3"><div class="service-icon">📊</div><h3>Analytics & Reporting</h3><p>Full transparency on every dollar spent and every booking generated — with a clear monthly dashboard.</p><ul><li>Custom KPI Dashboard</li><li>Monthly Strategy Reviews</li><li>ROAS & ROI Tracking</li><li>Competitor Benchmarking</li></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PROCESS -->
+  <section class="process" id="process">
+    <div class="container">
+      <div class="reveal" style="text-align:center; display:flex; flex-direction:column; align-items:center;">
+        <p class="section-tag">How It Works</p>
+        <h2 class="section-title">From strategy to <em>fully booked</em><br/>in 4 simple steps</h2>
+        <p class="section-sub">A proven, systematic approach refined across 320+ venues worldwide.</p>
+      </div>
+      <div class="process-steps">
+        <div class="process-line"><div class="process-line-fill"></div></div>
+        <div class="step reveal d1"><div class="step-num">01</div><h3>Discovery Call</h3><p>We audit your marketing, identify gaps, and build a custom growth plan for your venue's goals and local market.</p></div>
+        <div class="step reveal d2"><div class="step-num">02</div><h3>Strategy & Setup</h3><p>Our team builds your complete marketing infrastructure — ad accounts, funnels, creatives, and automation.</p></div>
+        <div class="step reveal d3"><div class="step-num">03</div><h3>Launch & Optimize</h3><p>We go live and rapidly test, doubling down on top performers and cutting waste to maximize ROAS.</p></div>
+        <div class="step reveal d4"><div class="step-num">04</div><h3>Scale & Report</h3><p>Once we find your winning formula, we scale aggressively. Full monthly reporting with zero guesswork.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="results" id="results">
+    <div class="container">
+      <div class="reveal" style="text-align:center; display:flex; flex-direction:column; align-items:center;">
+        <p class="section-tag">Client Results</p>
+        <h2 class="section-title">Real venues. <em>Real revenue.</em></h2>
+        <p class="section-sub">Don't take our word for it — here's what happens when we take the wheel.</p>
+      </div>
+      <div class="results-grid">
+        <div class="result-card reveal d1">
+          <div class="result-stars">★★★★★</div>
+          <div class="result-metric">
+            <div class="metric-item"><div class="metric-num">+340%</div><div class="metric-label">Bookings</div></div>
+            <div class="metric-item"><div class="metric-num">8.7x</div><div class="metric-label">ROAS</div></div>
+            <div class="metric-item"><div class="metric-num">$82K</div><div class="metric-label">Revenue Added</div></div>
+          </div>
+          <p class="result-quote">"We went from 8 bookings a month to over 31 in just 90 days. VenueRise transformed our slow season into our best quarter ever."</p>
+          <div class="result-author"><div class="author-avatar">M</div><div><div class="author-name">Marcus T.</div><div class="author-venue">Monarch Ballroom, Atlanta</div></div></div>
+        </div>
+        <div class="result-card reveal d2">
+          <div class="result-stars">★★★★★</div>
+          <div class="result-metric">
+            <div class="metric-item"><div class="metric-num">+210%</div><div class="metric-label">Inquiries</div></div>
+            <div class="metric-item"><div class="metric-num">11x</div><div class="metric-label">ROAS</div></div>
+            <div class="metric-item"><div class="metric-num">$61K</div><div class="metric-label">Revenue Added</div></div>
+          </div>
+          <p class="result-quote">"Finally a team that understands the venue business. They know our seasonality, our ideal client, and they deliver every time."</p>
+          <div class="result-author"><div class="author-avatar">S</div><div><div class="author-name">Sophia R.</div><div class="author-venue">Elara Event Hall, Miami</div></div></div>
+        </div>
+        <div class="result-card reveal d3">
+          <div class="result-stars">★★★★★</div>
+          <div class="result-metric">
+            <div class="metric-item"><div class="metric-num">+480%</div><div class="metric-label">Leads</div></div>
+            <div class="metric-item"><div class="metric-num">6.3x</div><div class="metric-label">ROAS</div></div>
+            <div class="metric-item"><div class="metric-num">$118K</div><div class="metric-label">Revenue Added</div></div>
+          </div>
+          <p class="result-quote">"We were fully booked for the holidays 3 months in advance. I never thought that was possible. VenueRise made it happen."</p>
+          <div class="result-author"><div class="author-avatar">D</div><div><div class="author-name">David K.</div><div class="author-venue">The Grand Pavilion, Chicago</div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY -->
+  <section class="why">
+    <div class="container">
+      <div class="why-inner">
+        <div class="reveal-left">
+          <div class="live-dot">Live Dashboard</div>
+          <div class="dashboard-mock">
+            <div class="dash-header">
+              <div class="dash-dot" style="background:#EF4444"></div>
+              <div class="dash-dot" style="background:#F59E0B"></div>
+              <div class="dash-dot" style="background:#10B981"></div>
+              <span class="dash-title">VenueRise Analytics · May 2025</span>
+            </div>
+            <div class="dash-stats">
+              <div class="dash-stat"><div class="dash-stat-num">31</div><div class="dash-stat-label">Bookings</div></div>
+              <div class="dash-stat"><div class="dash-stat-num">$42K</div><div class="dash-stat-label">Revenue</div></div>
+              <div class="dash-stat"><div class="dash-stat-num">9.1x</div><div class="dash-stat-label">ROAS</div></div>
+            </div>
+            <div class="dash-graph-label">Monthly Booking Trend ↑</div>
+            <div class="dash-graph">
+              <div class="g-bar" style="height:28%; animation-delay:0.05s"></div>
+              <div class="g-bar" style="height:38%; animation-delay:0.1s"></div>
+              <div class="g-bar" style="height:33%; animation-delay:0.15s"></div>
+              <div class="g-bar" style="height:52%; animation-delay:0.2s"></div>
+              <div class="g-bar" style="height:45%; animation-delay:0.25s"></div>
+              <div class="g-bar" style="height:68%; animation-delay:0.3s"></div>
+              <div class="g-bar" style="height:62%; animation-delay:0.35s"></div>
+              <div class="g-bar" style="height:80%; animation-delay:0.4s"></div>
+              <div class="g-bar" style="height:85%; animation-delay:0.45s"></div>
+              <div class="g-bar" style="height:93%; animation-delay:0.5s"></div>
+              <div class="g-bar" style="height:100%; opacity:1; animation-delay:0.55s"></div>
+              <div class="g-bar" style="height:100%; opacity:1; animation-delay:0.6s"></div>
+            </div>
+          </div>
+        </div>
+        <div class="reveal-right d2">
+          <p class="section-tag">Why VenueRise</p>
+          <h2 class="section-title">We only work with<br/><em>venues.</em> Full stop.</h2>
+          <p class="section-sub">Not a generalist agency. Every strategy is built from years of venue-specific expertise across 320+ clients.</p>
+          <div class="why-points">
+            <div class="why-point"><div class="why-icon">🏛️</div><div class="why-text"><h4>Venue-Only Specialization</h4><p>Thousands of campaigns exclusively for event venues. We know your seasonality, your buyers, and what converts.</p></div></div>
+            <div class="why-point"><div class="why-icon">📈</div><div class="why-text"><h4>Performance Guarantee</h4><p>If we don't hit your agreed booking targets in 90 days, you don't pay. We back our work with real guarantees.</p></div></div>
+            <div class="why-point"><div class="why-icon">🤝</div><div class="why-text"><h4>Dedicated Account Team</h4><p>A dedicated strategist, media buyer, and content creator. Direct Slack access. Always.</p></div></div>
+            <div class="why-point"><div class="why-icon">🔓</div><div class="why-text"><h4>No Long-Term Lock-In</h4><p>Month-to-month. We earn your business every month — no 12-month contracts trapping you in.</p></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="faq" id="faq">
+    <div class="container">
+      <div class="reveal" style="text-align:center; display:flex; flex-direction:column; align-items:center;">
+        <p class="section-tag">FAQ</p>
+        <h2 class="section-title">Questions we <em>always</em> get asked</h2>
+      </div>
+      <div class="faq-list reveal d1">
+        <div class="faq-item"><div class="faq-q">How quickly will I see results? <span class="faq-arrow">+</span></div><div class="faq-a">Most clients see a meaningful increase in inquiries within the first 30 days. Significant booking lifts typically happen between days 30–90 as we optimize and refine targeting based on real data from your market.</div></div>
+        <div class="faq-item"><div class="faq-q">What's the minimum ad budget required? <span class="faq-arrow">+</span></div><div class="faq-a">We recommend a minimum ad spend of $1,500/month for meaningful results. Most clients spend $2,000–$5,000/month. Our management fee is separate and tiered based on scope.</div></div>
+        <div class="faq-item"><div class="faq-q">Do you work with venues outside the US? <span class="faq-arrow">+</span></div><div class="faq-a">Yes. We work with venues in the US, Canada, UK, and Australia. Strategies adapt to each local market including platform preferences, seasonality, and audience behavior.</div></div>
+        <div class="faq-item"><div class="faq-q">What types of venues do you work with? <span class="faq-arrow">+</span></div><div class="faq-a">Wedding venues, banquet halls, event spaces, rooftop venues, garden venues, ballrooms, and multi-purpose facilities. If you rent your space for events, we can scale your bookings.</div></div>
+        <div class="faq-item"><div class="faq-q">Do I need to sign a long-term contract? <span class="faq-arrow">+</span></div><div class="faq-a">No long-term contracts. Month-to-month with 30-day cancellation notice. Our results speak for themselves — the average VenueRise client stays 18+ months.</div></div>
+        <div class="faq-item"><div class="faq-q">What does onboarding look like? <span class="faq-arrow">+</span></div><div class="faq-a">Onboarding takes 7–10 business days. We handle everything — ad account setup, pixel installation, content creation, and campaign builds. We'll need platform access and some venue visuals.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section" id="contact">
+    <div class="orb orb-1" style="opacity:0.3"></div>
+    <div class="orb orb-2" style="opacity:0.2"></div>
+    <div class="orb orb-3" style="opacity:0.15"></div>
+    <div class="cta-inner reveal">
+      <p class="section-tag" style="justify-content:center; color:var(--blue-light);">Get Started Today</p>
+      <h2>Ready to <span class="shimmer-text">fill your calendar</span><br/>and grow your revenue?</h2>
+      <p>Book a free 30-minute strategy call. We'll audit your marketing, find your biggest growth opportunities, and show you exactly how VenueRise scales your venue — no pitch, no pressure.</p>
+      <a href="#" class="btn-primary" style="font-size:1.05rem; padding:1.15rem 2.8rem;">Book My Free Strategy Call →</a>
+      <div class="cta-trust">
+        <span class="trust-item"><span class="trust-icon">✓</span> No commitment</span>
+        <span class="trust-item"><span class="trust-icon">✓</span> Free 30-min call</span>
+        <span class="trust-item"><span class="trust-icon">✓</span> Only 5 spots/month</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-inner">
+      <a href="#" class="footer-logo">
+        <svg class="footer-logo-icon" viewBox="0 0 300 270" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="8,26 58,26 33,72"/>
+          <polygon points="78,20 122,20 170,210 146,242 94,54"/>
+          <path d="M158,20 L204,20 Q268,20 268,96 L237,242 L208,210 L234,96 Q228,56 194,50 L158,50 Z"/>
+        </svg>
+        <span class="footer-logo-text">Venue<span>Rise</span></span>
+      </a>
+      <ul class="footer-links">
+        <li><a href="#services">Services</a></li>
+        <li><a href="#process">Process</a></li>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#faq">FAQ</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+      <p class="footer-copy">© 2025 VenueRise. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script>
+    /* NAV */
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 40), { passive: true });
+
+    /* PARTICLES — blue */
+    const canvas = document.getElementById('particles');
+    const ctx = canvas.getContext('2d');
+    let W, H;
+    const resize = () => { W = canvas.width = canvas.offsetWidth; H = canvas.height = canvas.offsetHeight; };
+    resize(); window.addEventListener('resize', resize);
+    const rand = (a, b) => Math.random() * (b - a) + a;
+    const pts = Array.from({ length: 100 }, () => ({
+      x: rand(0,1), y: rand(0,1),
+      r: rand(0.5, 2.2), op: rand(0.1, 0.55),
+      life: rand(0,1), speed: rand(0.0008, 0.002)
+    }));
+    (function draw() {
+      ctx.clearRect(0, 0, W, H);
+      pts.forEach(p => {
+        p.life += p.speed;
+        if (p.life > 1) { p.life = 0; p.x = rand(0,1); p.y = 1; }
+        const a = p.life < 0.1 ? p.life * 10 : p.life > 0.8 ? (1 - p.life) * 5 : 1;
+        ctx.beginPath();
+        ctx.arc(p.x * W, (1 - p.life) * H, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(91,163,255,${p.op * a})`;
+        ctx.fill();
+      });
+      requestAnimationFrame(draw);
+    })();
+
+    /* SCROLL REVEALS */
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.reveal, .reveal-left, .reveal-right').forEach(el => obs.observe(el));
+
+    /* COUNTERS */
+    function countUp(el) {
+      const target = parseFloat(el.dataset.count);
+      const prefix = el.dataset.prefix || '';
+      const suffix = el.dataset.suffix || '';
+      const dec    = parseInt(el.dataset.decimal || 0);
+      const start  = performance.now();
+      (function step(now) {
+        const t = Math.min((now - start) / 1800, 1);
+        const e = 1 - Math.pow(1 - t, 3);
+        el.textContent = prefix + (target * e).toFixed(dec) + suffix;
+        if (t < 1) requestAnimationFrame(step);
+      })(start);
+    }
+    new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          e.target.querySelectorAll('[data-count]').forEach(countUp);
+        }
+      });
+    }, { threshold: 0.4 }).observe(document.querySelector('.stats-grid'));
+
+    /* FAQ */
+    document.querySelectorAll('.faq-q').forEach(q => {
+      q.addEventListener('click', () => {
+        const item = q.closest('.faq-item');
+        const open = item.classList.contains('open');
+        document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('open'));
+        if (!open) item.classList.add('open');
+      });
+    });
+  </script>
+</body>
+</html>

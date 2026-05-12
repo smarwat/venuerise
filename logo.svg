@@ -1,0 +1,8 @@
+<svg viewBox="0 0 300 270" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- Small triangle top-left -->
+  <polygon points="8,26 58,26 33,72" fill="currentColor"/>
+  <!-- Left main diagonal stroke -->
+  <polygon points="78,20 122,20 170,210 146,242 94,54" fill="currentColor"/>
+  <!-- Right large curved sweep -->
+  <path d="M158,20 L204,20 Q268,20 268,96 L237,242 L208,210 L234,96 Q228,56 194,50 L158,50 Z" fill="currentColor"/>
+</svg>
