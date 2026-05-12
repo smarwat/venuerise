@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
 
 const volumes = [
   'Under 25 inquiries / month',
@@ -17,28 +18,56 @@ export default function AuditForm() {
   const [status, setStatus] = useState<Status>('idle')
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+
     const form = e.currentTarget
     const data = new FormData(form)
 
     const newErrors: Record<string, string> = {}
-    if (!data.get('name')) newErrors.name = 'Your name is required'
-    if (!data.get('venue')) newErrors.venue = 'Venue name is required'
-    const email = (data.get('email') as string) || ''
+
+    const name = String(data.get('name') || '').trim()
+    const venue = String(data.get('venue') || '').trim()
+    const email = String(data.get('email') || '').trim()
+    const website = String(data.get('website') || '').trim()
+    const volume = String(data.get('volume') || '').trim()
+
+    if (!name) newErrors.name = 'Your name is required'
+    if (!venue) newErrors.venue = 'Venue name is required'
     if (!email) newErrors.email = 'Work email is required'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = 'Enter a valid email'
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      newErrors.email = 'Enter a valid email'
+    }
 
     setErrors(newErrors)
+
     if (Object.keys(newErrors).length > 0) {
-      const first = form.querySelector<HTMLInputElement>(`[name="${Object.keys(newErrors)[0]}"]`)
+      const first = form.querySelector<HTMLInputElement>(
+        `[name="${Object.keys(newErrors)[0]}"]`
+      )
       first?.focus()
       return
     }
 
     setStatus('submitting')
-    // Simulated submit — replace with real endpoint
-    setTimeout(() => setStatus('success'), 1100)
+
+    const { error } = await supabase.from('audit_leads').insert({
+      name,
+      venue_name: venue,
+      email,
+      website,
+      monthly_inquiry_volume: volume,
+      source: 'website',
+    })
+
+    if (error) {
+      console.error(error)
+      setStatus('error')
+      return
+    }
+
+    setStatus('success')
+    form.reset()
   }
 
   return (
@@ -84,6 +113,12 @@ export default function AuditForm() {
                 A 30-minute review of your current inquiry flow. No commitment, no upsell.
               </p>
             </div>
+
+            {status === 'error' && (
+              <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+                Something went wrong. Please try again.
+              </p>
+            )}
 
             <div className="grid sm:grid-cols-2 gap-4">
               <Field
