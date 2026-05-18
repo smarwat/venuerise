@@ -364,6 +364,86 @@ order by e.replayed_at desc;
 
 A handler-failed replay still counts: `replay_count` increments any time dispatch FINISHES (success or failure). Only Stripe-retrieve failures (502 from the replay route) skip the counter — those aborts happen before dispatch.
 
+### 2.4i How to clear dunning attempts safely (Phase 7N)
+
+When a customer reports "I keep getting dunning emails even though I paid" or "you sent me three reminders but only one charge actually failed", we need an operator escape hatch to clear out the recorded attempts without invasive SQL.
+
+**Tool**: `POST /api/admin/billing-events/[id]/clear-dunning`. Owner/admin only. The `id` in the path is any billing event log row id that belongs to the same venue as the subscription we're modifying — typically the most recent `customer.subscription.updated` event for the customer.
+
+**Curl**:
+```bash
+# Clear ONE period's attempts on a subscription.
+curl -X POST -H "Cookie: sb-...-auth-token=..." \
+     -H "Content-Type: application/json" \
+     -d '{"subscription_id":"<uuid>","period_date":"2026-06-01","reason":"customer-claim charge was successful but we kept sending"}' \
+     "$APP/api/admin/billing-events/<event id>/clear-dunning"
+
+# Clear ALL periods' attempts for a venue.
+curl -X POST -H "Cookie: sb-...-auth-token=..." \
+     -H "Content-Type: application/json" \
+     -d '{"subscription_id":"<uuid>","reason":"full reset after data migration"}' \
+     "$APP/api/admin/billing-events/<event id>/clear-dunning"
+```
+
+Response:
+```json
+{
+  "success": true,
+  "subscription_id": "...",
+  "cleared_prefix": "dunning:VENUE_ID:2026-06-01",
+  "metadata": { "dunning_sent": [...remaining entries...] }
+}
+```
+
+**Before/after metadata** — capture both via the Phase 7G detail endpoint:
+```bash
+# Before:
+curl -H "Cookie: ..." "$APP/api/admin/billing-events/<event id>" \
+  | jq '.item.payload // empty, .item // {}'
+
+# Run clear-dunning (above).
+
+# After:
+curl -H "Cookie: ..." "$APP/api/admin/billing-events/<event id>" \
+  | jq '.item // {}'
+```
+
+**Prefix-targeting rules**:
+- `period_date` provided → prefix is `dunning:<venue>:<period_date>` (filters out the matching period's attempts; other periods preserved).
+- `period_date` omitted → prefix is `dunning:<venue>:` (wipes EVERY period for the venue — use sparingly).
+
+**When NOT to use it**:
+- The dunning cron is doing its job and the customer is genuinely past_due. Clearing attempts will cause the cron to start fresh + send up to 3 more emails.
+- A previous attempt actually bounced and you want to retry — instead, fix the bounce reason (clear suppressions, see RUNBOOK §2.4) and the cron will send attempt 2 within 48h.
+- "Just to be safe." Trust the dunning state machine until the customer reports a real issue.
+
+**Safe-use criteria**:
+- Customer confirms they were charged AND they kept receiving dunning emails (rare; usually the recovery email fires when the charge clears — see §2.4h).
+- Data migration / Stripe id swap left orphan `dunning_sent` entries pointing at periods that no longer exist.
+- Test fixtures in staging — never use this in staging without re-asserting `BILLING_MATRIX_APP_URL` is the staging URL.
+
+**SQL fallback** (when the API is unavailable):
+```sql
+update public.subscriptions
+   set metadata = jsonb_set(
+     metadata,
+     '{dunning_sent}',
+     (select coalesce(jsonb_agg(e), '[]'::jsonb)
+        from jsonb_array_elements(metadata->'dunning_sent') e
+       where not (e->>'key' like 'dunning:<venue id>:<period>%'))
+   )
+ where id = '<subscription id>';
+```
+
+The SQL is functionally equivalent to the RPC. Prefer the HTTP route — it carries `requestId` + operator id through to Pino + Sentry so the action is auditable.
+
+**Failure modes**:
+- 401 — operator not signed in.
+- 404 — billing event id missing / `venue_id IS NULL` / cross-tenant / subscription doesn't belong to the event's venue.
+- 400 `validation_failed` — body schema failure (e.g. `period_date` not `YYYY-MM-DD`).
+- 429 — clear-dunning rate limit per caller.
+- 500 — RPC threw (Sentry captures the underlying Postgres error).
+
 ### 2.4h Customer paid but never got recovery email (Phase 7M)
 
 Symptom: a customer's subscription transitioned from `past_due` back to `active`/`trialing` but they didn't receive the "Payment received — your VenueRise account is active" email.

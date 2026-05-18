@@ -189,6 +189,31 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10i. Clear dunning RPC (Phase 7N)
+
+Migration 011 added one SECURITY DEFINER function: `public.remove_subscription_metadata_array_entries(p_subscription_id uuid, p_array_key text, p_key_prefix text) returns jsonb`.
+
+**Why a function?** Two reasons:
+1. PostgREST can't express "delete entries from a JSONB array where the entry's `key` field begins with a prefix" without round-tripping the whole array to JS. Doing the filter in SQL is atomic; doing it in JS would race with the Phase 7L append helper.
+2. The application-layer admin route owns authorization (admin role + tenant binding + subscription↔venue binding). The function trusts that gate and stays narrow — it only edits one column on one row.
+
+**Hardening**:
+- `set search_path = public` — defends against schema-injection on schema-qualified DDL.
+- `revoke all from public` + `grant execute to service_role`. The anon + authenticated roles cannot call it.
+- Input validation raises (rather than no-oping) when any of `p_subscription_id`, `p_array_key`, or `p_key_prefix` are null/empty.
+- Raises `subscription not found` when the row id doesn't match — protects callers passing stale ids from cached lookups.
+- LIKE pattern is built as `p_key_prefix || '%'` — a `_` or `%` in the prefix would be interpreted as a LIKE wildcard. The application route only constructs prefixes from validated UUIDs + a date string (`YYYY-MM-DD`); neither contains LIKE metacharacters.
+
+**Application-layer guardrails on top of the RPC**:
+- Caller must hold ADMIN_ROLES on the audit row's `venue_id` (re-verified via `requireVenueRole`).
+- The supplied `subscription_id` must belong to the SAME venue as the audit row — prevents an admin of venue A from clearing dunning on a venue B subscription by threading the call through an A-owned audit row.
+- The route hard-codes `arrayKey: 'dunning_sent'` — even though the RPC itself accepts any array name, the HTTP surface only ever operates on dunning attempts.
+- Rate-limited per caller to keep accidental click loops from blowing up the table.
+
+**No new env vars.** Reuses `SUPABASE_SERVICE_ROLE_KEY`.
+
+---
+
 ## 10h. Payment recovery email (Phase 7M)
 
 A single-shot email fired from the Stripe webhook path when a subscription transitions `past_due → active|trialing`. No new tables, no new env vars.

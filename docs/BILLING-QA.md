@@ -503,6 +503,115 @@ Full no-send playbook: [RUNBOOK.md §2.4g](./RUNBOOK.md). Short version:
 7. Stripe portal can be created (`billing_customers` row exists).
 8. Resend is `configured` in production.
 
+## 7i. Clear dunning admin tool (Phase 7N)
+
+Operator escape hatch for the rare customer-support case where dunning attempt records need to be cleared on a `subscriptions.metadata.dunning_sent` array.
+
+```
+POST /api/admin/billing-events/[id]/clear-dunning
+```
+
+Owner/admin only. Rate-limited per caller (`admin:billing-events-clear-dunning:{userId}`). The `[id]` in the path is any billing event log row id that belongs to the same venue as the subscription being modified (same tenant-binding pattern as the Phase 7G/7I endpoints).
+
+### Request
+
+```json
+{
+  "subscription_id": "<uuid>",
+  "period_date": "2026-06-01",          // optional, YYYY-MM-DD
+  "reason": "<freeform, max 240 chars>" // optional, audit context
+}
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "subscription_id": "...",
+  "cleared_prefix": "dunning:VENUE_ID:2026-06-01",
+  "metadata": { "dunning_sent": [/* remaining entries */] }
+}
+```
+
+`cleared_prefix` echoes back what was actually matched so the operator can sanity-check. The `metadata` field is the updated full metadata object (includes `dunning_sent` + everything else like `reminders_sent`, `recovery_sent`).
+
+### Prefix targeting
+
+| `period_date` | Prefix applied | Effect |
+|---|---|---|
+| `'2026-06-01'` | `dunning:<venue>:2026-06-01` | Removes attempts for ONE period only |
+| omitted | `dunning:<venue>:` | Removes EVERY period's attempts for the venue |
+
+The prefix LIKE match in the SQL is `prefix || '%'`, so a date-scoped prefix matches `dunning:<v>:2026-06-01:attempt-1`, `attempt-2`, `attempt-3`. The venue-only prefix matches every key the dunning job has ever written for that venue.
+
+### Before / after example
+
+Before:
+```json
+{
+  "dunning_sent": [
+    {
+      "kind": "past_due",
+      "key": "dunning:VENUE_ID:2026-06-01:attempt-1",
+      "attempt": 1,
+      "sent_at": "2026-05-18T16:00:00.000Z",
+      "provider": "resend",
+      "message_id": "..."
+    },
+    {
+      "kind": "past_due",
+      "key": "dunning:VENUE_ID:2026-06-01:attempt-2",
+      "attempt": 2,
+      "sent_at": "2026-05-20T16:00:00.000Z",
+      "provider": "resend",
+      "message_id": "..."
+    }
+  ]
+}
+```
+
+Operator runs:
+```bash
+curl -X POST -H "Cookie: ..." -H "Content-Type: application/json" \
+  -d '{"subscription_id":"<uuid>","period_date":"2026-06-01","reason":"customer says they paid; verified in Stripe"}' \
+  "$APP/api/admin/billing-events/<event id>/clear-dunning"
+```
+
+After:
+```json
+{
+  "dunning_sent": []
+}
+```
+
+(Entries for OTHER periods stay; only the `2026-06-01` ones are gone.)
+
+### Errors
+
+| HTTP | code | meaning |
+|---|---|---|
+| 200 | — | cleared (whether the prefix matched any entries or not) |
+| 400 | `validation_failed` | body fails Zod (bad `period_date` format, `reason` too long, missing `subscription_id`) |
+| 401 | `unauthorized` | no session |
+| 403 | `forbidden` | session exists, no admin venue (rare path) |
+| 404 | `not_found` | event id missing / `venue_id IS NULL` / cross-tenant / subscription not in event's venue / param not a UUID |
+| 429 | rate-limited | per-caller throttle |
+| 500 | `unexpected_error` | RPC error or DB unavailable; Sentry-captured |
+
+The 404 collapse for cross-tenant / null-venue cases preserves the existence boundary (admins can't enumerate events in tenants they don't admin).
+
+### Safety notes
+
+- Clearing attempts re-arms the cron. The next time the `billing-dunning` Inngest function runs (4pm UTC) it sees zero attempts for the current period and starts fresh — potentially sending three more emails over six days. Only clear when you understand this.
+- For a customer who genuinely paid, the **recovery email** (Phase 7M, §7h) usually fires automatically when Stripe flips `past_due → active`. Clear-dunning is for the rare case where that didn't happen (status didn't transition, or recovery email skipped for some reason).
+- Sentry / Pino capture the operator id, billing event id, subscription id, period date, and supplied `reason` on every successful call. The full metadata array is NOT logged.
+- The route does NOT trigger any emails or notifications. It's a state-edit operation only.
+
+### Full diagnostic / when-to-use playbook
+
+[RUNBOOK.md §2.4i](./RUNBOOK.md) walks through curl examples, before/after capture, prefix-targeting decision tree, and the SQL fallback.
+
 ## 7h. Payment recovery email (Phase 7M)
 
 Single "Payment received — your VenueRise account is active" email sent when a venue's subscription transitions from `past_due` back to `active` or `trialing`. Fires from the Stripe webhook path — no cron. Detection happens because `syncSubscriptionFromStripeSubscription` (widened in 7M) now returns `{ previousStatus, newStatus, venueId, subscriptionId, currentPeriodEnd }` and the dispatcher inspects it.

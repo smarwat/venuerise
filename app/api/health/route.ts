@@ -46,6 +46,7 @@ interface HealthBody {
     replay: 'mounted'
     dunning: 'mounted'
     recovery_email: 'mounted'
+    admin_clear_dunning: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -62,8 +63,9 @@ interface HealthBody {
  *               suppressions, test-send, workflow-status)
  *   - Phase 7G: 8 (added billing-events list + detail)
  *   - Phase 7I: 9 (added billing-events/[id]/replay)
+ *   - Phase 7N: 10 (added billing-events/[id]/clear-dunning)
  */
-const ADMIN_ENDPOINT_COUNT = 9
+const ADMIN_ENDPOINT_COUNT = 10
 
 const startedAt = Date.now()
 
@@ -202,6 +204,9 @@ export async function GET(request: Request) {
       // (no cron). Runtime delivery requires Resend; the dispatcher only
       // fires it on past_due → active/trialing transitions.
       recovery_email: 'mounted',
+      // 7N — operator escape hatch: POST /api/admin/billing-events/[id]/clear-dunning
+      // wipes prefix-matched entries from subscriptions.metadata.dunning_sent.
+      admin_clear_dunning: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
