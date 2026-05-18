@@ -5,6 +5,7 @@ import { handleNewLead } from '@/lib/agents/orchestrator'
 import { verifyInternalRequest, INTERNAL_SIGNATURE_HEADER } from '@/lib/auth/internal-hmac'
 import { assertOwnsLead, OwnershipError } from '@/lib/auth/assert-ownership'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -51,17 +52,20 @@ export async function POST(request: NextRequest) {
       .maybeSingle()
 
     if (leadErr) {
-      if (isDev) console.error('[qualify:internal] lead lookup error:', leadErr)
+      log.error(
+        { route: '/api/ai/qualify', mode: 'internal', leadId: lead_id, errorMessage: leadErr.message },
+        'ai.qualify.lead_lookup_failed'
+      )
       return NextResponse.json(devError('Lead lookup failed', leadErr.message), { status: 500 })
     }
     if (!leadRow) {
-      if (isDev) console.warn('[qualify:internal] lead not found:', lead_id)
+      log.warn({ route: '/api/ai/qualify', mode: 'internal', leadId: lead_id }, 'ai.qualify.lead_not_found')
       return NextResponse.json(devError('Lead not found', lead_id), { status: 404 })
     }
     venueId = (leadRow as { venue_id: string }).venue_id
   } else if (signature) {
     // A signature was sent but it didn't verify — explicitly reject.
-    if (isDev) console.warn('[qualify] bad internal signature')
+    log.warn({ route: '/api/ai/qualify' }, 'ai.qualify.bad_internal_signature')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   } else {
     // User mode — fall back to Supabase session + ownership check.
@@ -92,12 +96,14 @@ export async function POST(request: NextRequest) {
   }
 
   // 3. Run orchestrator
+  log.info({ route: '/api/ai/qualify', leadId: lead_id, venueId }, 'ai.qualify.started')
   try {
     const result = await handleNewLead(lead_id, venueId, conversation_id ?? null)
+    log.info({ route: '/api/ai/qualify', leadId: lead_id, venueId }, 'ai.qualify.completed')
     return NextResponse.json(result)
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI qualification failed'
-    if (isDev) console.error('[qualify] orchestrator failed:', err)
+    log.error({ err, route: '/api/ai/qualify', leadId: lead_id, venueId }, 'ai.qualify.failed')
     return NextResponse.json(devError(message), { status: 500 })
   }
 }

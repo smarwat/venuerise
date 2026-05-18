@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { enqueueLeadCreated } from '@/lib/jobs/queue'
 import { rateLimitWidget, rateLimitedResponse } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -25,12 +26,13 @@ function devError(error: string, detail?: unknown) {
 export async function POST(request: NextRequest) {
   // 0. Verify env is loaded
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    if (isDev) {
-      console.error('[widget] Missing Supabase env vars', {
+    log.error(
+      {
         hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
         hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      })
-    }
+      },
+      'widget.config.missing_supabase_env'
+    )
     return NextResponse.json(
       devError('Server not configured', 'Supabase env vars missing — check .env.local'),
       { status: 500 }
@@ -49,30 +51,29 @@ export async function POST(request: NextRequest) {
 
   if (isDev) {
     const b = body as Record<string, unknown> | null
-    console.log('[widget] incoming venue_id:', b?.venue_id, 'email:', b?.email)
+    // Email omitted to avoid logging PII; venue_id is non-secret.
+    log.debug({ venueId: b?.venue_id }, 'widget.request.received')
   }
 
   // 2. Validate schema
   const parsed = WidgetLeadSchema.safeParse(body)
   if (!parsed.success) {
-    if (isDev) console.error('[widget] schema validation failed:', parsed.error.flatten())
+    log.warn(
+      { route: '/api/widget', errors: parsed.error.flatten().formErrors.length },
+      'widget.request.invalid_payload'
+    )
     return NextResponse.json(devError('Invalid payload', parsed.error.flatten()), { status: 400 })
   }
 
   const { venue_id, name, email, phone, event_date, guest_count, budget, message } = parsed.data
 
   // 2b. Rate-limit by IP + venue. 10/min sliding (see lib/rate-limit.ts).
-  //     A misconfigured / hostile embedder of one venue's widget cannot DoS
-  //     another venue's pipeline.
   const rl = await rateLimitWidget(request, venue_id)
   if (!rl.allowed) {
-    if (isDev) {
-      console.warn('[widget] rate-limited', {
-        venue_id,
-        retryMs: rl.retryAfterMs,
-        mode: rl.mode,
-      })
-    }
+    log.warn(
+      { route: '/api/widget', venueId: venue_id, retryMs: rl.retryAfterMs, mode: rl.mode },
+      'widget.request.rate_limited'
+    )
     return rateLimitedResponse(rl)
   }
 
@@ -84,7 +85,10 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   if (venueErr) {
-    if (isDev) console.error('[widget] Supabase venue lookup error:', venueErr)
+    log.error(
+      { route: '/api/widget', venueId: venue_id, errorMessage: venueErr.message },
+      'widget.venue_lookup.failed'
+    )
     return NextResponse.json(
       devError('Database error while looking up venue', venueErr.message),
       { status: 500 }
@@ -92,7 +96,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!venueRow) {
-    if (isDev) console.warn('[widget] No venue with id:', venue_id)
+    log.warn({ route: '/api/widget', venueId: venue_id }, 'widget.venue_lookup.not_found')
     return NextResponse.json(
       devError(
         'Venue not found',
@@ -105,7 +109,10 @@ export async function POST(request: NextRequest) {
   const venue = venueRow as { id: string; is_active: boolean; name: string }
 
   if (!venue.is_active) {
-    if (isDev) console.warn('[widget] Venue exists but is_active=false:', venue.name)
+    log.warn(
+      { route: '/api/widget', venueId: venue_id },
+      'widget.venue_lookup.inactive'
+    )
     return NextResponse.json(
       devError(
         'Venue is inactive',
@@ -137,7 +144,10 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (leadErr || !lead) {
-    if (isDev) console.error('[widget] lead insert failed:', leadErr)
+    log.error(
+      { route: '/api/widget', venueId: venue_id, errorMessage: leadErr?.message },
+      'widget.lead.insert_failed'
+    )
     return NextResponse.json(devError('Failed to save lead', leadErr?.message), { status: 500 })
   }
 
@@ -159,31 +169,30 @@ export async function POST(request: NextRequest) {
 
   if (convErr || !conv) {
     // Non-fatal — orchestrator will create one if missing — but log loudly.
-    if (isDev) console.error('[widget] conversation pre-create failed (non-fatal):', convErr)
+    log.warn(
+      { route: '/api/widget', leadId: leadData.id, errorMessage: convErr?.message },
+      'widget.conversation.pre_create_failed'
+    )
   }
 
   const conversationId = (conv as { id: string } | null)?.id ?? null
 
-  if (isDev) {
-    console.log('[widget] lead created:', leadData.id, 'conv:', conversationId, 'venue:', venue.name)
-  }
+  log.info(
+    { leadId: leadData.id, conversationId, venueId: venue_id },
+    'widget.lead.created'
+  )
 
-  // 6. Enqueue AI qualification on the job runtime (Inngest in prod, local
-  //    setImmediate in dev). The response below returns immediately — the
-  //    visitor never waits for Anthropic, Supabase writes, or follow-up
-  //    scheduling. We await `enqueueLeadCreated` only because Inngest's
-  //    `.send()` is itself a network call; the actual qualification work
-  //    runs in the background regardless.
+  // 6. Enqueue AI qualification on the job runtime.
   try {
     await enqueueLeadCreated({
       lead_id: leadData.id,
       conversation_id: conversationId,
     })
+    log.info({ leadId: leadData.id }, 'widget.job.enqueued')
   } catch (err) {
     // Even if enqueue fails, the lead is in the DB — the visitor sees success.
     // A monitor on ai_actions / Inngest dashboard will catch the gap.
-    if (isDev) console.error('[widget] enqueue failed (lead still saved):', err)
-    else console.error('[widget] enqueue failed')
+    log.error({ err, leadId: leadData.id }, 'widget.job.enqueue_failed')
   }
 
   return NextResponse.json(

@@ -3,6 +3,7 @@ import { inngest } from '../client'
 import { JOB_EVENTS, type LeadCreatedPayload } from '../events'
 import { createServiceClient } from '@/lib/supabase/service'
 import { handleNewLead } from '@/lib/agents/orchestrator'
+import { log } from '@/lib/log'
 
 /**
  * Core handler — pure function the Inngest binding AND the local fallback call.
@@ -17,6 +18,7 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
 }> {
   const { lead_id, conversation_id } = payload
   const supabase = createServiceClient()
+  log.info({ leadId: lead_id, conversationId: conversation_id }, 'jobs.lead_created.started')
 
   // 1. Look up the lead (service-role — RLS bypassed inside the worker).
   const { data: leadRow, error: leadErr } = await supabase
@@ -26,11 +28,11 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
     .maybeSingle()
 
   if (leadErr) {
-    console.error('[job:qualify-lead] lead lookup failed', { lead_id, error: leadErr.message })
+    log.error({ leadId: lead_id, errorMessage: leadErr.message }, 'jobs.lead_created.lead_lookup_failed')
     throw new Error(`Lead lookup failed: ${leadErr.message}`)
   }
   if (!leadRow) {
-    console.warn('[job:qualify-lead] lead not found, skipping', { lead_id })
+    log.warn({ leadId: lead_id }, 'jobs.lead_created.lead_not_found')
     return { status: 'skipped', reason: 'lead_not_found' }
   }
   const lead = leadRow as { id: string; venue_id: string; name: string }
@@ -43,16 +45,19 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
     .maybeSingle()
 
   if (venueErr) {
-    console.error('[job:qualify-lead] venue lookup failed', { venue_id: lead.venue_id, error: venueErr.message })
+    log.error(
+      { leadId: lead_id, venueId: lead.venue_id, errorMessage: venueErr.message },
+      'jobs.lead_created.venue_lookup_failed'
+    )
     throw new Error(`Venue lookup failed: ${venueErr.message}`)
   }
   if (!venueRow) {
-    console.warn('[job:qualify-lead] venue not found, skipping', { venue_id: lead.venue_id })
+    log.warn({ leadId: lead_id, venueId: lead.venue_id }, 'jobs.lead_created.venue_not_found')
     return { status: 'skipped', reason: 'venue_not_found' }
   }
   const venue = venueRow as { id: string; is_active: boolean }
   if (!venue.is_active) {
-    console.warn('[job:qualify-lead] venue inactive, skipping', { venue_id: lead.venue_id })
+    log.warn({ leadId: lead_id, venueId: lead.venue_id }, 'jobs.lead_created.venue_inactive')
     return { status: 'skipped', reason: 'venue_inactive' }
   }
 
@@ -61,10 +66,11 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
   const result = await handleNewLead(lead.id, venue.id, conversation_id ?? null)
 
   if ((result as { skipped?: boolean }).skipped) {
+    log.info({ leadId: lead_id, venueId: venue.id }, 'jobs.lead_created.skipped')
     return { status: 'skipped', reason: 'already_processed' }
   }
 
-  console.log('[job:qualify-lead] completed', { lead_id, lead_name: lead.name })
+  log.info({ leadId: lead_id, venueId: venue.id }, 'jobs.lead_created.completed')
   return { status: 'completed' }
 }
 

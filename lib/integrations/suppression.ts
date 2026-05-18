@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
+import { log } from '@/lib/log'
 
 /**
  * Global email suppression list (Phase 4B).
@@ -54,7 +55,7 @@ export async function isSuppressed(email: string): Promise<SuppressionCheckResul
 
     if (error) {
       // Fail closed — see header comment.
-      console.error('[suppression] check failed (failing CLOSED)', { error: error.message })
+      log.error({ errorMessage: error.message }, 'suppression.check_failed')
       return { suppressed: true, reason: 'suppression_check_failed' }
     }
 
@@ -62,7 +63,7 @@ export async function isSuppressed(email: string): Promise<SuppressionCheckResul
     const row = data as { reason: SuppressionReason }
     return { suppressed: true, reason: row.reason }
   } catch (err) {
-    console.error('[suppression] check threw (failing CLOSED)', err)
+    log.error({ err }, 'suppression.check_threw')
     return { suppressed: true, reason: 'suppression_check_failed' }
   }
 }
@@ -82,7 +83,7 @@ export async function addSuppression(
 ): Promise<void> {
   const normalized = normalize(email)
   if (!normalized || !normalized.includes('@')) {
-    console.warn('[suppression] addSuppression called with invalid email — ignored')
+    log.warn({}, 'suppression.add_invalid_email')
     return
   }
 
@@ -99,16 +100,12 @@ export async function addSuppression(
       )
 
     if (error) {
-      console.error('[suppression] addSuppression failed', {
-        reason,
-        source,
-        error: error.message,
-      })
+      log.error({ reason, source, errorMessage: error.message }, 'suppression.add_failed')
       return
     }
 
-    console.log('[suppression] added', { reason, source })
+    log.info({ reason, source }, 'suppression.added')
   } catch (err) {
-    console.error('[suppression] addSuppression threw', err)
+    log.error({ err }, 'suppression.add_threw')
   }
 }

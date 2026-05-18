@@ -1,4 +1,5 @@
 import { anthropic, MODEL } from '@/lib/anthropic'
+import { log } from '@/lib/log'
 
 interface VenueContext {
   name: string
@@ -85,10 +86,19 @@ Venue Style: ${venue.style_tags.join(', ') || 'general'}`
     // Strip possible markdown fences
     const clean = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     const result = JSON.parse(clean) as QualificationResult
-    console.log(`[lead-qualifier] score=${result.score} latency=${elapsed}ms tokens=${response.usage.input_tokens + response.usage.output_tokens}`)
+    log.info(
+      {
+        score: result.score,
+        latencyMs: elapsed,
+        tokens: response.usage.input_tokens + response.usage.output_tokens,
+      },
+      'ai.lead_qualifier.completed'
+    )
     return result
   } catch {
-    console.error('[lead-qualifier] Failed to parse response:', text)
+    // Intentionally do NOT log the raw model output — it may contain echoed
+    // lead PII. The job-level log line already captures lead_id + outcome.
+    log.error({ textLength: text.length }, 'ai.lead_qualifier.parse_failed')
     return {
       score: 50,
       reasoning: 'Unable to parse AI response. Manual review recommended.',

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase/service'
 import { addSuppression } from '@/lib/integrations/suppression'
+import { log } from '@/lib/log'
 
 /**
  * Resend webhook handler.
@@ -135,10 +136,10 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
       .eq('provider_message_id', providerMessageId)
       .select('id')
     if (error) {
-      console.error('[resend:webhook] update by provider_message_id failed', {
-        providerMessageId,
-        error: error.message,
-      })
+      log.error(
+        { providerMessageId, errorMessage: error.message },
+        'resend.webhook.update_by_message_id_failed'
+      )
     } else if (data && data.length > 0) {
       matched = true
     }
@@ -153,18 +154,17 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
       .eq('id', outId)
       .select('id')
     if (error) {
-      console.error('[resend:webhook] update by out_id failed', { outId, error: error.message })
+      log.error({ outId, errorMessage: error.message }, 'resend.webhook.update_by_out_id_failed')
     } else if (data && data.length > 0) {
       matched = true
     }
   }
 
   if (!matched) {
-    console.warn('[resend:webhook] no matching outbound_messages row', {
-      providerMessageId,
-      outId,
-      type: event.type,
-    })
+    log.warn(
+      { providerMessageId, outId, type: event.type },
+      'resend.webhook.no_matching_outbound'
+    )
   }
   return matched
 }
@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
   if (!secret) {
     // Production misconfiguration. Refuse to process — every retry will 401
     // until secret is set. This is loud and safe.
-    console.error('[resend:webhook] RESEND_WEBHOOK_SECRET not set — rejecting webhook')
+    log.error({ route: '/api/resend/webhook' }, 'resend.webhook.secret_missing')
     return NextResponse.json({ error: 'webhook_not_configured' }, { status: 401 })
   }
 
@@ -202,14 +202,17 @@ export async function POST(request: NextRequest) {
     event = JSON.parse(rawBody) as ResendEvent
   } catch {
     // Body verified but unparseable — still 200 so Resend doesn't retry.
-    console.error('[resend:webhook] body verified but JSON parse failed')
+    log.error({ route: '/api/resend/webhook' }, 'resend.webhook.parse_failed')
     return NextResponse.json({ ok: true, ignored: 'unparseable' })
   }
 
+  log.info({ type: event.type, emailId: event.data?.email_id }, 'resend.webhook.received')
+
   if (!event?.type || !SUPPORTED_EVENTS.has(event.type)) {
-    if (event?.type) console.log('[resend:webhook] unknown event type, ignoring', { type: event.type })
+    if (event?.type) log.info({ type: event.type }, 'resend.webhook.unknown_event')
     return NextResponse.json({ ok: true, ignored: event?.type ?? 'no_type' })
   }
+  log.info({ type: event.type }, 'resend.webhook.verified')
 
   const recipient = firstAddress(event.data.to)
 
@@ -259,7 +262,7 @@ export async function POST(request: NextRequest) {
       }
       case 'email.delivery_delayed': {
         // Leave status='queued'. Just log so the operator can correlate.
-        console.log('[resend:webhook] delivery delayed', { email_id: event.data.email_id })
+        log.info({ emailId: event.data.email_id }, 'resend.webhook.delivery_delayed')
         break
       }
       // email.sent / email.opened / email.clicked — accepted but not tracked.
@@ -267,7 +270,7 @@ export async function POST(request: NextRequest) {
         break
     }
   } catch (err) {
-    console.error('[resend:webhook] handler threw', { type: event.type, err })
+    log.error({ err, type: event.type }, 'resend.webhook.failed')
     // Still 200 — Resend will retry on non-2xx; our partial state is OK.
   }
 

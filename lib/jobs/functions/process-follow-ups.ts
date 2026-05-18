@@ -4,6 +4,7 @@ import { JOB_EVENTS, type FollowUpDuePayload } from '../events'
 import { createServiceClient } from '@/lib/supabase/service'
 import { generateFollowUpMessage } from '@/lib/agents/followup'
 import { sendEmail, emailConfigured } from '@/lib/integrations/email'
+import { log } from '@/lib/log'
 
 /**
  * Scheduled follow-up processor.
@@ -52,11 +53,11 @@ export async function runProcessSingleFollowUp(
     .maybeSingle()
 
   if (fuErr) {
-    console.error('[job:follow-up] fetch failed', { followUpId, error: fuErr.message })
+    log.error({ followUpId, errorMessage: fuErr.message }, 'jobs.followup.fetch_failed')
     return 'failed'
   }
   if (!fuRow) {
-    console.warn('[job:follow-up] row vanished', { followUpId })
+    log.warn({ followUpId }, 'jobs.followup.row_vanished')
     return 'skipped'
   }
   const fu = fuRow as {
@@ -93,7 +94,7 @@ export async function runProcessSingleFollowUp(
   const history = (messagesRes.data ?? []) as { role: string; content: string }[]
 
   if (!lead || !venue) {
-    console.warn('[job:follow-up] lead or venue gone, cancelling', { followUpId })
+    log.warn({ followUpId }, 'jobs.followup.lead_or_venue_gone')
     await supabase.from('follow_up_schedules').update({ status: 'cancelled' }).eq('id', followUpId)
     return 'skipped'
   }
@@ -105,7 +106,7 @@ export async function runProcessSingleFollowUp(
 
   if (leadStage === 'booked' || leadStage === 'lost' || !aiActive || !leadEmail) {
     const reason = !leadEmail ? 'missing_email' : !aiActive ? 'ai_paused' : 'stage_terminal'
-    console.log('[job:follow-up] ineligible, skipping', { followUpId, stage: leadStage, reason })
+    log.info({ followUpId, stage: leadStage, reason }, 'jobs.followup.skipped')
     await supabase
       .from('follow_up_schedules')
       .update({ status: 'skipped', delivery_error: `eligibility:${reason}` })
@@ -137,7 +138,7 @@ export async function runProcessSingleFollowUp(
     )
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err)
-    console.error('[job:follow-up] generation failed', { followUpId, error: errMessage })
+    log.error({ followUpId, errorMessage: errMessage }, 'jobs.followup.generation_failed')
     await supabase
       .from('follow_up_schedules')
       .update({ status: 'failed', delivery_error: `generation:${errMessage}`.slice(0, 500) })
@@ -187,16 +188,22 @@ export async function runProcessSingleFollowUp(
       .eq('status', 'pending')
 
     if (updateErr) {
-      console.error('[job:follow-up] persist after delivery failed', { followUpId, error: updateErr.message })
+      log.error(
+        { followUpId, errorMessage: updateErr.message },
+        'jobs.followup.persist_after_delivery_failed'
+      )
       return 'failed'
     }
 
-    console.log('[job:follow-up] delivered via Resend', {
-      followUpId,
-      touch: fu.touch_number,
-      to: leadEmail,
-      messageId: sendResult.messageId,
-    })
+    log.info(
+      {
+        followUpId,
+        touch: fu.touch_number,
+        messageId: sendResult.messageId,
+        outboundMessageId: sendResult.outboundMessageId,
+      },
+      'email.send.accepted'
+    )
     return 'sent'
   }
 
@@ -216,15 +223,20 @@ export async function runProcessSingleFollowUp(
       .eq('status', 'pending')
 
     if (updateErr) {
-      console.error('[job:follow-up] persist after suppression failed', { followUpId, error: updateErr.message })
+      log.error(
+        { followUpId, errorMessage: updateErr.message },
+        'jobs.followup.persist_after_suppression_failed'
+      )
       return 'failed'
     }
-    console.warn('[job:follow-up] skipped — recipient is on suppression list', {
-      followUpId,
-      to: leadEmail,
-      reason: sendResult.error,
-      outboundMessageId: sendResult.outboundMessageId,
-    })
+    log.warn(
+      {
+        followUpId,
+        reason: sendResult.error,
+        outboundMessageId: sendResult.outboundMessageId,
+      },
+      'email.suppressed'
+    )
     return 'skipped'
   }
 
@@ -243,14 +255,16 @@ export async function runProcessSingleFollowUp(
       .eq('status', 'pending')
 
     if (updateErr) {
-      console.error('[job:follow-up] persist after console fallback failed', { followUpId, error: updateErr.message })
+      log.error(
+        { followUpId, errorMessage: updateErr.message },
+        'jobs.followup.persist_after_console_fallback_failed'
+      )
       return 'failed'
     }
-    console.warn('[job:follow-up] console-fallback — NOT delivered to inbox', {
-      followUpId,
-      to: leadEmail,
-      reason: 'no_resend_key',
-    })
+    log.warn(
+      { followUpId, reason: 'no_resend_key' },
+      'jobs.followup.console_fallback'
+    )
     return 'skipped'
   }
 
@@ -266,14 +280,15 @@ export async function runProcessSingleFollowUp(
     .eq('status', 'pending')
 
   if (updateErr) {
-    console.error('[job:follow-up] persist after send failure failed', { followUpId, error: updateErr.message })
+    log.error(
+      { followUpId, errorMessage: updateErr.message },
+      'jobs.followup.persist_after_send_failure_failed'
+    )
   }
-  console.error('[job:follow-up] send failed', {
-    followUpId,
-    to: leadEmail,
-    provider: sendResult.provider,
-    error: sendResult.error,
-  })
+  log.error(
+    { followUpId, provider: sendResult.provider, errorMessage: sendResult.error },
+    'jobs.followup.failed'
+  )
   return 'failed'
 }
 
@@ -291,7 +306,7 @@ async function runScheduledBatch(): Promise<ProcessResult> {
     .limit(BATCH_LIMIT)
 
   if (error) {
-    console.error('[job:follow-up:batch] query failed', error.message)
+    log.error({ errorMessage: error.message }, 'jobs.followup.batch_query_failed')
     throw new Error(`Follow-up batch query failed: ${error.message}`)
   }
 
@@ -306,12 +321,12 @@ async function runScheduledBatch(): Promise<ProcessResult> {
       else if (outcome === 'skipped') result.skipped++
       else result.failed++
     } catch (err) {
-      console.error('[job:follow-up:batch] row threw', { id: row.id, err })
+      log.error({ err, followUpId: row.id }, 'jobs.followup.batch_row_threw')
       result.failed++
     }
   }
 
-  console.log('[job:follow-up:batch] complete', result)
+  log.info(result, 'jobs.followup.batch_complete')
   return result
 }
 

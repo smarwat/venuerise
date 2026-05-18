@@ -5,6 +5,7 @@ import {
   type LeadCreatedPayload,
   type FollowUpDuePayload,
 } from './events'
+import { log } from '@/lib/log'
 
 /**
  * Job enqueue abstraction.
@@ -37,16 +38,16 @@ export async function enqueueLeadCreated(payload: LeadCreatedPayload): Promise<v
   if (inngestConfigured()) {
     try {
       await inngest.send({ name: JOB_EVENTS.LEAD_CREATED, data: payload })
-      console.log('[jobs] enqueued lead.created via Inngest', { lead_id: payload.lead_id })
+      log.info({ leadId: payload.lead_id, runtime: 'inngest' }, 'jobs.lead_created.enqueued')
     } catch (err) {
-      console.error('[jobs] Inngest send failed for lead.created', err)
+      log.error({ err, leadId: payload.lead_id, runtime: 'inngest' }, 'jobs.lead_created.enqueue_failed')
       throw err
     }
     return
   }
 
   // Local fallback — fire-and-forget on the same process.
-  console.warn('[jobs] Inngest not configured — running lead.created locally (dev only)')
+  log.warn({ leadId: payload.lead_id, runtime: 'local-fallback' }, 'jobs.lead_created.local_fallback')
   fireLocally(async () => {
     const { runQualifyLead } = await import('./functions/qualify-lead')
     await runQualifyLead(payload)
@@ -59,15 +60,15 @@ export async function enqueueFollowUpDue(payload: FollowUpDuePayload): Promise<v
   if (inngestConfigured()) {
     try {
       await inngest.send({ name: JOB_EVENTS.FOLLOWUP_DUE, data: payload })
-      console.log('[jobs] enqueued followup.due via Inngest', { follow_up_id: payload.follow_up_id })
+      log.info({ followUpId: payload.follow_up_id, runtime: 'inngest' }, 'jobs.followup.enqueued')
     } catch (err) {
-      console.error('[jobs] Inngest send failed for followup.due', err)
+      log.error({ err, followUpId: payload.follow_up_id, runtime: 'inngest' }, 'jobs.followup.enqueue_failed')
       throw err
     }
     return
   }
 
-  console.warn('[jobs] Inngest not configured — running followup.due locally (dev only)')
+  log.warn({ followUpId: payload.follow_up_id, runtime: 'local-fallback' }, 'jobs.followup.local_fallback')
   fireLocally(async () => {
     const { runProcessSingleFollowUp } = await import('./functions/process-follow-ups')
     await runProcessSingleFollowUp(payload.follow_up_id)
@@ -82,7 +83,7 @@ function fireLocally(work: () => Promise<unknown>, label: string) {
   // doesn't crash the dev server.
   setImmediate(() => {
     work().catch((err) => {
-      console.error(`[jobs:local] ${label} failed:`, err)
+      log.error({ err, label, runtime: 'local-fallback' }, 'jobs.local_runner.failed')
     })
   })
 }

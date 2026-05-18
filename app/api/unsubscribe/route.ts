@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyInternalRequest } from '@/lib/auth/internal-hmac'
 import { addSuppression } from '@/lib/integrations/suppression'
+import { log } from '@/lib/log'
 
 /**
  * Unsubscribe handler.
@@ -86,7 +87,7 @@ export async function GET(request: NextRequest) {
   try {
     valid = verifyInternalRequest({ email, ts }, sig)
   } catch (err) {
-    console.error('[unsubscribe] verify threw:', err)
+    log.error({ err }, 'unsubscribe.verify.threw')
     return respondHtml(
       htmlPage(
         'Configuration error',
@@ -121,6 +122,7 @@ export async function GET(request: NextRequest) {
 
   // ---- Add to suppression list (idempotent) ----
   await addSuppression(email, 'unsubscribe', 'unsubscribe_link')
+  log.info({ route: '/api/unsubscribe' }, 'unsubscribe.completed')
 
   return respondHtml(
     htmlPage(

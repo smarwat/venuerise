@@ -2,6 +2,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { qualifyLead } from './lead-qualifier'
 import { generateConversationReply } from './conversation'
 import { generateFollowUpMessage, getFollowUpScheduledAt, FOLLOW_UP_DELAYS_MINUTES } from './followup'
+import { log } from '@/lib/log'
 
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
@@ -41,19 +42,18 @@ export async function handleNewLead(
     const venue = venueRes.data as Record<string, unknown> | null
 
     if (!lead) {
-      console.error('[orchestrator] handleNewLead: lead not found', { leadId, venueId })
+      log.error({ leadId, venueId }, 'orchestrator.handle_new_lead.lead_not_found')
       throw new Error(`Lead ${leadId} not found`)
     }
     if (!venue) {
-      console.error('[orchestrator] handleNewLead: venue not found', { leadId, venueId })
+      log.error({ leadId, venueId }, 'orchestrator.handle_new_lead.venue_not_found')
       throw new Error(`Venue ${venueId} not found`)
     }
     if (lead.venue_id !== venueId) {
-      console.error('[orchestrator] handleNewLead: lead/venue mismatch', {
-        leadId,
-        passedVenueId: venueId,
-        actualVenueId: lead.venue_id,
-      })
+      log.error(
+        { leadId, passedVenueId: venueId, actualVenueId: lead.venue_id },
+        'orchestrator.handle_new_lead.lead_venue_mismatch'
+      )
       throw new Error('Lead does not belong to the supplied venue')
     }
 
@@ -142,10 +142,10 @@ export async function handleNewLead(
       .eq('role', 'ai')
 
     if ((existingAiMsgs.count ?? 0) > 0) {
-      console.warn('[orchestrator] handleNewLead: AI message already exists for conversation, skipping re-run', {
-        leadId,
-        conversationId: conversation.id,
-      })
+      log.warn(
+        { leadId, conversationId: conversation.id },
+        'orchestrator.handle_new_lead.idempotent_skip'
+      )
       await logAction(supabase, {
         venue_id: venueId,
         lead_id: leadId,

@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { getJobsRuntime } from '@/lib/jobs/queue'
 import { emailConfigured } from '@/lib/integrations/email'
 import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
 
 /**
  * Health endpoint for uptime monitors.
@@ -38,12 +39,12 @@ async function checkSupabase(): Promise<Status> {
       .select('id', { count: 'exact', head: true })
       .limit(1)
     if (error) {
-      console.error('[health] supabase probe error:', error.message)
+      log.error({ errorMessage: error.message }, 'health.supabase.down')
       return 'down'
     }
     return 'ok'
   } catch (err) {
-    console.error('[health] supabase probe threw:', err)
+    log.error({ err }, 'health.supabase.threw')
     return 'down'
   }
 }

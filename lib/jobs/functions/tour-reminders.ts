@@ -3,6 +3,7 @@ import { inngest } from '../client'
 import { createServiceClient } from '@/lib/supabase/service'
 import { generateTourReminder } from '@/lib/agents/tour-scheduler'
 import { sendEmail, emailConfigured } from '@/lib/integrations/email'
+import { log } from '@/lib/log'
 
 /**
  * Scheduled tour-reminder generator + sender.
@@ -85,7 +86,7 @@ async function processReminderBatch(
     .limit(BATCH_LIMIT)
 
   if (error) {
-    console.error(`[job:tour-reminders:${hoursUntil}h] query failed`, error.message)
+    log.error({ hoursUntil, errorMessage: error.message }, 'jobs.tour_reminders.query_failed')
     throw new Error(`Tour reminders ${hoursUntil}h query failed: ${error.message}`)
   }
 
@@ -96,12 +97,12 @@ async function processReminderBatch(
 
   for (const tour of rows) {
     if (!tour.leads || !tour.venues) {
-      console.warn(`[job:tour-reminders:${hoursUntil}h] orphan tour, skipping`, tour.id)
+      log.warn({ hoursUntil, tourId: tour.id }, 'jobs.tour_reminders.orphan_tour')
       skipped++
       continue
     }
     if (!tour.leads.email) {
-      console.warn(`[job:tour-reminders:${hoursUntil}h] no lead email, skipping`, tour.id)
+      log.warn({ hoursUntil, tourId: tour.id }, 'jobs.tour_reminders.missing_lead_email')
       await logTourAction(supabase, {
         venue_id: tour.venue_id,
         lead_id: tour.lead_id,
@@ -126,7 +127,7 @@ async function processReminderBatch(
       })
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err)
-      console.error(`[job:tour-reminders:${hoursUntil}h] generation failed`, { tour_id: tour.id, err })
+      log.error({ err, hoursUntil, tourId: tour.id }, 'jobs.tour_reminders.generation_failed')
       await logTourAction(supabase, {
         venue_id: tour.venue_id,
         lead_id: tour.lead_id,
@@ -164,10 +165,10 @@ async function processReminderBatch(
         .eq(flagColumn, false) // optimistic concurrency
 
       if (updateErr) {
-        console.error(`[job:tour-reminders:${hoursUntil}h] flag update failed after send`, {
-          tour_id: tour.id,
-          error: updateErr.message,
-        })
+        log.error(
+          { hoursUntil, tourId: tour.id, errorMessage: updateErr.message },
+          'jobs.tour_reminders.flag_update_failed'
+        )
         failed++
         continue
       }
@@ -178,11 +179,10 @@ async function processReminderBatch(
         output_summary: `Delivered to ${tour.leads.email} (resend:${sendResult.messageId ?? '?'})`,
         success: true,
       })
-      console.log(`[job:tour-reminders:${hoursUntil}h] delivered`, {
-        tour_id: tour.id,
-        lead: tour.leads.name,
-        messageId: sendResult.messageId,
-      })
+      log.info(
+        { hoursUntil, tourId: tour.id, messageId: sendResult.messageId },
+        'jobs.tour_reminders.delivered'
+      )
       delivered++
       continue
     }
@@ -192,11 +192,10 @@ async function processReminderBatch(
     //     (ii)  console-fallback (dev) → flag NOT flipped, will retry next scan
     //     (iii) real provider error → flag NOT flipped, log + count failed
     if (sendResult.error?.startsWith('suppressed:')) {
-      console.warn(`[job:tour-reminders:${hoursUntil}h] skipped — recipient suppressed`, {
-        tour_id: tour.id,
-        to: tour.leads.email,
-        reason: sendResult.error,
-      })
+      log.warn(
+        { hoursUntil, tourId: tour.id, reason: sendResult.error },
+        'jobs.tour_reminders.skipped_suppressed'
+      )
       await logTourAction(supabase, {
         venue_id: tour.venue_id,
         lead_id: tour.lead_id,
@@ -216,10 +215,10 @@ async function processReminderBatch(
     }
 
     if (sendResult.provider === 'console' && !emailConfigured()) {
-      console.warn(`[job:tour-reminders:${hoursUntil}h] console-fallback — NOT delivered`, {
-        tour_id: tour.id,
-        to: tour.leads.email,
-      })
+      log.warn(
+        { hoursUntil, tourId: tour.id, reason: 'no_resend_key' },
+        'jobs.tour_reminders.console_fallback'
+      )
       await logTourAction(supabase, {
         venue_id: tour.venue_id,
         lead_id: tour.lead_id,
@@ -244,11 +243,10 @@ async function processReminderBatch(
       success: false,
       error_message: sendResult.error?.slice(0, 500) ?? 'unknown_send_error',
     })
-    console.error(`[job:tour-reminders:${hoursUntil}h] send failed`, {
-      tour_id: tour.id,
-      to: tour.leads.email,
-      error: sendResult.error,
-    })
+    log.error(
+      { hoursUntil, tourId: tour.id, errorMessage: sendResult.error },
+      'jobs.tour_reminders.send_failed'
+    )
     failed++
   }
 
@@ -274,7 +272,7 @@ async function runReminderScan(): Promise<ReminderResult> {
     skipped2h: r2.skipped,
     failed2h: r2.failed,
   }
-  console.log('[job:tour-reminders] scan complete', result)
+  log.info(result, 'jobs.tour_reminders.scan_complete')
   return result
 }
 

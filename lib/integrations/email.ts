@@ -3,6 +3,7 @@ import { Resend } from 'resend'
 import { createServiceClient } from '@/lib/supabase/service'
 import { isSuppressed } from './suppression'
 import { signInternalRequest } from '@/lib/auth/internal-hmac'
+import { log } from '@/lib/log'
 
 /**
  * Email delivery integration — Resend, with a console fallback for local dev.
@@ -132,7 +133,7 @@ function buildUnsubscribeUrl(email: string): string | null {
     return u.toString()
   } catch (err) {
     // Missing INTERNAL_API_SECRET — surface but don't block the send.
-    if (isDev) console.warn('[email] could not sign unsubscribe link:', err)
+    log.warn({ err }, 'email.unsubscribe_link.sign_failed')
     return null
   }
 }
@@ -206,12 +207,12 @@ async function createOutboundRow(input: OutboundRowInput): Promise<string | null
       .single()
 
     if (error) {
-      console.error('[email:outbound] insert failed', { error: error.message })
+      log.error({ errorMessage: error.message }, 'email.outbound.insert_failed')
       return null
     }
     return (data as { id: string }).id
   } catch (err) {
-    console.error('[email:outbound] insert threw', err)
+    log.error({ err }, 'email.outbound.insert_threw')
     return null
   }
 }
@@ -229,7 +230,7 @@ async function markOutboundAccepted(
       .update({ provider_message_id: providerMessageId })
       .eq('id', id)
   } catch (err) {
-    console.error('[email:outbound] markAccepted threw', err)
+    log.error({ err }, 'email.outbound.mark_accepted_threw')
   }
 }
 
@@ -241,7 +242,7 @@ async function markOutboundFailed(id: string, error: string): Promise<void> {
       .update({ status: 'failed', error: error.slice(0, 500) })
       .eq('id', id)
   } catch (err) {
-    console.error('[email:outbound] markFailed threw', err)
+    log.error({ err }, 'email.outbound.mark_failed_threw')
   }
 }
 
@@ -272,7 +273,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
   const supp = await isSuppressed(to)
   if (supp.suppressed) {
     const errMsg = `suppressed:${supp.reason ?? 'unknown'}`
-    if (isDev) console.warn('[email] suppressed — NOT sending', { to, reason: supp.reason })
+    log.warn({ reason: supp.reason, venueId, leadId }, 'email.suppressed')
 
     const outboundId = await createOutboundRow({
       venueId,
@@ -305,13 +306,14 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
   // ---- 3a. Console fallback (no Resend configured) ----
   if (!emailConfigured()) {
     if (isDev) {
-      console.warn(
-        '[email:console] RESEND not configured — email NOT delivered. ' +
-          'Set RESEND_API_KEY + RESEND_FROM_EMAIL to enable real delivery.',
-        { to, subject, preview: (text ?? html ?? '').slice(0, 120) }
+      // Dev-only: surface a short preview to the console so developers can
+      // see what would have been sent. PII (full body) intentionally truncated.
+      log.warn(
+        { venueId, leadId, subject, preview: (text ?? html ?? '').slice(0, 120) },
+        'email.send.console_fallback'
       )
     } else {
-      console.error('[email:console] RESEND not configured in production environment.')
+      log.error({ venueId, leadId }, 'email.send.console_fallback_in_production')
     }
 
     const outboundId = await createOutboundRow({
@@ -392,7 +394,10 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     })
 
     if (error) {
-      console.error('[email:resend] send failed', { to, subject, error: error.message })
+      log.error(
+        { venueId, leadId, subject, errorMessage: error.message },
+        'email.send.failed'
+      )
       if (outboundId) await markOutboundFailed(outboundId, error.message)
       return {
         delivered: false,
@@ -403,7 +408,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     }
 
     if (!data?.id) {
-      console.error('[email:resend] send returned no id', { to, subject })
+      log.error({ venueId, leadId, subject }, 'email.send.no_message_id')
       if (outboundId) await markOutboundFailed(outboundId, 'No message id returned')
       return {
         delivered: false,
@@ -416,14 +421,10 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     // Persist provider_message_id; status stays 'queued' until webhook fires.
     if (outboundId) await markOutboundAccepted(outboundId, data.id)
 
-    if (isDev) {
-      console.log('[email:resend] accepted (awaiting webhook for delivery confirmation)', {
-        to,
-        subject,
-        messageId: data.id,
-        outboundMessageId: outboundId,
-      })
-    }
+    log.info(
+      { venueId, leadId, messageId: data.id, outboundMessageId: outboundId },
+      'email.send.accepted'
+    )
     return {
       delivered: true,
       provider: 'resend',
@@ -432,7 +433,7 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown Resend error'
-    console.error('[email:resend] threw', { to, subject, error: message })
+    log.error({ err, venueId, leadId, subject }, 'email.send.threw')
     if (outboundId) await markOutboundFailed(outboundId, message)
     return {
       delivered: false,
