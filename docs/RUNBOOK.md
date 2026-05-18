@@ -364,6 +364,25 @@ order by e.replayed_at desc;
 
 A handler-failed replay still counts: `replay_count` increments any time dispatch FINISHES (success or failure). Only Stripe-retrieve failures (502 from the replay route) skip the counter — those aborts happen before dispatch.
 
+### 2.4g0 Cron metadata append failed (Phase 7L)
+
+Symptom: trial-reminder or dunning cron summary reports `failed > 0` and the log line is `jobs.billing_*.metadata_append_failed`.
+
+Phase 7L moved both crons' metadata writes from read-modify-write to an atomic Postgres RPC, `public.append_subscription_metadata_array(p_subscription_id uuid, p_array_key text, p_entry jsonb)`. A `failed` count from a metadata append means the RPC errored — the email DID send, we just couldn't record it.
+
+1. **Verify the function still exists**:
+   ```sql
+   select proname, pg_get_function_arguments(oid), pg_get_function_result(oid)
+   from pg_proc
+   where proname = 'append_subscription_metadata_array';
+   ```
+2. **Common causes**:
+   - Subscription row was hard-deleted between the cron's `select` and the RPC call (the RPC raises `subscription not found`).
+   - Migration 010 was rolled back; re-apply.
+   - Service-role key rotation in progress; the GRANT on the function targets `service_role` — if the role identity shifted, the RPC EXECUTE fails with permission denied.
+3. **Sentry captures every RPC error** via `billing.metadata.append_rpc_error` (or `…_threw` for network errors). Search Sentry for those tags + the `subscriptionId` from the log line.
+4. **Recovery**: the email already sent. Next cron run will see the stale metadata, skip the idempotency check, and may re-send. That's expected — losing one append should not cascade. If two emails for the same window arrive, the operator can confirm + apologize.
+
 ### 2.4g Dunning didn't fire (Phase 7K)
 
 The dunning workflow is an Inngest cron (`billing-dunning`) on schedule `0 16 * * *` (daily 4pm UTC). For every `past_due` subscription, it sends the venue owner a "update your payment method" email with a Stripe Customer Portal link. Caps at 3 attempts per `current_period_end`; 48h spacing between attempts.

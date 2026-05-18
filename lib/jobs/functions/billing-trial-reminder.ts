@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { sendEmail } from '@/lib/integrations/email'
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
+import { appendSubscriptionMetadataArray } from '@/lib/billing/subscription-metadata'
 
 /**
  * Phase 7H — billing trial reminder cron.
@@ -109,14 +110,10 @@ function alreadyReminded(metadata: Record<string, unknown> | null, key: string):
   )
 }
 
-function appendReminder(
-  existing: Record<string, unknown> | null,
-  entry: ReminderEntry
-): Record<string, unknown> {
-  const base = (existing ?? {}) as Record<string, unknown>
-  const prior = Array.isArray(base.reminders_sent) ? (base.reminders_sent as unknown[]) : []
-  return { ...base, reminders_sent: [...prior, entry] }
-}
+// (Phase 7L) — local `appendReminder` helper removed; writes now go
+// through `appendSubscriptionMetadataArray` which is atomic at the SQL
+// level. The read-side `alreadyReminded` check above stays as a cheap
+// pre-flight; the new RPC handles the write race.
 
 // ---------------------------------------------------------------------------
 // Owner lookup
@@ -281,7 +278,11 @@ async function runTrialReminderScan(): Promise<RunSummary> {
       continue
     }
 
-    // Delivered → record the reminder so future runs skip this row.
+    // Delivered → record the reminder via the atomic RPC (Phase 7L) so
+    // a concurrent Stripe webhook sync can't overwrite this entry. The
+    // helper returns null on failure (logs + Sentry-captures internally);
+    // we treat that as a hard failure for the batch so the operator
+    // notices in the summary counter.
     const entry: ReminderEntry = {
       kind: REMINDER_KIND,
       key,
@@ -289,30 +290,28 @@ async function runTrialReminderScan(): Promise<RunSummary> {
       provider: (result.provider as ReminderEntry['provider']) ?? 'unknown',
       message_id: result.messageId,
     }
-    const nextMetadata = appendReminder(sub.metadata, entry)
+    const updated = await appendSubscriptionMetadataArray({
+      subscriptionId: sub.id,
+      arrayKey: 'reminders_sent',
+      // Spread into a plain record so TS accepts the strict interface
+      // against the helper's Record<string, unknown> signature.
+      entry: { ...entry },
+      requestId: undefined,
+    })
 
-    const { error: updateErr } = await supabase
-      .from('subscriptions')
-      .update({ metadata: nextMetadata })
-      .eq('id', sub.id)
-
-    if (updateErr) {
-      // The email IS in flight; we just can't record it. Log loudly so an
-      // operator notices, but don't fail the batch. Next run will see the
-      // stale metadata and may try again — acceptable for the rare case;
-      // the alternative (failing here) would leave us no way to recover.
-      subLog.error(
-        { err: updateErr },
-        'jobs.billing_trial_reminder.metadata_update_failed'
-      )
-      captureJobError('billing-trial-reminder', updateErr, { venueId: sub.venue_id })
-    } else {
-      subLog.info(
-        { provider: result.provider, messageId: result.messageId },
-        'jobs.billing_trial_reminder.sent'
-      )
+    if (!updated) {
+      // The email IS in flight; we just can't record it. Logged + Sentry-
+      // captured by the helper. Surface in the batch counter so the
+      // operator sees a non-zero `failed` value and investigates.
+      subLog.error({}, 'jobs.billing_trial_reminder.metadata_append_failed')
+      summary.failed++
+      continue
     }
 
+    subLog.info(
+      { provider: result.provider, messageId: result.messageId },
+      'jobs.billing_trial_reminder.sent'
+    )
     summary.sent++
   }
 

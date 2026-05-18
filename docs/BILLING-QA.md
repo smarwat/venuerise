@@ -503,6 +503,66 @@ Full no-send playbook: [RUNBOOK.md §2.4g](./RUNBOOK.md). Short version:
 7. Stripe portal can be created (`billing_customers` row exists).
 8. Resend is `configured` in production.
 
+## 7g. Atomic metadata helper (Phase 7L)
+
+Both billing crons (trial reminder + dunning) write entries to `subscriptions.metadata` JSONB arrays:
+- trial reminder → `metadata.reminders_sent`
+- dunning → `metadata.dunning_sent`
+
+Before Phase 7L, the writes were read-modify-write from the cron's Node code. The Stripe webhook's subscription sync overwrites the whole `metadata` column on every update — if a sync landed between a cron's `select` and `update`, the cron's freshly-appended entry vanished silently.
+
+Phase 7L closes the race with a Postgres function:
+
+```sql
+create or replace function public.append_subscription_metadata_array(
+  p_subscription_id uuid,
+  p_array_key       text,
+  p_entry           jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+```
+
+The function `jsonb_set`s the target array inside a single `UPDATE`. Postgres locks the row for the duration of the update, so the Stripe sync (which is a separate transaction) either lands strictly before OR strictly after — the appended entry is never lost.
+
+### GRANT model
+
+`security definer` + `set search_path = public` + `revoke all from public` + `grant execute to service_role`. The anon and authenticated roles cannot call the function. Only `lib/billing/subscription-metadata.ts` (which uses the service-role Supabase client) invokes it.
+
+### Helper surface
+
+```ts
+appendSubscriptionMetadataArray({
+  subscriptionId,
+  arrayKey: 'reminders_sent' | 'dunning_sent' | string,
+  entry: Record<string, unknown>,
+  requestId?: string,
+}): Promise<Record<string, unknown> | null>
+```
+
+Returns the updated `metadata` object on success, `null` on failure (logged + Sentry-captured inside the helper). Cron callers treat `null` as "count as failed, continue batch" — never throws.
+
+### Known limitation (race still present on the read side)
+
+The crons still do an idempotency PRE-CHECK by reading `metadata.reminders_sent` / `metadata.dunning_sent` before sending. Phase 7L only fixed the WRITE race. Theoretically two cron invocations starting simultaneously could:
+1. Both read `metadata.reminders_sent`, both see no key for today.
+2. Both send the email.
+3. Both call the RPC; both succeed (append is additive — you get two entries with the same key).
+
+In practice the Inngest scheduler de-duplicates invocations of the same cron function, so this requires a deliberate manual double-trigger to provoke. The downstream effect is "a customer got two reminder emails on the same day", which is recoverable + non-financial. A future migration could promote the dedup to the SQL level by making the RPC check `metadata.reminders_sent @> jsonb_build_array(jsonb_build_object('key', entry->>'key'))` before appending — out of scope here.
+
+### SQL verification
+
+```sql
+select proname, pg_get_function_arguments(oid), pg_get_function_result(oid)
+from pg_proc
+where proname = 'append_subscription_metadata_array';
+```
+
+Expected: `(p_subscription_id uuid, p_array_key text, p_entry jsonb)` returning `jsonb`.
+
 ## 7c. Trial reminder cron (Phase 7H)
 
 Daily Inngest function `billing-trial-reminder`, cron `0 14 * * *` (2pm UTC ≈ 9am ET / 8am CT depending on DST). For every `subscriptions` row whose `trial_end` lands on (now + 3 days, UTC) and hasn't been reminded yet, the owner gets a "Your VenueRise trial ends in 3 days" email.

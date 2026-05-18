@@ -189,6 +189,25 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10g. Atomic metadata append (Phase 7L)
+
+Migration 010 added one SECURITY DEFINER function: `public.append_subscription_metadata_array(p_subscription_id uuid, p_array_key text, p_entry jsonb) returns jsonb`.
+
+**Why a function?** Read-modify-write on `subscriptions.metadata` from JS races with the Stripe webhook sync (which overwrites the whole `metadata` column wholesale). The function does the JSONB array append inside a single `UPDATE` so Postgres's per-row locking serializes both writers.
+
+**SECURITY DEFINER hardening**:
+- `set search_path = public` — defends against schema-injection attacks on schema-qualified DDL.
+- `revoke all from public` + `grant execute to service_role` — anon and authenticated roles cannot call it. Only billing cron jobs (via the service-role client) execute it.
+- The function only mutates `subscriptions.metadata`. It cannot escalate to other tables or columns.
+
+**Input validation**: the function raises if `p_array_key` is null/empty or if `p_entry` is null. It also raises `subscription not found` if `p_subscription_id` doesn't match a row (defends callers that pass stale ids from cached lookups).
+
+**Race scope**: WRITE side only. The cron's pre-send idempotency check (`already in metadata.reminders_sent?`) is still read-from-Node, so two simultaneous cron invocations can theoretically send two emails for the same key. Inngest's per-function dedup makes this require a deliberate manual double-trigger. See [BILLING-QA.md §7g](./BILLING-QA.md) for the trade-off.
+
+**No new env vars.** The function uses the existing `service_role` grant from migration 008's pattern.
+
+---
+
 ## 10f. Replay attribution (Phase 7J)
 
 Migration 009 added three columns to `billing_events_log` — `replayed_at`, `replayed_by`, `replay_count` — and one SECURITY DEFINER function — `public.record_billing_event_replay(p_event_id uuid, p_user_id uuid) returns integer`.

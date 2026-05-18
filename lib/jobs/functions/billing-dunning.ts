@@ -3,6 +3,7 @@ import { inngest } from '../client'
 import { createServiceClient } from '@/lib/supabase/service'
 import { sendEmail } from '@/lib/integrations/email'
 import { createBillingPortalSession, BillingError } from '@/lib/billing/billing-service'
+import { appendSubscriptionMetadataArray } from '@/lib/billing/subscription-metadata'
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
 
@@ -358,7 +359,11 @@ async function runDunningScan(): Promise<RunSummary> {
       continue
     }
 
-    // Delivered — append entry + persist metadata.
+    // Delivered — append entry atomically (Phase 7L). The RPC handles the
+    // race between this cron and the Stripe webhook sync; helper returns
+    // null on failure and logs/captures internally. We count those as
+    // hard failures so the operator sees a non-zero `failed` value and
+    // can investigate before the next 48h window opens.
     const entry: DunningEntry = {
       kind: REMINDER_KIND,
       key,
@@ -367,29 +372,25 @@ async function runDunningScan(): Promise<RunSummary> {
       provider: (result.provider as DunningEntry['provider']) ?? 'unknown',
       message_id: result.messageId,
     }
-    const nextMetadata = appendDunningEntry(sub.metadata, entry)
+    const updated = await appendSubscriptionMetadataArray({
+      subscriptionId: sub.id,
+      arrayKey: 'dunning_sent',
+      // Spread into a plain record so TS accepts the strict interface
+      // against the helper's Record<string, unknown> signature.
+      entry: { ...entry },
+      requestId: undefined,
+    })
 
-    const { error: updateErr } = await supabase
-      .from('subscriptions')
-      .update({ metadata: nextMetadata })
-      .eq('id', sub.id)
-
-    if (updateErr) {
-      // Email is in flight; we just can't record it. Log loudly so an
-      // operator notices — next run may re-send because the attempt
-      // counter didn't budge. Same trade-off as Phase 7H.
-      subLog.error(
-        { err: updateErr },
-        'jobs.billing_dunning.metadata_update_failed'
-      )
-      captureJobError('billing-dunning', updateErr, { venueId: sub.venue_id })
-    } else {
-      subLog.info(
-        { provider: result.provider, messageId: result.messageId },
-        'jobs.billing_dunning.sent'
-      )
+    if (!updated) {
+      subLog.error({}, 'jobs.billing_dunning.metadata_append_failed')
+      summary.failed++
+      continue
     }
 
+    subLog.info(
+      { provider: result.provider, messageId: result.messageId },
+      'jobs.billing_dunning.sent'
+    )
     summary.sent++
   }
 
