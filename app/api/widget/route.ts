@@ -9,6 +9,59 @@ import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
 
+/**
+ * Phase 7A — widget origin allowlist.
+ *
+ * The widget is intentionally a public endpoint (any visitor on a venue's
+ * site can submit a lead), but in production we don't want random scripts
+ * on the open internet POSTing to it. A lightweight Origin check raises
+ * the floor without breaking the legitimate flows.
+ *
+ * Allowed callers:
+ *   - Requests with NO Origin header (curl, server-to-server, native fetch
+ *     from server runtimes) — accepted in BOTH dev and prod. The widget
+ *     /api/widget/[venueId]/config GET is the cache-friendly path; POST
+ *     bodies come from browsers and *do* set Origin.
+ *   - Origin matches NEXT_PUBLIC_APP_URL.
+ *   - In development: any localhost / 127.0.0.1 / 0.0.0.0 origin.
+ *
+ * Rejected: a real-looking but non-matching Origin in production.
+ *
+ * KNOWN LIMITATION: there's no per-venue `allowed_origins` column yet, so
+ * we can't yet allow a real venue website (e.g. https://magnolia.com) to
+ * embed. Track in docs/SECURITY.md → "Widget origin allowlist".
+ */
+function isOriginAllowed(request: Request): boolean {
+  const origin = request.headers.get('origin')
+  if (!origin) return true // curl / server-to-server / native fetch
+  const trimmed = origin.trim().toLowerCase()
+  if (trimmed === 'null') return true // file:// or sandboxed iframes
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim().toLowerCase()
+  if (appUrl) {
+    try {
+      const appOrigin = new URL(appUrl).origin.toLowerCase()
+      if (trimmed === appOrigin) return true
+    } catch {
+      // Malformed env value — fall through to dev allowance.
+    }
+  }
+  if (isDev) {
+    try {
+      const u = new URL(trimmed)
+      if (
+        u.hostname === 'localhost' ||
+        u.hostname === '127.0.0.1' ||
+        u.hostname === '0.0.0.0'
+      ) {
+        return true
+      }
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
 const WidgetLeadSchema = z.object({
   venue_id: z.string().uuid(),
   name: z.string().min(1).max(100),
@@ -29,6 +82,15 @@ export async function POST(request: NextRequest) {
   const requestId = getOrCreateRequestId(request)
   const reqLog = log.child({ requestId, route: '/api/widget' })
   const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
+  // Origin allowlist — block scripts on random domains. See isOriginAllowed.
+  if (!isOriginAllowed(request)) {
+    reqLog.warn(
+      { origin: request.headers.get('origin') ?? null },
+      'widget.origin_not_allowed'
+    )
+    return respond(NextResponse.json({ error: 'origin_not_allowed' }, { status: 403 }))
+  }
 
   // 0. Verify env is loaded
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {

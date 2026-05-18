@@ -30,6 +30,22 @@ npm run build
 npm start
 ```
 
+## Production deployment
+
+VenueRise is now a full product, not just a landing page. Before promoting a build to production, read the operational docs:
+
+- **[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)** — env variables, provisioning order, post-deploy verification.
+- **[docs/RUNBOOK.md](./docs/RUNBOOK.md)** — smoke tests + incident playbooks for widget, AI, email, jobs.
+- **[docs/SECURITY.md](./docs/SECURITY.md)** — trust boundaries, RLS model, role model, header policy.
+
+Quick checks:
+
+```bash
+npm run verify           # build + no-console-server lint
+npm run check:prod-env   # asserts the prod env-var set is present
+curl https://<deploy>/api/readiness | jq .
+```
+
 ## Project Structure
 
 ```

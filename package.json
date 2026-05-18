@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check:no-console-server": "! grep -RIEn --include='*.ts' --include='*.tsx' 'console\\.(log|warn|error|info|debug)' app/api lib/agents lib/jobs lib/integrations lib/anthropic.ts lib/rate-limit.ts"
+    "check:no-console-server": "! grep -RIEn --include='*.ts' --include='*.tsx' 'console\\.(log|warn|error|info|debug)' app/api lib/agents lib/jobs lib/integrations lib/anthropic.ts lib/rate-limit.ts",
+    "check:prod-env": "node scripts/check-prod-env.mjs",
+    "verify": "npm run build && npm run check:no-console-server"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
