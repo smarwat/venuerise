@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyInternalRequest } from '@/lib/auth/internal-hmac'
 import { addSuppression } from '@/lib/integrations/suppression'
 import { log } from '@/lib/log'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 
 /**
  * Unsubscribe handler.
@@ -46,8 +47,8 @@ function htmlPage(title: string, body: string, status: 'ok' | 'err'): string {
 </html>`
 }
 
-function respondHtml(html: string, status: number): NextResponse {
-  return new NextResponse(html, {
+function respondHtml(html: string, status: number, requestId?: string): NextResponse {
+  const res = new NextResponse(html, {
     status,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
@@ -55,9 +56,13 @@ function respondHtml(html: string, status: number): NextResponse {
       'X-Robots-Tag': 'noindex, nofollow',
     },
   })
+  if (requestId) withRequestIdHeader(res, requestId)
+  return res
 }
 
 export async function GET(request: NextRequest) {
+  const requestId = getOrCreateRequestId(request)
+  const reqLog = log.child({ requestId, route: '/api/unsubscribe' })
   const url = new URL(request.url)
   const email = url.searchParams.get('email')
   const tsStr = url.searchParams.get('ts')
@@ -71,13 +76,14 @@ export async function GET(request: NextRequest) {
         'This unsubscribe link is missing required parameters. If you copy-pasted it, please use the original link from the email.',
         'err'
       ),
-      400
+      400,
+      requestId
     )
   }
 
   const ts = Number(tsStr)
   if (!Number.isFinite(ts) || ts <= 0) {
-    return respondHtml(htmlPage('Invalid link', 'The unsubscribe token is malformed.', 'err'), 400)
+    return respondHtml(htmlPage('Invalid link', 'The unsubscribe token is malformed.', 'err'), 400, requestId)
   }
 
   // ---- Signature verification ----
@@ -87,14 +93,15 @@ export async function GET(request: NextRequest) {
   try {
     valid = verifyInternalRequest({ email, ts }, sig)
   } catch (err) {
-    log.error({ err }, 'unsubscribe.verify.threw')
+    reqLog.error({ err }, 'unsubscribe.verify.threw')
     return respondHtml(
       htmlPage(
         'Configuration error',
         'We could not process your request right now. Please contact the sender directly.',
         'err'
       ),
-      500
+      500,
+      requestId
     )
   }
   if (!valid) {
@@ -104,7 +111,8 @@ export async function GET(request: NextRequest) {
         'This unsubscribe link is invalid or has been tampered with. If you keep seeing this, contact the sender.',
         'err'
       ),
-      400
+      400,
+      requestId
     )
   }
 
@@ -116,13 +124,14 @@ export async function GET(request: NextRequest) {
         'This unsubscribe link is more than 90 days old. Please reply directly to the email and ask to be removed.',
         'err'
       ),
-      400
+      400,
+      requestId
     )
   }
 
   // ---- Add to suppression list (idempotent) ----
   await addSuppression(email, 'unsubscribe', 'unsubscribe_link')
-  log.info({ route: '/api/unsubscribe' }, 'unsubscribe.completed')
+  reqLog.info({}, 'unsubscribe.completed')
 
   return respondHtml(
     htmlPage(
@@ -130,7 +139,8 @@ export async function GET(request: NextRequest) {
       `${escapeHtml(email)} will no longer receive emails from us. If you change your mind, just reply to a previous email and let us know.`,
       'ok'
     ),
-    200
+    200,
+    requestId
   )
 }
 

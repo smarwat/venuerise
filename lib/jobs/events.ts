@@ -17,17 +17,26 @@ export type JobEventName = (typeof JOB_EVENTS)[keyof typeof JOB_EVENTS]
 
 // ---- Payloads ---------------------------------------------------------------
 
-export interface LeadCreatedPayload {
+/**
+ * Optional correlation id threaded through job payloads (Phase 5B).
+ * When present, job handlers pin every log line to this id so an operator can
+ * trace an entire widget → qualify → email send flow with a single search.
+ */
+interface WithRequestId {
+  request_id?: string
+}
+
+export interface LeadCreatedPayload extends WithRequestId {
   lead_id: string
   /** Optional — the widget pre-creates a conversation row and passes it in. */
   conversation_id?: string | null
 }
 
-export interface FollowUpDuePayload {
+export interface FollowUpDuePayload extends WithRequestId {
   follow_up_id: string
 }
 
-export interface TourReminderScanPayload {
+export interface TourReminderScanPayload extends WithRequestId {
   triggered_at: string
 }
 

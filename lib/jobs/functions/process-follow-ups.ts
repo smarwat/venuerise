@@ -41,9 +41,12 @@ interface ProcessResult {
  * lookup failure happened (in which case caller decides whether to retry).
  */
 export async function runProcessSingleFollowUp(
-  followUpId: string
+  followUpId: string,
+  requestId?: string
 ): Promise<'sent' | 'skipped' | 'failed'> {
   const supabase = createServiceClient()
+  // Pin every log line in this job to the originating request, if any.
+  const jobLog = requestId ? log.child({ requestId }) : log
 
   // 1. Re-fetch row — defensive against concurrent processors.
   const { data: fuRow, error: fuErr } = await supabase
@@ -53,11 +56,11 @@ export async function runProcessSingleFollowUp(
     .maybeSingle()
 
   if (fuErr) {
-    log.error({ followUpId, errorMessage: fuErr.message }, 'jobs.followup.fetch_failed')
+    jobLog.error({ followUpId, errorMessage: fuErr.message }, 'jobs.followup.fetch_failed')
     return 'failed'
   }
   if (!fuRow) {
-    log.warn({ followUpId }, 'jobs.followup.row_vanished')
+    jobLog.warn({ followUpId }, 'jobs.followup.row_vanished')
     return 'skipped'
   }
   const fu = fuRow as {
@@ -94,7 +97,7 @@ export async function runProcessSingleFollowUp(
   const history = (messagesRes.data ?? []) as { role: string; content: string }[]
 
   if (!lead || !venue) {
-    log.warn({ followUpId }, 'jobs.followup.lead_or_venue_gone')
+    jobLog.warn({ followUpId }, 'jobs.followup.lead_or_venue_gone')
     await supabase.from('follow_up_schedules').update({ status: 'cancelled' }).eq('id', followUpId)
     return 'skipped'
   }
@@ -106,7 +109,7 @@ export async function runProcessSingleFollowUp(
 
   if (leadStage === 'booked' || leadStage === 'lost' || !aiActive || !leadEmail) {
     const reason = !leadEmail ? 'missing_email' : !aiActive ? 'ai_paused' : 'stage_terminal'
-    log.info({ followUpId, stage: leadStage, reason }, 'jobs.followup.skipped')
+    jobLog.info({ followUpId, stage: leadStage, reason }, 'jobs.followup.skipped')
     await supabase
       .from('follow_up_schedules')
       .update({ status: 'skipped', delivery_error: `eligibility:${reason}` })
@@ -138,7 +141,7 @@ export async function runProcessSingleFollowUp(
     )
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err)
-    log.error({ followUpId, errorMessage: errMessage }, 'jobs.followup.generation_failed')
+    jobLog.error({ followUpId, errorMessage: errMessage }, 'jobs.followup.generation_failed')
     await supabase
       .from('follow_up_schedules')
       .update({ status: 'failed', delivery_error: `generation:${errMessage}`.slice(0, 500) })
@@ -188,14 +191,14 @@ export async function runProcessSingleFollowUp(
       .eq('status', 'pending')
 
     if (updateErr) {
-      log.error(
+      jobLog.error(
         { followUpId, errorMessage: updateErr.message },
         'jobs.followup.persist_after_delivery_failed'
       )
       return 'failed'
     }
 
-    log.info(
+    jobLog.info(
       {
         followUpId,
         touch: fu.touch_number,
@@ -223,13 +226,13 @@ export async function runProcessSingleFollowUp(
       .eq('status', 'pending')
 
     if (updateErr) {
-      log.error(
+      jobLog.error(
         { followUpId, errorMessage: updateErr.message },
         'jobs.followup.persist_after_suppression_failed'
       )
       return 'failed'
     }
-    log.warn(
+    jobLog.warn(
       {
         followUpId,
         reason: sendResult.error,
@@ -255,13 +258,13 @@ export async function runProcessSingleFollowUp(
       .eq('status', 'pending')
 
     if (updateErr) {
-      log.error(
+      jobLog.error(
         { followUpId, errorMessage: updateErr.message },
         'jobs.followup.persist_after_console_fallback_failed'
       )
       return 'failed'
     }
-    log.warn(
+    jobLog.warn(
       { followUpId, reason: 'no_resend_key' },
       'jobs.followup.console_fallback'
     )
@@ -280,12 +283,12 @@ export async function runProcessSingleFollowUp(
     .eq('status', 'pending')
 
   if (updateErr) {
-    log.error(
+    jobLog.error(
       { followUpId, errorMessage: updateErr.message },
       'jobs.followup.persist_after_send_failure_failed'
     )
   }
-  log.error(
+  jobLog.error(
     { followUpId, provider: sendResult.provider, errorMessage: sendResult.error },
     'jobs.followup.failed'
   )
@@ -352,6 +355,6 @@ export const processSingleFollowUpFn = inngest.createFunction(
   },
   async ({ event }) => {
     const data = event.data as FollowUpDuePayload
-    return runProcessSingleFollowUp(data.follow_up_id)
+    return runProcessSingleFollowUp(data.follow_up_id, data.request_id)
   }
 )

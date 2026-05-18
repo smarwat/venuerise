@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:no-console-server": "! grep -RIEn --include='*.ts' --include='*.tsx' 'console\\.(log|warn|error|info|debug)' app/api lib/agents lib/jobs lib/integrations lib/anthropic.ts lib/rate-limit.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",

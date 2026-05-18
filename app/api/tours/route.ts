@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { z } from 'zod'
 
 const CreateTourSchema = z.object({
@@ -10,13 +11,16 @@ const CreateTourSchema = z.object({
 })
 
 export async function GET(request: NextRequest) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const { data: venueRaw } = await supabase.from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
   const venueId = (venueRaw as { id?: string } | null)?.id
-  if (!venueId) return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
+  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const { searchParams } = new URL(request.url)
   const from = searchParams.get('from')
@@ -32,22 +36,25 @@ export async function GET(request: NextRequest) {
   if (to) query = query.lte('scheduled_at', to)
 
   const { data, error } = await query
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  return respond(NextResponse.json(data))
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const { data: venueRaw } = await supabase.from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
   const venueId = (venueRaw as { id?: string } | null)?.id
-  if (!venueId) return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
+  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const body = await request.json()
   const parsed = CreateTourSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
   const { data, error } = await supabase
     .from('tours')
@@ -55,10 +62,10 @@ export async function POST(request: NextRequest) {
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
 
   // Update lead stage
   await supabase.from('leads').update({ stage: 'tour_scheduled' }).eq('id', parsed.data.lead_id)
 
-  return NextResponse.json(data, { status: 201 })
+  return respond(NextResponse.json(data, { status: 201 }))
 }

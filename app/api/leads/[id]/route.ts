@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { z } from 'zod'
 
 const UpdateLeadSchema = z.object({
@@ -21,14 +22,17 @@ async function getVenueId(supabase: Awaited<ReturnType<typeof createClient>>, us
   return (data as { id: string } | null)?.id ?? null
 }
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const venueId = await getVenueId(supabase, user.id)
-  if (!venueId) return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
+  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const { data, error } = await supabase
     .from('leads')
@@ -37,22 +41,25 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     .eq('venue_id', venueId)
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 404 })
-  return NextResponse.json(data)
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 404 }))
+  return respond(NextResponse.json(data))
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const venueId = await getVenueId(supabase, user.id)
-  if (!venueId) return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
+  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const body = await request.json()
   const parsed = UpdateLeadSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
   const { data, error } = await supabase
     .from('leads')
@@ -62,18 +69,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  return respond(NextResponse.json(data))
 }
 
-export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const venueId = await getVenueId(supabase, user.id)
-  if (!venueId) return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
+  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const { error } = await supabase
     .from('leads')
@@ -81,6 +91,6 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     .eq('id', id)
     .eq('venue_id', venueId)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ success: true })
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  return respond(NextResponse.json({ success: true }))
 }

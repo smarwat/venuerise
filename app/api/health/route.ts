@@ -4,6 +4,7 @@ import { getJobsRuntime } from '@/lib/jobs/queue'
 import { emailConfigured } from '@/lib/integrations/email'
 import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 
 /**
  * Health endpoint for uptime monitors.
@@ -39,12 +40,12 @@ async function checkSupabase(): Promise<Status> {
       .select('id', { count: 'exact', head: true })
       .limit(1)
     if (error) {
-      log.error({ errorMessage: error.message }, 'health.supabase.down')
+      log.error({ route: '/api/health', errorMessage: error.message }, 'health.supabase.down')
       return 'down'
     }
     return 'ok'
   } catch (err) {
-    log.error({ err }, 'health.supabase.threw')
+    log.error({ route: '/api/health', err }, 'health.supabase.threw')
     return 'down'
   }
 }
@@ -63,7 +64,8 @@ function checkEmail(): Status {
   return 'missing'
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const requestId = getOrCreateRequestId(request)
   const supabase = await checkSupabase()
   const anthropic = checkAnthropic()
   const email = checkEmail()
@@ -86,8 +88,9 @@ export async function GET() {
     ts: new Date().toISOString(),
   }
 
-  return NextResponse.json(body, {
+  const response = NextResponse.json(body, {
     status: body.ok ? 200 : 503,
     headers: { 'Cache-Control': 'no-store' },
   })
+  return withRequestIdHeader(response, requestId)
 }

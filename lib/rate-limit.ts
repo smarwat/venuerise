@@ -1,6 +1,7 @@
 import 'server-only'
 import { Ratelimit } from '@upstash/ratelimit'
 import { Redis } from '@upstash/redis'
+import { log } from '@/lib/log'
 
 /**
  * Rate limiting — Upstash Redis sliding window with a safe local fallback.
@@ -54,13 +55,16 @@ function warnDisabledOnce() {
   if (warnedDisabled) return
   warnedDisabled = true
   if (isDev) {
-    console.warn(
-      '[rate-limit] Upstash not configured — rate limiting is DISABLED. ' +
-        'Set UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN to enable.'
+    log.warn(
+      { reason: 'upstash_env_missing' },
+      'rate_limit.disabled'
     )
   } else {
-    // Production misconfiguration — make sure this lands in error logs.
-    console.error('[rate-limit] Upstash env vars missing in production — rate limiting DISABLED.')
+    // Production misconfiguration — lift to error so it lands in alerting.
+    log.error(
+      { reason: 'upstash_env_missing' },
+      'rate_limit.disabled'
+    )
   }
 }
 
@@ -133,7 +137,7 @@ async function check(spec: LimiterSpec, identifier: string): Promise<RateLimitRe
   } catch (err) {
     // Fail-open on Redis outage — better to serve traffic than to deny it.
     // Surface in logs so the operator notices.
-    console.error('[rate-limit] limiter threw, failing OPEN:', err)
+    log.error({ err, prefix: spec.prefix }, 'rate_limit.redis_failed_open')
     return {
       allowed: true,
       limit: spec.tokens,

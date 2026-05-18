@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { enqueueLeadCreated } from '@/lib/jobs/queue'
 import { rateLimitWidget, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -24,19 +25,23 @@ function devError(error: string, detail?: unknown) {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = getOrCreateRequestId(request)
+  const reqLog = log.child({ requestId, route: '/api/widget' })
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   // 0. Verify env is loaded
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    log.error(
+    reqLog.error(
       {
         hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
         hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
       },
       'widget.config.missing_supabase_env'
     )
-    return NextResponse.json(
+    return respond(NextResponse.json(
       devError('Server not configured', 'Supabase env vars missing — check .env.local'),
       { status: 500 }
-    )
+    ))
   }
 
   const supabase = createServiceClient()
@@ -46,23 +51,23 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json()
   } catch {
-    return NextResponse.json(devError('Invalid JSON'), { status: 400 })
+    return respond(NextResponse.json(devError('Invalid JSON'), { status: 400 }))
   }
 
   if (isDev) {
     const b = body as Record<string, unknown> | null
     // Email omitted to avoid logging PII; venue_id is non-secret.
-    log.debug({ venueId: b?.venue_id }, 'widget.request.received')
+    reqLog.debug({ venueId: b?.venue_id }, 'widget.request.received')
   }
 
   // 2. Validate schema
   const parsed = WidgetLeadSchema.safeParse(body)
   if (!parsed.success) {
-    log.warn(
-      { route: '/api/widget', errors: parsed.error.flatten().formErrors.length },
+    reqLog.warn(
+      { errors: parsed.error.flatten().formErrors.length },
       'widget.request.invalid_payload'
     )
-    return NextResponse.json(devError('Invalid payload', parsed.error.flatten()), { status: 400 })
+    return respond(NextResponse.json(devError('Invalid payload', parsed.error.flatten()), { status: 400 }))
   }
 
   const { venue_id, name, email, phone, event_date, guest_count, budget, message } = parsed.data
@@ -70,11 +75,11 @@ export async function POST(request: NextRequest) {
   // 2b. Rate-limit by IP + venue. 10/min sliding (see lib/rate-limit.ts).
   const rl = await rateLimitWidget(request, venue_id)
   if (!rl.allowed) {
-    log.warn(
-      { route: '/api/widget', venueId: venue_id, retryMs: rl.retryAfterMs, mode: rl.mode },
-      'widget.request.rate_limited'
+    reqLog.warn(
+      { venueId: venue_id, retryMs: rl.retryAfterMs, mode: rl.mode },
+      'rate_limit.blocked'
     )
-    return rateLimitedResponse(rl)
+    return respond(rateLimitedResponse(rl))
   }
 
   // 3. Look up venue — distinguish "doesn't exist" vs. "inactive" vs. "db error"
@@ -85,41 +90,38 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   if (venueErr) {
-    log.error(
-      { route: '/api/widget', venueId: venue_id, errorMessage: venueErr.message },
+    reqLog.error(
+      { venueId: venue_id, errorMessage: venueErr.message },
       'widget.venue_lookup.failed'
     )
-    return NextResponse.json(
+    return respond(NextResponse.json(
       devError('Database error while looking up venue', venueErr.message),
       { status: 500 }
-    )
+    ))
   }
 
   if (!venueRow) {
-    log.warn({ route: '/api/widget', venueId: venue_id }, 'widget.venue_lookup.not_found')
-    return NextResponse.json(
+    reqLog.warn({ venueId: venue_id }, 'widget.venue_lookup.not_found')
+    return respond(NextResponse.json(
       devError(
         'Venue not found',
         `No venue exists with id ${venue_id}. Create one in Supabase or use a different venue_id.`
       ),
       { status: 404 }
-    )
+    ))
   }
 
   const venue = venueRow as { id: string; is_active: boolean; name: string }
 
   if (!venue.is_active) {
-    log.warn(
-      { route: '/api/widget', venueId: venue_id },
-      'widget.venue_lookup.inactive'
-    )
-    return NextResponse.json(
+    reqLog.warn({ venueId: venue_id }, 'widget.venue_lookup.inactive')
+    return respond(NextResponse.json(
       devError(
         'Venue is inactive',
         `Venue "${venue.name}" exists but has is_active=false. Set venues.is_active=true in Supabase.`
       ),
       { status: 403 }
-    )
+    ))
   }
 
   // 4. Create lead
@@ -144,11 +146,11 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (leadErr || !lead) {
-    log.error(
-      { route: '/api/widget', venueId: venue_id, errorMessage: leadErr?.message },
+    reqLog.error(
+      { venueId: venue_id, errorMessage: leadErr?.message },
       'widget.lead.insert_failed'
     )
-    return NextResponse.json(devError('Failed to save lead', leadErr?.message), { status: 500 })
+    return respond(NextResponse.json(devError('Failed to save lead', leadErr?.message), { status: 500 }))
   }
 
   const leadData = lead as { id: string }
@@ -169,34 +171,37 @@ export async function POST(request: NextRequest) {
 
   if (convErr || !conv) {
     // Non-fatal — orchestrator will create one if missing — but log loudly.
-    log.warn(
-      { route: '/api/widget', leadId: leadData.id, errorMessage: convErr?.message },
+    reqLog.warn(
+      { leadId: leadData.id, errorMessage: convErr?.message },
       'widget.conversation.pre_create_failed'
     )
   }
 
   const conversationId = (conv as { id: string } | null)?.id ?? null
 
-  log.info(
+  reqLog.info(
     { leadId: leadData.id, conversationId, venueId: venue_id },
     'widget.lead.created'
   )
 
-  // 6. Enqueue AI qualification on the job runtime.
+  // 6. Enqueue AI qualification on the job runtime. The request id is
+  //    threaded through so every downstream log line (job handler,
+  //    orchestrator, email send, webhook update) can be correlated.
   try {
     await enqueueLeadCreated({
       lead_id: leadData.id,
       conversation_id: conversationId,
+      request_id: requestId,
     })
-    log.info({ leadId: leadData.id }, 'widget.job.enqueued')
+    reqLog.info({ leadId: leadData.id }, 'widget.job.enqueued')
   } catch (err) {
     // Even if enqueue fails, the lead is in the DB — the visitor sees success.
     // A monitor on ai_actions / Inngest dashboard will catch the gap.
-    log.error({ err, leadId: leadData.id }, 'widget.job.enqueue_failed')
+    reqLog.error({ err, leadId: leadData.id }, 'widget.job.enqueue_failed')
   }
 
-  return NextResponse.json(
+  return respond(NextResponse.json(
     { success: true, lead_id: leadData.id, conversation_id: conversationId },
     { status: 201 }
-  )
+  ))
 }

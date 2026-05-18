@@ -38,16 +38,26 @@ export async function enqueueLeadCreated(payload: LeadCreatedPayload): Promise<v
   if (inngestConfigured()) {
     try {
       await inngest.send({ name: JOB_EVENTS.LEAD_CREATED, data: payload })
-      log.info({ leadId: payload.lead_id, runtime: 'inngest' }, 'jobs.lead_created.enqueued')
+      log.info(
+        { leadId: payload.lead_id, requestId: payload.request_id, runtime: 'inngest' },
+        'jobs.lead_created.enqueued'
+      )
     } catch (err) {
-      log.error({ err, leadId: payload.lead_id, runtime: 'inngest' }, 'jobs.lead_created.enqueue_failed')
+      log.error(
+        { err, leadId: payload.lead_id, requestId: payload.request_id, runtime: 'inngest' },
+        'jobs.lead_created.enqueue_failed'
+      )
       throw err
     }
     return
   }
 
-  // Local fallback — fire-and-forget on the same process.
-  log.warn({ leadId: payload.lead_id, runtime: 'local-fallback' }, 'jobs.lead_created.local_fallback')
+  // Local fallback — fire-and-forget on the same process. Pass the full
+  // payload (including request_id) so the handler can pin its child logger.
+  log.warn(
+    { leadId: payload.lead_id, requestId: payload.request_id, runtime: 'local-fallback' },
+    'jobs.lead_created.local_fallback'
+  )
   fireLocally(async () => {
     const { runQualifyLead } = await import('./functions/qualify-lead')
     await runQualifyLead(payload)
@@ -60,18 +70,27 @@ export async function enqueueFollowUpDue(payload: FollowUpDuePayload): Promise<v
   if (inngestConfigured()) {
     try {
       await inngest.send({ name: JOB_EVENTS.FOLLOWUP_DUE, data: payload })
-      log.info({ followUpId: payload.follow_up_id, runtime: 'inngest' }, 'jobs.followup.enqueued')
+      log.info(
+        { followUpId: payload.follow_up_id, requestId: payload.request_id, runtime: 'inngest' },
+        'jobs.followup.enqueued'
+      )
     } catch (err) {
-      log.error({ err, followUpId: payload.follow_up_id, runtime: 'inngest' }, 'jobs.followup.enqueue_failed')
+      log.error(
+        { err, followUpId: payload.follow_up_id, requestId: payload.request_id, runtime: 'inngest' },
+        'jobs.followup.enqueue_failed'
+      )
       throw err
     }
     return
   }
 
-  log.warn({ followUpId: payload.follow_up_id, runtime: 'local-fallback' }, 'jobs.followup.local_fallback')
+  log.warn(
+    { followUpId: payload.follow_up_id, requestId: payload.request_id, runtime: 'local-fallback' },
+    'jobs.followup.local_fallback'
+  )
   fireLocally(async () => {
     const { runProcessSingleFollowUp } = await import('./functions/process-follow-ups')
-    await runProcessSingleFollowUp(payload.follow_up_id)
+    await runProcessSingleFollowUp(payload.follow_up_id, payload.request_id)
   }, 'followup.due')
 }
 

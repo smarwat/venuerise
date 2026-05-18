@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { z } from 'zod'
 
 const UpdateVenueSchema = z.object({
@@ -17,11 +18,14 @@ const UpdateVenueSchema = z.object({
   response_time_target: z.number().int().min(1).optional(),
 })
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const { data, error } = await supabase
     .from('venues')
@@ -30,19 +34,22 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     .eq('owner_user_id', user.id)
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 404 })
-  return NextResponse.json(data)
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 404 }))
+  return respond(NextResponse.json(data))
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const body = await request.json()
   const parsed = UpdateVenueSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
   const { data, error } = await supabase
     .from('venues')
@@ -52,6 +59,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  return respond(NextResponse.json(data))
 }

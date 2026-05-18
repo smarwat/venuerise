@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { z } from 'zod'
 
 const UpdateTourSchema = z.object({
@@ -13,18 +14,21 @@ const UpdateTourSchema = z.object({
 })
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const requestId = getOrCreateRequestId(request)
+  const respond = <T extends Response>(r: T) => withRequestIdHeader(r, requestId)
+
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
   const { data: venueRaw } = await supabase.from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
   const venueId = (venueRaw as { id?: string } | null)?.id
-  if (!venueId) return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
+  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const body = await request.json()
   const parsed = UpdateTourSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
   const { data, error } = await supabase
     .from('tours')
@@ -34,7 +38,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
 
   // If completed, update lead stage
   if (parsed.data.status === 'completed') {
@@ -44,5 +48,5 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
   }
 
-  return NextResponse.json(data)
+  return respond(NextResponse.json(data))
 }
