@@ -571,6 +571,129 @@ export async function listMembers(args: ListMembersArgs): Promise<ListedMember[]
 }
 
 // ---------------------------------------------------------------------------
+// updateMemberRole (Phase 6E)
+// ---------------------------------------------------------------------------
+
+export interface UpdateMemberRoleArgs {
+  /** Caller — already gated to ADMIN_ROLES at the route. */
+  userId: string
+  venueId: string
+  targetUserId: string
+  newRole: VenueRole
+  supabase: SupabaseClient
+  requestId?: string
+}
+
+export interface UpdatedMemberRow {
+  user_id: string
+  venue_id: string
+  role: VenueRole
+  updated_at: string
+}
+
+/**
+ * Change a member's role.
+ *
+ * Safety rules (mirrors removeMember's last-owner protection):
+ *   - If the change DEMOTES the only remaining owner (target is owner +
+ *     newRole !== 'owner' + owner count <= 1), reject with
+ *     `cannot_remove_last_owner` (or `cannot_remove_self_as_last_owner`
+ *     when self-targeted).
+ *   - No-op when the role is unchanged — return the existing row.
+ *
+ * Promotion to owner is allowed (any admin can hand a co-owner the keys);
+ * future "owner transfer" UX would layer a confirm step on top.
+ */
+export async function updateMemberRole(
+  args: UpdateMemberRoleArgs
+): Promise<UpdatedMemberRow> {
+  const { userId, venueId, targetUserId, newRole, supabase, requestId } = args
+  const reqLog = log.child({
+    requestId,
+    userId,
+    venueId,
+    targetUserId,
+    newRole,
+    op: 'team.update_member_role',
+  })
+
+  if (!isVenueRoleString(newRole)) {
+    throw new TeamError('validation_failed', 400, 'invalid_role')
+  }
+
+  const { data: targetRaw, error: targetErr } = await supabase
+    .from('venue_members')
+    .select('id, role')
+    .eq('venue_id', venueId)
+    .eq('user_id', targetUserId)
+    .maybeSingle()
+
+  if (targetErr) {
+    reqLog.error({ err: targetErr }, 'team.update_role.lookup_failed')
+    captureApiError(targetErr, { requestId, route: 'team.updateMemberRole', userId, venueId })
+    throw new TeamError('unexpected', 500, targetErr.message)
+  }
+  if (!targetRaw) throw new TeamError('member_not_found', 404)
+  const target = targetRaw as { id: string; role: string }
+
+  // No-op when the role is unchanged.
+  if (target.role === newRole) {
+    reqLog.info({}, 'team.update_role.noop')
+    return {
+      user_id: targetUserId,
+      venue_id: venueId,
+      role: newRole,
+      updated_at: new Date().toISOString(),
+    }
+  }
+
+  // Last-owner protection on demotion.
+  if (target.role === 'owner' && newRole !== 'owner') {
+    const { count, error: countErr } = await supabase
+      .from('venue_members')
+      .select('id', { count: 'exact', head: true })
+      .eq('venue_id', venueId)
+      .eq('role', 'owner')
+    if (countErr) {
+      reqLog.error({ err: countErr }, 'team.update_role.owner_count_failed')
+      captureApiError(countErr, { requestId, route: 'team.updateMemberRole', userId, venueId })
+      throw new TeamError('unexpected', 500, countErr.message)
+    }
+    if ((count ?? 0) <= 1) {
+      throw new TeamError(
+        userId === targetUserId
+          ? 'cannot_remove_self_as_last_owner'
+          : 'cannot_remove_last_owner',
+        409
+      )
+    }
+  }
+
+  const { data: updated, error: updateErr } = await supabase
+    .from('venue_members')
+    .update({ role: newRole })
+    .eq('id', target.id)
+    .select('user_id, venue_id, role, updated_at')
+    .single()
+
+  if (updateErr || !updated) {
+    reqLog.error({ err: updateErr }, 'team.update_role.update_failed')
+    captureApiError(updateErr, { requestId, route: 'team.updateMemberRole', userId, venueId })
+    throw new TeamError('unexpected', 500, updateErr?.message)
+  }
+
+  const row = updated as { user_id: string; venue_id: string; role: string; updated_at: string }
+  reqLog.info({ previousRole: target.role }, 'team.member.role_updated')
+
+  return {
+    user_id: row.user_id,
+    venue_id: row.venue_id,
+    role: (isVenueRoleString(row.role) ? row.role : newRole) as VenueRole,
+    updated_at: row.updated_at,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // removeMember
 // ---------------------------------------------------------------------------
 

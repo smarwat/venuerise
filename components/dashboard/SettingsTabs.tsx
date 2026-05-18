@@ -6,7 +6,8 @@ import { Button } from './ui/Button'
 import { Input } from './ui/Input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/Select'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card'
-import { Save, Plus, Trash2, Check, Loader2 } from 'lucide-react'
+import { Save, Plus, Trash2, Check, Loader2, Users, ArrowRight } from 'lucide-react'
+import Link from 'next/link'
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const KB_CATEGORIES = ['Pricing', 'Policies', 'FAQ', 'Amenities', 'Catering', 'Other']
@@ -367,6 +368,7 @@ export default function SettingsTabs({ venue, knowledgeBase, tourAvailability }:
         <TabsTrigger value="ai">AI Configuration</TabsTrigger>
         <TabsTrigger value="kb">Knowledge Base</TabsTrigger>
         <TabsTrigger value="availability">Availability</TabsTrigger>
+        <TabsTrigger value="team">Team</TabsTrigger>
       </TabsList>
 
       <TabsContent value="profile">
@@ -384,6 +386,38 @@ export default function SettingsTabs({ venue, knowledgeBase, tourAvailability }:
       <TabsContent value="availability">
         <AvailabilityTab venueId={venueId} initialSlots={tourAvailability} />
       </TabsContent>
+
+      <TabsContent value="team">
+        <TeamTabLink />
+      </TabsContent>
     </Tabs>
+  )
+}
+
+// ---- Team tab ----
+// Phase 6E — the team surface lives at its own route so it can be linked
+// directly (and so future RBAC checks render server-side). The tab body
+// here is just a pointer card.
+function TeamTabLink() {
+  return (
+    <div className="max-w-2xl">
+      <Link
+        href="/dashboard/settings/team"
+        className="group flex items-center gap-4 rounded-2xl border border-[#E2E8F0] bg-white px-5 py-4 hover:border-[#CBD5E1] hover:bg-[#F8FAFC] transition-colors"
+      >
+        <div className="w-10 h-10 rounded-xl bg-[#EFF6FF] text-[#1D4ED8] flex items-center justify-center shrink-0">
+          <Users className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold text-[#0F172A]">
+            Manage team & invitations
+          </div>
+          <div className="text-[12px] text-[#64748B] mt-0.5">
+            Invite teammates, change roles, and revoke access.
+          </div>
+        </div>
+        <ArrowRight className="h-4 w-4 text-[#94A3B8] group-hover:text-[#0F172A] transition-colors" />
+      </Link>
+    </div>
   )
 }
