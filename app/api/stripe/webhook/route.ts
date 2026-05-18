@@ -124,11 +124,23 @@ export async function POST(request: NextRequest) {
   // 6. Always 200 to Stripe — handler failure is recorded but doesn't
   // propagate as a 5xx (would retrigger Stripe retries). See
   // SECURITY.md §10e for the tradeoff.
-  return respond(
-    NextResponse.json({
-      received: true,
-      handled: result.handled,
-      ignored: result.ignored,
-    })
-  )
+  //
+  // Phase 7M — surface the recovery email outcome (if the dispatcher
+  // attempted one) so the operator's webhook log shows the full chain
+  // from payload → handled → recovery in one row. Optional field,
+  // omitted when no recovery email was attempted.
+  const responseBody: {
+    received: true
+    handled: boolean
+    ignored: boolean
+    recovery_email?: { sent: boolean; skipped: boolean; reason?: string }
+  } = {
+    received: true,
+    handled: result.handled,
+    ignored: result.ignored,
+  }
+  if (result.recoveryEmail) {
+    responseBody.recovery_email = result.recoveryEmail
+  }
+  return respond(NextResponse.json(responseBody))
 }

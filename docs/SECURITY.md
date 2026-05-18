@@ -189,6 +189,27 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10h. Payment recovery email (Phase 7M)
+
+A single-shot email fired from the Stripe webhook path when a subscription transitions `past_due → active|trialing`. No new tables, no new env vars.
+
+**Authorization model**:
+- Sender: dispatcher (server-only, runs after Stripe signature verification).
+- Audience: venue owner (resolved via `venue_members` → `auth.users` admin lookup).
+- Recipient list: ALWAYS exactly one — the earliest owner by `created_at`. Co-owners + non-owner roles never receive the recovery email.
+
+**Idempotency** uses the Phase 7L atomic-append helper on `subscriptions.metadata.recovery_sent`. Same race-mitigation guarantees: the Stripe webhook resync can't accidentally drop the recovery entry. Read-side dedup (pre-send check of `metadata.recovery_sent` for the key) is still subject to the standard "two simultaneous webhook deliveries" caveat — Stripe's dedup + the UNIQUE on `billing_events_log.stripe_event_id` (Phase 7F) make this vanishingly small in practice.
+
+**Failure posture**: every failure mode returns `{ sent: false, ... }` and a `reason` string — the helper NEVER throws. The webhook is unaffected — Stripe still gets a 200. Operators inspect via Sentry + the webhook response body's optional `recovery_email` field.
+
+**PII**:
+- Owner email is fetched via `supabase.auth.admin.getUserById` and passed to `sendEmail`. Never logged in our own lines.
+- `metadata.recovery_sent` entries store `provider` + `message_id` only (low-PII strings used by `outbound_messages` to correlate Resend webhook events later).
+
+**No new secret**. Reuses `STRIPE_*`, `RESEND_*`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+---
+
 ## 10g. Atomic metadata append (Phase 7L)
 
 Migration 010 added one SECURITY DEFINER function: `public.append_subscription_metadata_array(p_subscription_id uuid, p_array_key text, p_entry jsonb) returns jsonb`.

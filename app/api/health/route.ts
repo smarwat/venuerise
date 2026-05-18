@@ -45,6 +45,7 @@ interface HealthBody {
     trial_reminder: 'mounted'
     replay: 'mounted'
     dunning: 'mounted'
+    recovery_email: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -197,6 +198,10 @@ export async function GET(request: Request) {
       // registered in allJobFunctions; runtime delivery requires Resend
       // + Stripe portal configuration. Operators verify in Inngest UI.
       dunning: 'mounted',
+      // 7M — payment recovery email is a webhook-triggered side effect
+      // (no cron). Runtime delivery requires Resend; the dispatcher only
+      // fires it on past_due → active/trialing transitions.
+      recovery_email: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

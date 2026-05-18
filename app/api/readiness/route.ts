@@ -58,6 +58,8 @@ interface ReadinessChecks {
   billing_trial_reminder: 'mounted'
   /** Phase 7K — compile-time mounted flag for the dunning cron. */
   billing_dunning: 'mounted'
+  /** Phase 7M — compile-time mounted flag for the recovery email path. */
+  billing_recovery_email: 'mounted'
 }
 
 const MIN_INTERNAL_SECRET_LEN = 32
@@ -193,6 +195,8 @@ export async function GET(request: Request) {
       billing_trial_reminder: 'mounted',
       // Phase 7K — informational; mirrors trial reminder posture.
       billing_dunning: 'mounted',
+      // Phase 7M — informational; dispatcher-side hook, not a route or cron.
+      billing_recovery_email: 'mounted',
     }
   } catch (err) {
     log.error({ err, route: '/api/readiness' }, 'readiness.unexpected_throw')
@@ -211,6 +215,7 @@ export async function GET(request: Request) {
     'billing_gate',
     'billing_trial_reminder',
     'billing_dunning',
+    'billing_recovery_email',
   ])
   const failed = (Object.entries(checks) as Array<[keyof ReadinessChecks, Check | string]>)
     .filter(([k, v]) =>

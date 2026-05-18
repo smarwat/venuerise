@@ -503,6 +503,109 @@ Full no-send playbook: [RUNBOOK.md §2.4g](./RUNBOOK.md). Short version:
 7. Stripe portal can be created (`billing_customers` row exists).
 8. Resend is `configured` in production.
 
+## 7h. Payment recovery email (Phase 7M)
+
+Single "Payment received — your VenueRise account is active" email sent when a venue's subscription transitions from `past_due` back to `active` or `trialing`. Fires from the Stripe webhook path — no cron. Detection happens because `syncSubscriptionFromStripeSubscription` (widened in 7M) now returns `{ previousStatus, newStatus, venueId, subscriptionId, currentPeriodEnd }` and the dispatcher inspects it.
+
+### Trigger condition
+
+```
+previousStatus === 'past_due'
+AND newStatus ∈ { 'active', 'trialing' }
+AND venueId is not null
+AND subscriptionId is not null
+```
+
+Fires on: `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed` — i.e. every dispatcher path that runs the sync. In practice the overwhelmingly common emitter is `customer.subscription.updated` (Stripe flips status when an automatic retry clears the past_due charge).
+
+### Idempotency
+
+Key shape:
+```
+recovery:<venue_id>:<current_period_end YYYY-MM-DD | unknown-period>
+```
+
+Stored on `subscriptions.metadata.recovery_sent` (jsonb array, atomic append via the Phase 7L RPC). The period date in the key means:
+- A customer who bounces past_due → active → past_due → active within ONE billing period gets ONE recovery email.
+- A customer who lands past_due again in the NEXT period gets a fresh recovery email when they recover.
+- `unknown-period` fallback for the rare case where Stripe doesn't include `current_period_end` on the event.
+
+### Example metadata after dunning + recovery cycle
+
+```json
+{
+  "recovery_sent": [
+    {
+      "kind": "payment_recovered",
+      "key": "recovery:VENUE_ID:2026-06-01",
+      "sent_at": "2026-05-20T18:10:00.000Z",
+      "provider": "resend",
+      "message_id": "rec_abc"
+    }
+  ],
+  "dunning_sent": [
+    {
+      "kind": "past_due",
+      "key": "dunning:VENUE_ID:2026-06-01:attempt-1",
+      "attempt": 1,
+      "sent_at": "2026-05-18T16:00:00.000Z",
+      "provider": "resend",
+      "message_id": "dun_abc"
+    }
+  ]
+}
+```
+
+### SQL verification
+
+```sql
+-- All recoveries we've ever sent.
+select id, venue_id, status, metadata->'recovery_sent' as recovery_sent
+from public.subscriptions
+where metadata ? 'recovery_sent'
+order by updated_at desc;
+
+-- Venues currently `active` that recovered from past_due (full lifecycle witness).
+select s.id, s.venue_id, s.status,
+       s.metadata->'recovery_sent' as recovery_sent,
+       s.metadata->'dunning_sent'  as dunning_sent
+from public.subscriptions s
+where s.metadata ? 'recovery_sent' and s.metadata ? 'dunning_sent';
+```
+
+### Webhook response surface
+
+The Stripe webhook response now optionally includes the recovery outcome:
+```json
+{
+  "received": true,
+  "handled": true,
+  "ignored": false,
+  "recovery_email": {
+    "sent": true,
+    "skipped": false
+  }
+}
+```
+
+`recovery_email` is omitted when the dispatcher didn't attempt one (different transition, missing ids, non-billing event). When present, it's either:
+- `{ sent: true, skipped: false }` — email went out, metadata recorded.
+- `{ sent: false, skipped: true, reason: 'already_sent' | 'no_owner_email' | 'subscription_not_found' }` — intentionally not sent.
+- `{ sent: false, skipped: false, reason: 'metadata_append_failed' | 'lookup_failed' | 'send_threw' | 'not_delivered' | <provider error> }` — attempted, didn't land.
+
+The webhook itself ALWAYS returns 200 — recovery failures don't trigger Stripe retries. Sentry captures the underlying error in every failure path.
+
+### Troubleshooting
+
+Full playbook: [RUNBOOK.md §2.4h](./RUNBOOK.md). Short checklist:
+1. Subscription actually transitioned from `past_due` (check `payload.data.previous_attributes` in the audit log).
+2. Webhook event landed (`billing_events_log` shows `handled=true`).
+3. Dispatcher ran (Sentry shows `op: billing.payment_recovery` log lines).
+4. Owner has an email.
+5. Resend configured.
+6. Recovery key not already present in metadata.
+7. Metadata append succeeded (`metadata_append_failed` would surface in webhook response).
+
 ## 7g. Atomic metadata helper (Phase 7L)
 
 Both billing crons (trial reminder + dunning) write entries to `subscriptions.metadata` JSONB arrays:

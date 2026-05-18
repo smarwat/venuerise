@@ -364,6 +364,60 @@ order by e.replayed_at desc;
 
 A handler-failed replay still counts: `replay_count` increments any time dispatch FINISHES (success or failure). Only Stripe-retrieve failures (502 from the replay route) skip the counter — those aborts happen before dispatch.
 
+### 2.4h Customer paid but never got recovery email (Phase 7M)
+
+Symptom: a customer's subscription transitioned from `past_due` back to `active`/`trialing` but they didn't receive the "Payment received — your VenueRise account is active" email.
+
+The recovery email is a webhook-driven side effect (no cron). The Stripe event dispatcher inspects the result of `syncSubscriptionFromStripeSubscription`; when it sees `previousStatus === 'past_due'` and the new status in `{active, trialing}`, it calls `sendPaymentRecoveryEmail`. Idempotent on `subscriptions.metadata.recovery_sent`.
+
+1. **Did the subscription actually transition?**
+   ```sql
+   select id, venue_id, status, current_period_end, updated_at
+   from public.subscriptions
+   where venue_id='<venue id>'
+   order by updated_at desc limit 5;
+   ```
+   - The current `status` must be `active` or `trialing`.
+   - The transition is detected only by comparing the PREVIOUS local row's status to the new one — so we need the row to have actually been `past_due` just before the webhook. The Phase 7F audit log proves this: look for the latest `customer.subscription.updated` event for the venue and inspect its `payload.data.previous_attributes.status` (Stripe sends this on updates).
+2. **Was the webhook delivered + handled?**
+   - Stripe dashboard → Webhooks → endpoint → recent attempts (look for the `customer.subscription.updated` for that subscription).
+   - Our audit:
+     ```sql
+     select stripe_event_id, event_type, handled, handler_error, received_at
+     from public.billing_events_log
+     where venue_id='<venue id>' and event_type like 'customer.subscription.%'
+     order by received_at desc limit 10;
+     ```
+   - If `handled=false`, the recovery hook never ran. Fix the handler error, then `POST /api/admin/billing-events/<id>/replay` (Phase 7I) to re-dispatch — the dispatcher re-checks the transition and fires the email if eligible.
+3. **Did the dispatcher try?**
+   - The webhook response body now includes `recovery_email: { sent, skipped, reason? }` when the dispatcher attempted one. Find the request id from the webhook response, grep Pino: `vercel logs $APP --since=1h | grep '"op":"billing.payment_recovery"'`.
+   - If the log says `skip_already_sent`, the customer already received it (idempotency is doing its job).
+   - If `skip_no_owner_email`, the venue's owner row has no email in `auth.users`. Fix and re-trigger.
+4. **Recovery key already present?**
+   ```sql
+   select id, venue_id, metadata->'recovery_sent' as recovery_sent
+   from public.subscriptions
+   where venue_id='<venue id>';
+   ```
+   Each entry has shape `{ kind, key, sent_at, provider, message_id }`. The key is `recovery:<venue_id>:<current_period_end YYYY-MM-DD>`. Same-period recoveries are deliberately de-duped — a customer who bounces past_due → active → past_due → active within one billing period gets one email.
+5. **To force a re-send** (rare): clear the matching entry:
+   ```sql
+   update public.subscriptions
+   set metadata = jsonb_set(
+     metadata,
+     '{recovery_sent}',
+     (select coalesce(jsonb_agg(e), '[]'::jsonb)
+        from jsonb_array_elements(metadata->'recovery_sent') as e
+       where e->>'key' <> 'recovery:<venue_id>:<YYYY-MM-DD>')
+   )
+   where id='<subscription id>';
+   ```
+   Then trigger a fresh `customer.subscription.updated` event (toggle metadata on the Stripe-side subscription) so the dispatcher re-runs.
+6. **Resend configured?**
+   - `/api/health` → `email: "configured"` in prod. If `"console-fallback"`, the helper logs the email body and does NOT append the recovery entry — next valid webhook with the same transition retries once Resend is wired.
+7. **Helper returned `metadata_append_failed`?**
+   - The email already went out; we just couldn't record it. Sentry captures the underlying error. Same recovery posture as Phase 7L crons — next eligible transition may double-send.
+
 ### 2.4g0 Cron metadata append failed (Phase 7L)
 
 Symptom: trial-reminder or dunning cron summary reports `failed > 0` and the log line is `jobs.billing_*.metadata_append_failed`.

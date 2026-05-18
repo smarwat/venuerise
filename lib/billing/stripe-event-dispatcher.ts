@@ -1,7 +1,11 @@
 import 'server-only'
 import type Stripe from 'stripe'
 import { stripe } from './stripe'
-import { syncSubscriptionFromStripeSubscription } from './billing-service'
+import {
+  syncSubscriptionFromStripeSubscription,
+  type SyncSubscriptionResult,
+} from './billing-service'
+import { sendPaymentRecoveryEmail } from './payment-recovery'
 import { log } from '@/lib/log'
 import { captureWebhookError } from '@/lib/observability/sentry'
 
@@ -71,6 +75,41 @@ export interface DispatchResult {
   ignored: boolean
   venueId?: string | null
   handlerError?: string | null
+  /**
+   * Phase 7M — populated only when the dispatcher detected a
+   * past_due → active/trialing transition AND attempted a recovery
+   * email. Absent means "we didn't try" (different event type, no
+   * transition, missing ids). Present-with-`skipped:true` means we
+   * tried but decided not to send (already sent, no owner email, etc).
+   */
+  recoveryEmail?: {
+    sent: boolean
+    skipped: boolean
+    reason?: string
+  }
+}
+
+const RECOVERY_TRANSITION_TO = new Set(['active', 'trialing'])
+
+/**
+ * Phase 7M — given a sync result, decide whether to fire the recovery
+ * email. Returns undefined when no recovery attempt was made (different
+ * transition, missing ids, etc.) — surfaces in DispatchResult.recoveryEmail
+ * the same way.
+ */
+async function maybeFirePaymentRecovery(
+  syncResult: SyncSubscriptionResult,
+  requestId: string | undefined
+): Promise<DispatchResult['recoveryEmail']> {
+  if (syncResult.previousStatus !== 'past_due') return undefined
+  if (!RECOVERY_TRANSITION_TO.has(syncResult.newStatus)) return undefined
+  if (!syncResult.venueId || !syncResult.subscriptionId) return undefined
+  return sendPaymentRecoveryEmail({
+    venueId: syncResult.venueId,
+    subscriptionId: syncResult.subscriptionId,
+    currentPeriodEnd: syncResult.currentPeriodEnd,
+    requestId,
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +163,8 @@ export async function dispatchStripeEvent(
 
   try {
     let venueId: string | null = null
+    let recoveryEmail: DispatchResult['recoveryEmail']
+
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
@@ -136,7 +177,8 @@ export async function dispatchStripeEvent(
         }
         const sub = await stripe().subscriptions.retrieve(subscriptionId)
         venueId = venueId ?? venueIdFromMetadata(sub)
-        await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
+        const syncResult = await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
+        recoveryEmail = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
         break
       }
 
@@ -145,7 +187,8 @@ export async function dispatchStripeEvent(
       case 'customer.subscription.deleted': {
         const sub = event.data.object as Stripe.Subscription
         venueId = venueIdFromMetadata(sub)
-        await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
+        const syncResult = await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
+        recoveryEmail = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
         break
       }
 
@@ -160,7 +203,8 @@ export async function dispatchStripeEvent(
         }
         const sub = await stripe().subscriptions.retrieve(subscriptionId)
         venueId = venueId ?? venueIdFromMetadata(sub)
-        await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
+        const syncResult = await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
+        recoveryEmail = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
         break
       }
 
@@ -171,8 +215,15 @@ export async function dispatchStripeEvent(
       }
     }
 
+    if (recoveryEmail) {
+      reqLog.info(
+        { recoveryEmail },
+        'stripe.dispatch.recovery_email_outcome'
+      )
+    }
+
     reqLog.info({ venueId }, 'stripe.dispatch.completed')
-    return { handled: true, ignored: false, venueId, handlerError: null }
+    return { handled: true, ignored: false, venueId, handlerError: null, recoveryEmail }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     reqLog.error({ err }, 'stripe.dispatch.failed')

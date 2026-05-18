@@ -352,15 +352,38 @@ async function resolveVenueIdForSubscription(
   return null
 }
 
+/**
+ * Phase 7M — return shape widened from `Promise<void>` to include the
+ * before/after status pair + the local row identifiers. Existing callers
+ * that ignored the return value (Stripe webhook + admin replay) continue
+ * to compile cleanly; new callers (the Phase 7M dispatcher transition
+ * detector) use the values to decide whether to fire a recovery email.
+ *
+ * If the venue can't be resolved (rare — webhook for a customer we don't
+ * have a mapping for), the function early-exits with `venueId: null` so
+ * the caller can no-op gracefully.
+ */
+export interface SyncSubscriptionResult {
+  venueId: string | null
+  previousStatus: string | null
+  newStatus: string
+  subscriptionId: string | null
+  currentPeriodEnd: string | null
+}
+
 export async function syncSubscriptionFromStripeSubscription(
   sub: Stripe.Subscription,
   requestId?: string
-): Promise<void> {
+): Promise<SyncSubscriptionResult> {
   const reqLog = log.child({
     requestId,
     subscriptionId: sub.id,
     op: 'billing.sync_subscription',
   })
+
+  const currentPeriodEnd = tsToIso(
+    (sub as unknown as { current_period_end?: number }).current_period_end
+  )
 
   const venueId = await resolveVenueIdForSubscription(sub, requestId)
   if (!venueId) {
@@ -368,13 +391,45 @@ export async function syncSubscriptionFromStripeSubscription(
     // venue probably means we lost the metadata link. Logging is enough;
     // re-sync can be triggered manually once the mapping is repaired.
     reqLog.warn({}, 'billing.sync.skipped_no_venue')
-    return
+    return {
+      venueId: null,
+      previousStatus: null,
+      newStatus: sub.status,
+      subscriptionId: null,
+      currentPeriodEnd,
+    }
   }
 
   const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id
   if (!customerId) {
     reqLog.warn({}, 'billing.sync.skipped_no_customer')
-    return
+    return {
+      venueId,
+      previousStatus: null,
+      newStatus: sub.status,
+      subscriptionId: null,
+      currentPeriodEnd,
+    }
+  }
+
+  const svc = createServiceClient()
+
+  // Phase 7M — capture the previous local status BEFORE the upsert so a
+  // caller can detect transitions (e.g. past_due → active triggers a
+  // recovery email). We also pick up the local row id when present so
+  // downstream code can write to subscriptions.metadata atomically.
+  let previousStatus: string | null = null
+  let previousLocalId: string | null = null
+  {
+    const { data: prevRow } = await svc
+      .from('subscriptions')
+      .select('id, status')
+      .eq('stripe_subscription_id', sub.id)
+      .maybeSingle()
+    if (prevRow) {
+      previousStatus = (prevRow as { status: string | null }).status ?? null
+      previousLocalId = (prevRow as { id: string }).id
+    }
   }
 
   const row = {
@@ -384,7 +439,7 @@ export async function syncSubscriptionFromStripeSubscription(
     stripe_price_id: pickPriceId(sub),
     status: sub.status,
     current_period_start: tsToIso((sub as unknown as { current_period_start?: number }).current_period_start),
-    current_period_end: tsToIso((sub as unknown as { current_period_end?: number }).current_period_end),
+    current_period_end: currentPeriodEnd,
     cancel_at_period_end: Boolean(sub.cancel_at_period_end),
     canceled_at: tsToIso(sub.canceled_at),
     trial_start: tsToIso(sub.trial_start),
@@ -392,7 +447,6 @@ export async function syncSubscriptionFromStripeSubscription(
     metadata: (sub.metadata ?? {}) as Record<string, string>,
   }
 
-  const svc = createServiceClient()
   const { error: upsertErr } = await svc
     .from('subscriptions')
     .upsert(row, { onConflict: 'stripe_subscription_id' })
@@ -407,8 +461,35 @@ export async function syncSubscriptionFromStripeSubscription(
     throw new BillingError('sync_failed', 500, upsertErr.message)
   }
 
+  // Resolve the local row id — necessary for downstream callers that
+  // need to read/write `subscriptions.metadata` atomically (e.g. the
+  // Phase 7M payment recovery helper, which uses the Phase 7L atomic
+  // append RPC and needs a row id).
+  let localId = previousLocalId
+  if (!localId) {
+    const { data: nextRow } = await svc
+      .from('subscriptions')
+      .select('id')
+      .eq('stripe_subscription_id', sub.id)
+      .maybeSingle()
+    if (nextRow) localId = (nextRow as { id: string }).id
+  }
+
   reqLog.info(
-    { venueId, status: sub.status, cancelAtPeriodEnd: sub.cancel_at_period_end },
+    {
+      venueId,
+      status: sub.status,
+      previousStatus,
+      cancelAtPeriodEnd: sub.cancel_at_period_end,
+    },
     'billing.sync.completed'
   )
+
+  return {
+    venueId,
+    previousStatus,
+    newStatus: sub.status,
+    subscriptionId: localId,
+    currentPeriodEnd,
+  }
 }
