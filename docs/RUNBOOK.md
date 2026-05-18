@@ -1,12 +1,35 @@
 # VenueRise — Operations Runbook
 
-Last reviewed: Phase 7A.
+Last reviewed: Phase 7B.
 
-Pager-friendly playbook. Each section: how to verify the system is working, then what to do when it isn't. Pair this with [SECURITY.md](./SECURITY.md) for secrets handling and [DEPLOYMENT.md](./DEPLOYMENT.md) for first-time setup.
+Pager-friendly playbook. Each section: how to verify the system is working, then what to do when it isn't. Pair this with:
+- [SECURITY.md](./SECURITY.md) for secrets handling and the trust-boundary model.
+- [DEPLOYMENT.md](./DEPLOYMENT.md) for first-time setup and the post-deploy checklist.
+- [STAGING-CHECKLIST.md](./STAGING-CHECKLIST.md) for setting up a parallel staging stack.
+- [LAUNCH-DAY.md](./LAUNCH-DAY.md) for the 72-hour launch-window playbook (alert wiring, baselines, pause/rollback thresholds).
 
 Convention used throughout:
 - `$APP` = canonical production URL (e.g. `https://app.venuerise.com`).
 - `$VENUE` = a real production venue id (cross-reference Supabase `venues` table).
+
+---
+
+## 0. Automated smoke tests (Phase 7B)
+
+Run these from a laptop or CI against any environment. Both are zero-dependency Node 18+ scripts.
+
+```bash
+# End-to-end: health → readiness → auth → widget → DB rows
+npm run smoke:prod
+
+# Widget POST load + latency percentiles
+npm run load:widget
+```
+
+Full env var docs: [DEPLOYMENT.md §6](./DEPLOYMENT.md) and [STAGING-CHECKLIST.md §10](./STAGING-CHECKLIST.md).
+Baseline percentile capture is part of [LAUNCH-DAY.md §5](./LAUNCH-DAY.md).
+
+If `smoke:prod` is failing, the failure message names the step (e.g. `[db.ai_actions.appear] timed out`) — jump to the relevant section in §2 below.
 
 ---
 
@@ -125,6 +148,18 @@ Symptoms: legitimate users seeing 429 from `/api/widget` or `/api/ai/*`.
 - `/api/readiness` — answers "is the deployment configured to take production traffic?". 503 in production if ANY of: Supabase down, Anthropic key missing, Inngest keys missing, Resend keys missing, Upstash missing, Sentry missing, `INTERNAL_API_SECRET` missing-or-short, or `NEXT_PUBLIC_APP_URL` missing/invalid. Use for load-balancer in-rotation checks (5-minute interval).
 
 The `failed` array in the readiness response names exactly which checks need attention. Don't dig further until that's empty.
+
+### 3.1 Uptime / readiness pinger configuration
+
+Pick any tool that can do HTTP probes with body assertions. Recommended baseline:
+
+| Probe | URL | Interval | Pass criteria | On fail |
+|---|---|---|---|---|
+| Liveness | `$APP/api/health` | 60s | HTTP 200 | Email after 3 consecutive fails |
+| Readiness | `$APP/api/readiness` | 5 min | HTTP 200 AND body contains `"ready":true` | Page on-call after 2 consecutive fails |
+| Dashboard auth | `$APP/dashboard` | 5 min | HTTP 307 | Email ops after 3 fails |
+
+Full alert wiring (Sentry / Inngest / Resend) is in [LAUNCH-DAY.md §4](./LAUNCH-DAY.md).
 
 ---
 

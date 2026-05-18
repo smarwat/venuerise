@@ -221,16 +221,76 @@ curl -sI -X POST https://<your-deploy>/api/widget \
 
 ## 4. After-deploy operational checklist
 
-- [ ] Add `/api/readiness` to your uptime monitor as the primary "in-rotation" probe (5-minute interval).
-- [ ] Add `/api/health` as the secondary low-noise liveness probe (60s interval).
-- [ ] Wire Sentry alerts: any unhandled exception in `layer=api` should page on-call.
-- [ ] Wire Inngest alerts: function failure rate > 5% over 15 min should page on-call.
-- [ ] Wire Resend alerts: bounce rate > 2% should email ops.
-- [ ] Bookmark [docs/RUNBOOK.md](./RUNBOOK.md) for on-call.
+- [ ] Add `/api/readiness` to your uptime monitor as the primary "in-rotation" probe (5-minute interval; assert body includes `"ready":true`).
+- [ ] Add `/api/health` as the secondary low-noise liveness probe (60s interval; assert HTTP 200).
+- [ ] Wire Sentry alerts (see [LAUNCH-DAY.md §4.1](./LAUNCH-DAY.md)).
+- [ ] Wire Inngest alerts (see [LAUNCH-DAY.md §4.2](./LAUNCH-DAY.md)).
+- [ ] Wire Resend alerts (see [LAUNCH-DAY.md §4.3](./LAUNCH-DAY.md)).
+- [ ] Run `npm run smoke:prod` against the deploy at least once (see §6).
+- [ ] Bookmark [docs/RUNBOOK.md](./RUNBOOK.md) for on-call and [docs/LAUNCH-DAY.md](./LAUNCH-DAY.md) for the launch-window playbook.
 
 ---
 
-## 5. Rolling back
+## 5. Staging environment
+
+Before any production deploy that touches the schema, integrations, or auth, run through [docs/STAGING-CHECKLIST.md](./STAGING-CHECKLIST.md). It walks through provisioning a parallel Supabase / Inngest / Resend / Upstash / Sentry stack with isolated credentials, then validates every flow with the smoke scripts.
+
+> Hard rule: **zero production keys in staging**. A leaked staging key is a non-event; a leaked prod key is a Tuesday.
+
+---
+
+## 6. Automated smoke tests (Phase 7B)
+
+Two scripts ship with the repo; both are zero-dependency Node 18+ (`fetch` is built-in).
+
+### 6.1 `scripts/smoke-prod.mjs` — end-to-end validation
+
+Drives `/api/health` → `/api/readiness` → Supabase password sign-in → widget POST → polls Supabase REST for the lead / conversation / AI message / follow-up / ai_actions rows → cleans up its own data (`leads.email = 'smoke-test@example.com'`).
+
+```bash
+SMOKE_APP_URL="$APP" \
+SMOKE_SUPABASE_URL="$SUPABASE_URL" \
+SMOKE_SUPABASE_ANON_KEY="$ANON" \
+SMOKE_SUPABASE_SERVICE_ROLE_KEY="$SERVICE" \
+SMOKE_TEST_USER_EMAIL="smoke-owner@example.com" \
+SMOKE_TEST_USER_PASSWORD='hunter2' \
+npm run smoke:prod
+```
+
+Optional:
+- `SMOKE_EXISTING_VENUE_ID` — skip the "find a venue this user owns" lookup.
+- `SMOKE_TIMEOUT_MS` — overall HTTP timeout (default 60_000).
+
+Exit code 0 on full pass, 1 on any step failure (with `[step]` + truncated detail on stderr), 2 on missing env vars.
+
+### 6.2 `scripts/load-widget.mjs` — widget POST load smoke
+
+Fires N submissions at concurrency C and reports status counts + latency percentiles. Useful for capturing the baseline numbers in [LAUNCH-DAY.md §5](./LAUNCH-DAY.md).
+
+```bash
+LOAD_APP_URL="$APP" LOAD_VENUE_ID="$VENUE" \
+  LOAD_CONCURRENCY=10 LOAD_TOTAL=30 \
+  LOAD_SUPABASE_URL="$SUPABASE_URL" \
+  LOAD_SUPABASE_SERVICE_ROLE_KEY="$SERVICE" \
+  npm run load:widget
+```
+
+Optional:
+- `LOAD_EXPECT_RATE_LIMIT=1` — flips the pass/fail rule so 429s are tolerated.
+- `LOAD_SUPABASE_URL` + `LOAD_SUPABASE_SERVICE_ROLE_KEY` — enables cleanup of `load-smoke-<runId>-*@example.com` rows.
+
+### 6.3 Composite verifier
+
+```bash
+npm run launch:verify
+# = npm run build && npm run check:no-console-server && npm run smoke:prod
+```
+
+Use this in CI for any branch that affects deployment surface.
+
+---
+
+## 7. Rolling back
 
 VenueRise has no destructive migrations after 004 — every Phase 5/6 migration is additive. Roll back by redeploying the previous build SHA in Vercel. The database does not need to be touched.
 

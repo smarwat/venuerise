@@ -9,7 +9,10 @@
     "lint": "next lint",
     "check:no-console-server": "! grep -RIEn --include='*.ts' --include='*.tsx' 'console\\.(log|warn|error|info|debug)' app/api lib/agents lib/jobs lib/integrations lib/anthropic.ts lib/rate-limit.ts",
     "check:prod-env": "node scripts/check-prod-env.mjs",
-    "verify": "npm run build && npm run check:no-console-server"
+    "verify": "npm run build && npm run check:no-console-server",
+    "smoke:prod": "node scripts/smoke-prod.mjs",
+    "load:widget": "node scripts/load-widget.mjs",
+    "launch:verify": "npm run verify && npm run smoke:prod"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
