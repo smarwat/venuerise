@@ -83,6 +83,12 @@ The `.env.example` file is the canonical machine-readable list; this doc is the 
 
 The dashboard banner + `/dashboard/settings/billing` page render the same regardless of this flag — only the API enforcement changes. This lets us ship the UX first and flip the gate later.
 
+**Default posture**: `BILLING_GATE_ENABLED=0` for demos, the first pilot customers, and staging unless explicitly testing billing. Flip to `1` in production only after the entire QA loop in [docs/BILLING-QA.md §6](./BILLING-QA.md) passes against staging.
+
+The full entitlement matrix lives in [docs/BILLING-QA.md](./BILLING-QA.md). Two scripts validate the matrix automatically:
+- `npm run billing:matrix` — probes representative routes against a deployed app and asserts each response matches the matrix.
+- `npm run billing:seed` — STAGING / LOCAL ONLY. Moves a test venue between subscription states for QA without touching Stripe.
+
 ### 1.8 Stripe (Phase 7C)
 
 | Var | Required in prod? | Public? | Source | Breaks if missing |

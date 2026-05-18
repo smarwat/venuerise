@@ -13,7 +13,9 @@
     "smoke:prod": "node scripts/smoke-prod.mjs",
     "load:widget": "node scripts/load-widget.mjs",
     "launch:verify": "npm run verify && npm run smoke:prod",
-    "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhook"
+    "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhook",
+    "billing:matrix": "node scripts/billing-gate-matrix.mjs",
+    "billing:seed": "node scripts/seed-subscription-state.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",

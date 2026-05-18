@@ -189,6 +189,18 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10d. Billing QA scripts (Phase 7E)
+
+Two scripts verify the gate without touching Stripe:
+
+- **`scripts/billing-gate-matrix.mjs`** (`npm run billing:matrix`) — signs in as a test user via Supabase Auth REST, probes representative routes, and asserts each response matches the documented matrix. Safe to run against any environment (uses the Phase 7A widget Origin allowlist + the existing rate limiter). Cleans up its own probe leads (`leads.email='billing-matrix@example.com'`) by default; opt out via `BILLING_MATRIX_CLEANUP=0`.
+
+- **`scripts/seed-subscription-state.mjs`** (`npm run billing:seed`) — **STAGING / LOCAL ONLY**. Writes a synthetic `subscriptions` row tagged `metadata.source='billing_gate_test'` via service-role REST. The script's cleanup path (and the script itself) only touch tagged rows — real Stripe-driven rows are never affected. There is **no production guardrail** beyond operator discipline: the script's warning banner says "STAGING / LOCAL ONLY" but it won't refuse to run against a production URL. Treat the service-role key as the access control: do not export production credentials when running this script.
+
+Both scripts are zero-dependency Node 18+; neither uses Supabase MCP, so they work from any CI runner or laptop with `node` installed. Full walk-through: [docs/BILLING-QA.md](./BILLING-QA.md).
+
+---
+
 ## 10c. Subscription gate (Phase 7D)
 
 The billing gate sits between role-checked write routes and their handlers. When `BILLING_GATE_ENABLED=1`, `requireActiveSubscription(venueId)` reads `public.subscriptions` (latest row, service-role read for tenant-isolated tables) and throws `SubscriptionRequiredError` (HTTP 402) unless the kind is `active` or `trialing`.
@@ -276,3 +288,4 @@ Tradeoff: we don't set a strict `script-src` CSP because Next.js inlines runtime
 - Webhook secret rotation (Resend) has a ~30s overlap window where both old and new are valid. Acceptable; documented in RUNBOOK §2.4.
 - Stripe webhook secret rotation (Phase 7C) has a longer overlap window controlled by the Stripe dashboard ("Roll secret" → "Stop accepting old secret"). Documented in RUNBOOK §2.5.
 - Billing tables expose subscription state to ADMIN_ROLES, NOT to sales/coordinator/viewer. If a salesperson needs "is this venue billable?" awareness, expose a derived field via a dedicated read API instead of widening the RLS policy.
+- The Phase 7E seed script (`scripts/seed-subscription-state.mjs`) has no runtime production check. Mitigation: keep the production service-role key out of the shell environment used for QA work, and never set `SEED_SUBSCRIPTION_SUPABASE_URL` to the production URL.

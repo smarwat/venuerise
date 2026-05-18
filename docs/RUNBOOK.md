@@ -121,20 +121,22 @@ Symptoms: bounces in Resend dashboard aren't reflected in Supabase `outbound_mes
 3. If 200 but no DB update: search Sentry for `route:/api/resend/webhook`. The signature verification helper logs `webhook.resend.signature_mismatch` on token rotation problems.
 4. Rotation procedure: in Resend, generate a new signing secret; deploy with the new value FIRST, then click "Rotate" in Resend to invalidate the old. There's a ~30s gap where both work — coordinate.
 
-### 2.4b Billing gate returning 402 unexpectedly (Phase 7D)
+### 2.4b Billing gate returning 402 unexpectedly (Phase 7D, expanded in 7E)
 
 Symptoms: a logged-in admin clicks "Add lead" or runs an AI requalify and gets HTTP 402 `subscription_required`.
 
+The canonical entitlement matrix is in [docs/BILLING-QA.md](./BILLING-QA.md). Read that first — it tells you the expected response for every route under every state.
+
 1. Hit `$APP/api/health` and check `billing.gate`. If `enabled` and you expected `disabled`, an operator flipped `BILLING_GATE_ENABLED=1` — confirm intent or unset.
-2. If the gate is intentionally enabled, query Supabase for the caller's venue's subscription state:
+2. If the gate is intentionally enabled, inspect the caller's venue subscription state via service-role SQL:
    ```sql
-   select status, current_period_end, trial_end, canceled_at, created_at
+   select status, current_period_end, trial_end, canceled_at, created_at, metadata
    from public.subscriptions where venue_id='<venue id>'
    order by created_at desc limit 5;
    ```
    The helper's priority order is `active > trialing > past_due > incomplete > unpaid > paused > canceled > incomplete_expired` (ties broken by `created_at` desc). Only `active` and `trialing` clear the gate.
 3. Common causes:
-   - **Trial expired**: the onboarding trial row has `status='trialing'` and `trial_end < now()`. Stripe doesn't auto-update — the user must check out. If you need to extend a trial manually:
+   - **Trial expired**: the onboarding trial row has `status='trialing'` and `trial_end < now()`. Stripe doesn't auto-update — the user must check out. To extend a trial manually:
      ```sql
      update public.subscriptions
      set trial_end = now() + interval '14 days'
@@ -142,7 +144,29 @@ Symptoms: a logged-in admin clicks "Add lead" or runs an AI requalify and gets H
      ```
    - **Webhook lag**: customer just paid but `subscriptions` hasn't synced yet. Re-deliver the latest `customer.subscription.updated` event from Stripe → Webhooks → Recent attempts.
    - **Orphan subscription**: the venue has a Stripe customer but no `billing_customers` row (e.g. data was deleted manually). Recreate the mapping, then re-deliver events.
-4. To bypass the gate WHILE diagnosing, temporarily set `BILLING_GATE_ENABLED=0` in Vercel + redeploy. The 402 stops; reads + the widget were never gated.
+4. **Quick gate disable** (single rollback step):
+   - Vercel → Environment Variables → Production → set `BILLING_GATE_ENABLED=0` (or delete the variable).
+   - Trigger a redeploy. Within ~60s, gated routes flip back to 2xx. No data is lost; subscription state is unchanged.
+5. **Reproduce in staging before re-enabling**:
+   ```bash
+   SEED_SUBSCRIPTION_SUPABASE_URL=$STAGING_SUPABASE_URL \
+     SEED_SUBSCRIPTION_SERVICE_ROLE_KEY=$STAGING_SERVICE_KEY \
+     SEED_SUBSCRIPTION_VENUE_ID=$STAGING_TEST_VENUE \
+     SEED_SUBSCRIPTION_STATUS=past_due \
+     npm run billing:seed
+
+   BILLING_MATRIX_APP_URL=$STAGING_URL \
+     BILLING_MATRIX_SUPABASE_URL=$STAGING_SUPABASE_URL \
+     BILLING_MATRIX_SUPABASE_ANON_KEY=$STAGING_ANON \
+     BILLING_MATRIX_SUPABASE_SERVICE_ROLE_KEY=$STAGING_SERVICE_KEY \
+     BILLING_MATRIX_TEST_USER_EMAIL=$STAGING_USER \
+     BILLING_MATRIX_TEST_USER_PASSWORD=$STAGING_PASS \
+     BILLING_MATRIX_VENUE_ID=$STAGING_TEST_VENUE \
+     BILLING_MATRIX_EXPECT_GATE=1 \
+     npm run billing:matrix
+   ```
+   The seed script ONLY touches rows tagged `metadata.source='billing_gate_test'`. **Never run it in production** — there's no production guardrail beyond operator discipline.
+6. Once the matrix script passes against the desired state, restore production-trial state with `SEED_SUBSCRIPTION_STATUS=trialing` and re-enable the gate.
 
 ### 2.5 Stripe webhook failing or checkout returns 503
 
