@@ -49,6 +49,8 @@ interface HealthBody {
     admin_clear_dunning: 'mounted'
     tour_auto_pause: 'mounted'
     tour_auto_resume: 'mounted'
+    tour_auto_pause_rearm: 'mounted'
+    bulk_cancel_notifications: 'mounted'
   }
   demo: {
     seed: 'mounted'
@@ -231,6 +233,17 @@ export async function GET(request: Request) {
       // so the /dashboard/tours banner can flip off. Does NOT resurrect
       // any already-cancelled tour — that remains operator-controlled.
       tour_auto_resume: 'mounted',
+      // 8H — window-aware re-arm on the auto-pause cron. When a venue
+      // bounces past_due → active → past_due, the cron archives the
+      // prior pause/resume pair into metadata.tour_pause_history and
+      // stamps a fresh pause. Idempotent on repeated runs in the same
+      // past-due window.
+      tour_auto_pause_rearm: 'mounted',
+      // 8H — POST /api/admin/tours/bulk-cancel now fans out best-effort
+      // cancellation emails to affected leads at concurrency 5. Email
+      // failures never turn a successful bulk-cancel into a 500; the
+      // response includes a notification_summary block for telemetry.
+      bulk_cancel_notifications: 'mounted',
     },
     // Phase 8A — demo seed + reset admin surface.
     // Phase 8B — realtime layers on /dashboard/leads + /dashboard/inbox.

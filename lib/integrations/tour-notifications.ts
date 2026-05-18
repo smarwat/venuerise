@@ -211,3 +211,61 @@ export async function sendTourNotificationEmail(
   )
   return { sent: true, skipped: false }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8H — bounded concurrency helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 8H — minimal bounded-concurrency runner.
+ *
+ * Used by `POST /api/admin/tours/bulk-cancel` to fan out lead-facing
+ * cancellation emails without:
+ *   - blowing past Resend's rate limits (Promise.all over 100 rows would
+ *     spike), or
+ *   - blocking the API response on serial sends.
+ *
+ * Semantics:
+ *   - Returns AFTER all items have settled (success or failure), in the
+ *     SAME order as `items` so callers can correlate results 1:1.
+ *   - Never throws — failures are encoded as `{ ok: false, error }` in
+ *     the result tuple so the caller's summary logic stays declarative.
+ *   - `limit` is clamped to `[1, items.length]` so dumb callers can't
+ *     accidentally pass 0 (no progress) or negative.
+ *
+ * Why not a library? The whole thing is ~25 lines and the alternative
+ * (`p-limit`, `p-map`, `bottleneck`) adds dependency surface for a single
+ * call site. If a third call site shows up, refactor to a shared util.
+ */
+
+export type SettledOutcome<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: unknown }
+
+export async function runWithConcurrency<I, T>(
+  items: readonly I[],
+  limit: number,
+  fn: (item: I, index: number) => Promise<T>
+): Promise<Array<SettledOutcome<T>>> {
+  const results: Array<SettledOutcome<T>> = new Array(items.length)
+  if (items.length === 0) return results
+  const cappedLimit = Math.max(1, Math.min(limit, items.length))
+
+  let cursor = 0
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = cursor++
+      if (idx >= items.length) return
+      try {
+        const value = await fn(items[idx], idx)
+        results[idx] = { ok: true, value }
+      } catch (error) {
+        results[idx] = { ok: false, error }
+      }
+    }
+  }
+
+  const workers = Array.from({ length: cappedLimit }, () => worker())
+  await Promise.all(workers)
+  return results
+}

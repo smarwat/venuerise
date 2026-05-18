@@ -8,6 +8,12 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import {
+  sendTourNotificationEmail,
+  runWithConcurrency,
+} from '@/lib/integrations/tour-notifications'
+
+const NOTIFY_CONCURRENCY = 5
 
 /**
  * POST /api/admin/tours/bulk-cancel  (Phase 8F)
@@ -164,12 +170,16 @@ export async function POST(request: NextRequest) {
 
   const svc = createServiceClient()
 
-  // 7. Fetch matching ids first so we can return an accurate cancelled_count
-  // even if a row flips status mid-update. PATCH .in('id', ids) ensures we
-  // only touch the exact rows we screened.
+  // 7. Fetch matching rows first — Phase 8H widens this select to include
+  // every field the lead-notification helper needs PLUS the joined lead
+  // contact, so we don't need a second per-row lookup after the update.
+  // We still update by id list with a status re-guard, so a row that flips
+  // status mid-update never gets double-cancelled.
   const { data: matchRaw, error: matchErr } = await svc
     .from('tours')
-    .select('id')
+    .select(
+      'id, lead_id, scheduled_at, duration_minutes, location_notes, leads(name, email)'
+    )
     .eq('venue_id', targetVenueId)
     .in('status', ['scheduled', 'confirmed'])
     .gte('scheduled_at', windowStart.toISOString())
@@ -189,8 +199,17 @@ export async function POST(request: NextRequest) {
     return respond(NextResponse.json({ error: 'unexpected_error' }, { status: 500 }))
   }
 
-  const ids = ((matchRaw ?? []) as Array<{ id: string }>).map((r) => r.id)
-  if (ids.length === 0) {
+  type CandidateRow = {
+    id: string
+    lead_id: string | null
+    scheduled_at: string
+    duration_minutes: number | null
+    location_notes: string | null
+    leads: { name?: string | null; email?: string | null } | null
+  }
+  const candidates = (matchRaw ?? []) as CandidateRow[]
+
+  if (candidates.length === 0) {
     reqLog.info(
       {
         userId: user.id,
@@ -208,9 +227,17 @@ export async function POST(request: NextRequest) {
         cancelled_count: 0,
         from_date,
         to_date,
+        notification_summary: {
+          attempted: 0,
+          queued: 0,
+          skipped: 0,
+          failed: 0,
+        },
       })
     )
   }
+
+  const ids = candidates.map((c) => c.id)
 
   // 8. Cancel. We re-assert status ∈ {scheduled, confirmed} on the UPDATE
   // so a row that completed between the fetch + update doesn't get clobbered.
@@ -238,7 +265,84 @@ export async function POST(request: NextRequest) {
     return respond(NextResponse.json({ error: 'unexpected_error' }, { status: 500 }))
   }
 
-  const cancelledCount = (updatedRaw as Array<{ id: string }> | null)?.length ?? 0
+  // Build the set of ids the UPDATE actually touched. A row that flipped
+  // out of {scheduled,confirmed} between candidate select + update will
+  // be in `candidates` but NOT in `updatedRaw`; we exclude it from the
+  // notification fan-out so the lead isn't told "cancelled" for a tour
+  // that was already, say, completed by the time we got there.
+  const cancelledIdSet = new Set(
+    ((updatedRaw as Array<{ id: string }> | null) ?? []).map((r) => r.id)
+  )
+  const cancelledCount = cancelledIdSet.size
+  const affectedRows = candidates.filter((c) => cancelledIdSet.has(c.id))
+
+  // 9. Phase 8H — best-effort lead notifications. Bounded concurrency = 5
+  // so we don't spike Resend. The notification helper already swallows
+  // its own errors; we additionally wrap each call in runWithConcurrency
+  // which never throws. Net behavior: the API response is never blocked
+  // by email outcomes, and the response includes per-row telemetry so
+  // the operator knows how many leads actually got a delivery attempt.
+  let notifAttempted = 0
+  let notifQueued = 0
+  let notifSkipped = 0
+  let notifFailed = 0
+
+  if (affectedRows.length > 0) {
+    const outcomes = await runWithConcurrency(
+      affectedRows,
+      NOTIFY_CONCURRENCY,
+      async (row) => {
+        if (!row.lead_id) {
+          return { sent: false, skipped: true, reason: 'no_lead_id' as const }
+        }
+        return sendTourNotificationEmail({
+          kind: 'cancelled',
+          tourId: row.id,
+          venueId: targetVenueId,
+          leadId: row.lead_id,
+          leadEmail: row.leads?.email ?? null,
+          leadName: row.leads?.name ?? null,
+          scheduledAt: row.scheduled_at,
+          durationMinutes: row.duration_minutes,
+          locationNotes: row.location_notes,
+          requestId,
+        })
+      }
+    )
+
+    for (const outcome of outcomes) {
+      notifAttempted++
+      if (!outcome.ok) {
+        // The helper swallows internally; an `ok:false` here would mean
+        // runWithConcurrency caught a synchronous throw we didn't expect.
+        // We log + Sentry-capture (the helper hasn't, by definition) but
+        // never let it crash the response.
+        notifFailed++
+        reqLog.error(
+          { err: outcome.error, venueId: targetVenueId },
+          'admin.tours_bulk_cancel.notify_threw'
+        )
+        captureApiError(outcome.error, {
+          requestId,
+          route: '/api/admin/tours/bulk-cancel',
+          userId: user.id,
+          venueId: targetVenueId,
+        })
+        continue
+      }
+      const r = outcome.value
+      if (r.sent) {
+        notifQueued++
+      } else if (r.skipped) {
+        notifSkipped++
+      } else {
+        // Helper returned { sent:false, skipped:false } — provider error
+        // or send_threw. Already logged + Sentry-captured inside the
+        // helper (unless it was a suppression, which is expected).
+        notifFailed++
+      }
+    }
+  }
 
   reqLog.info(
     {
@@ -249,6 +353,10 @@ export async function POST(request: NextRequest) {
       cancelled_count: cancelledCount,
       candidate_count: ids.length,
       hadReason: Boolean(reason),
+      notif_attempted: notifAttempted,
+      notif_queued: notifQueued,
+      notif_skipped: notifSkipped,
+      notif_failed: notifFailed,
     },
     'admin.tours_bulk_cancel.completed'
   )
@@ -260,6 +368,12 @@ export async function POST(request: NextRequest) {
       cancelled_count: cancelledCount,
       from_date,
       to_date,
+      notification_summary: {
+        attempted: notifAttempted,
+        queued: notifQueued,
+        skipped: notifSkipped,
+        failed: notifFailed,
+      },
     })
   )
 }

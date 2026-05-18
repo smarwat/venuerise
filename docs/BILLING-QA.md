@@ -892,7 +892,85 @@ order by current_period_end asc
 limit 200;
 ```
 
-The cron then filters in JS to skip any row whose `metadata->>'tours_paused_at'` is already set — so a second run on the same day is a no-op for venues we've already paused.
+The cron then filters in JS to decide whether each candidate is **paused for the current past-due window** (skip) or has a **stale pause from a prior cycle** (re-arm — see §7b.1 below). A second run on the same day is a no-op for venues already paused for the current window.
+
+### 7b.1 Re-arm after a recovery + lapse (Phase 8H)
+
+Before Phase 8H, the cron checked only `metadata.tours_paused_at`. That meant a venue that paused → recovered (Phase 8G stamps `tours_resumed_at`) → lapsed back to `past_due` would NEVER get re-paused — the original `tours_paused_at` blocked the guard forever. Phase 8H replaces that flat check with a window-aware predicate:
+
+| `tours_paused_at` | `tours_resumed_at` | `tours_resumed_at` vs `current_period_end` | Action |
+|---|---|---|---|
+| missing | — | — | first pause → cancel + stamp |
+| set | missing | — | currently paused → skip |
+| set | set | `resumed_at >= current_period_end` | still paused for this window → skip |
+| set | set | `resumed_at <  current_period_end` | **stale pair — re-arm**: archive into `tour_pause_history`, clear `tours_resumed_*`, stamp fresh pause |
+
+The re-arm flow archives the prior `(paused_at, resumed_at, paused_reason, resumed_reason, paused_count, archived_at)` tuple into `metadata.tour_pause_history` (jsonb array, append-only) BEFORE stamping the new pause, so the full timeline survives.
+
+### 7b.2 Metadata shape (post-Phase 8H)
+
+```ts
+{
+  // current pause (cleared/overwritten on next re-arm)
+  tours_paused_at:       string  // ISO timestamp
+  tours_paused_reason:   string  // 'past_due_7_days'
+  tours_paused_count:    number  // tours cancelled this cycle
+
+  // present only after Phase 8G recovery, until the next re-arm
+  tours_resumed_at?:     string
+  tours_resumed_reason?: string  // 'payment_recovered'
+
+  // appended on every re-arm — never trimmed
+  tour_pause_history?: Array<{
+    paused_at:      string
+    resumed_at:     string
+    paused_reason:  string | null
+    resumed_reason: string | null
+    paused_count:   number | null
+    archived_at:    string  // ISO timestamp of when the cron archived
+  }>
+}
+```
+
+The old `tours_paused_reason` constant (`'past_due_7_days'`) is intentionally preserved across Phase 8H — operator SQL queries and the existing audit trail continue to work without migration. The example shape in the Phase 8H prompt used `'past_due_auto_pause'`; that was illustrative and the implementation stuck with the established string.
+
+### 7b.3 How to manually test re-arm
+
+```sql
+-- 1. Pick a non-prod subscription. Synthesize a "recovered-then-lapsed"
+--    state. The `current_period_end` must be older than 7 days so the
+--    candidate query picks it up.
+update public.subscriptions
+set status = 'past_due',
+    current_period_end = now() - interval '10 days',
+    metadata = jsonb_build_object(
+      'tours_paused_at',   (now() - interval '20 days')::text,
+      'tours_paused_reason','past_due_7_days',
+      'tours_paused_count', 2,
+      'tours_resumed_at',  (now() - interval '15 days')::text,
+      'tours_resumed_reason','payment_recovered'
+    )
+where id = '<subscription_id>';
+```
+
+2. Run the cron — either via Inngest UI or programmatically:
+   ```ts
+   import { runAutoPauseScan } from '@/lib/jobs/functions/billing-tour-auto-pause'
+   console.log(await runAutoPauseScan())
+   ```
+3. Verify:
+   ```sql
+   select metadata->>'tours_paused_at'        as new_paused_at,
+          metadata->>'tours_paused_count'      as new_paused_count,
+          metadata->'tours_resumed_at'         as resumed_at_should_be_null,
+          jsonb_array_length(metadata->'tour_pause_history') as history_len
+   from public.subscriptions
+   where id = '<subscription_id>';
+   ```
+   - `new_paused_at` should be a fresh ISO timestamp from this run.
+   - `resumed_at_should_be_null` should be `null` (cleared by the re-arm).
+   - `history_len` should be 1 (one archived prior pair).
+4. Re-run the cron → assert `history_len` stays at 1 and `new_paused_at` doesn't change (idempotent in the current window).
 
 ### What it writes
 
@@ -949,9 +1027,12 @@ This cron has no automatic unpause. When billing recovers (Stripe webhook flips 
 
 ### Logging + Sentry
 
-- Every per-venue action logs structured fields: `venueId`, `subscriptionId`, `periodEnd`, `cancelledCount`, `pausedAtIso`.
+- Every per-venue action logs structured fields: `venueId`, `subscriptionId`, `periodEnd`, `cancelledCount`, `pausedAtIso`. Phase 8H adds three new log events:
+  - `jobs.billing_tour_auto_pause.already_paused_current_window` — skip because we're still in the active pause window.
+  - `jobs.billing_tour_auto_pause.history_archived` — prior pause/resume pair was archived on a re-arm.
+  - `jobs.billing_tour_auto_pause.rearmed` — fresh pause stamped on a previously-recovered venue.
 - Per-venue failures (cancel UPDATE failed / metadata UPDATE failed) get `captureJobError('billing-tour-auto-pause', err, { venueId })` and increment `failed` in the summary — they do NOT abort the batch, so one bad venue can't block the rest.
-- The scan summary `{ scanned, paused, cancelled_tours, skipped, failed }` is logged at INFO level on completion. Set up an Inngest run alert if `failed > 0` for two consecutive runs.
+- The scan summary `{ scanned, paused, rearmed, cancelled_tours, skipped, failed }` is logged at INFO level on completion (Phase 8H added `rearmed`). Set up an Inngest run alert if `failed > 0` for two consecutive runs.
 
 ## 7j. Tour auto-resume on payment recovery (Phase 8G)
 
@@ -967,23 +1048,17 @@ Both run on the same transition; both are idempotent on webhook redeliveries. Fa
 - **It does not resurrect cancelled tours.** Any tour that was cancelled by the Phase 8F auto-pause cron stays `status='cancelled'`. The lifecycle of those rows is intentionally operator-controlled — if the venue wants them back, an admin recreates them via the dashboard or asks the leads to re-book.
 - **It does not clear `tours_paused_at`.** The audit pair "paused on X, resumed on Y" remains readable for forensics.
 
-### Known limitation: re-arming after a bounce
+### Re-arming after a bounce (Phase 8H)
 
-Because `tours_paused_at` is preserved across the resume, the Phase 8F auto-pause cron's `alreadyPaused()` guard considers the venue "still paused" if it bounces back to `past_due` later. The cron will **NOT** re-cancel a future round of tours for a venue that has already been paused once.
+**Resolved in Phase 8H.** The auto-pause cron now distinguishes between "currently paused in this past-due window" and "stale pause from a prior cycle". When a venue bounces past_due → active → past_due, the cron:
 
-Workaround for operators: clear both metadata keys via SQL when you want to re-arm the cron:
+1. Archives the prior `(paused_at, resumed_at, paused_reason, resumed_reason, paused_count, archived_at)` tuple into `metadata.tour_pause_history` (jsonb array, append-only).
+2. Clears `tours_resumed_at` / `tours_resumed_reason`.
+3. Stamps a fresh `tours_paused_at` + cancels future tours for the new cycle.
 
-```sql
-update public.subscriptions
-set metadata = metadata - 'tours_paused_at'
-                       - 'tours_paused_reason'
-                       - 'tours_paused_count'
-                       - 'tours_resumed_at'
-                       - 'tours_resumed_reason'
-where id = '<subscription_id>';
-```
+See §7b.1 / §7b.2 / §7b.3 above for the decision rule, metadata shape, and a step-by-step test recipe.
 
-A future phase may add a self-clearing guard (e.g. allow re-pause if `tours_resumed_at` predates the new `past_due` window).
+No manual SQL clear is needed any more. The pre-8H workaround (deleting the metadata keys to force a re-pause) still works, but if you do that you'll also lose the history record of the prior cycle — let the cron archive it for you instead.
 
 ### Inspect paused / resumed venues
 
@@ -1017,7 +1092,7 @@ curl -s http://localhost:3000/api/admin/tours/paused-venues \
 
 Auth: `requireAdmin()` only. Returns 401 unauthenticated, 403 if the user has no admin/owner membership anywhere, and `{ items: [...] }` otherwise. Each item contains `venue_id`, `subscription_id`, `status`, `tours_paused_at`, `tours_paused_count` — no PII.
 
-### Tour notification emails (Phase 8G)
+### Tour notification emails (Phase 8G + 8H)
 
 Best-effort lead-facing emails fire on every tour status event:
 
@@ -1027,10 +1102,31 @@ Best-effort lead-facing emails fire on every tour status event:
 | Rescheduled | `PATCH /api/tours/[id]` changes `scheduled_at` | `Your venue tour has been updated` |
 | Confirmed | `PATCH` flips status to `confirmed` | `Your venue tour is confirmed` |
 | Cancelled | `PATCH` flips status to `cancelled` | `Your venue tour was cancelled` |
+| Cancelled (bulk) | `POST /api/admin/tours/bulk-cancel` | `Your venue tour was cancelled` |
 
 If a single PATCH changes both `status` AND `scheduled_at`, only one email is sent — priority is `cancelled` > `confirmed` > `rescheduled`.
 
-**Failure model**: the email send is fire-and-forget. The tour write succeeds regardless of email outcome (Resend down, suppression hit, transient network error). Failures are structured-logged + Sentry-captured (except for `suppressed:*` which is an expected outcome and not a fault). Leads with no `email` on file are silently skipped.
+**Phase 8H — bulk-cancel notifications**: the operator escape hatch `POST /api/admin/tours/bulk-cancel` now fans out cancellation emails to every affected lead at concurrency 5 via `runWithConcurrency()` (defined in `lib/integrations/tour-notifications.ts`). Behavior:
+
+- Best-effort. Email failures NEVER turn a successful bulk-cancel into a 500.
+- Only rows that were actually flipped to `cancelled` by the UPDATE get notified — rows that flipped status mid-request (e.g. operator manually completed them) are excluded.
+- Suppression / no-email-on-file leads are reflected in `notification_summary.skipped`.
+- Response gets a new top-level block:
+  ```json
+  {
+    "success": true,
+    "cancelled_count": 3,
+    "notification_summary": {
+      "attempted": 3,
+      "queued": 3,
+      "skipped": 0,
+      "failed": 0
+    }
+  }
+  ```
+  `queued` counts helper-returned `{ sent: true }` (handed off to Resend successfully). `skipped` is "lead had no email or hit suppression". `failed` is "provider error / threw". The names "queued" vs "delivered" reflect the helper's contract: a successful return from `sendEmail` means Resend accepted the request, not that the recipient's inbox received it — delivery confirmation lives in the Resend webhook (Phase 4B+).
+
+**Failure model**: the per-row email send is fire-and-forget for `POST /api/tours` + `PATCH /api/tours/[id]`. For bulk-cancel, the email outcome is awaited (to populate the response summary) but wrapped in `runWithConcurrency()` which catches every throw. Failures are structured-logged + Sentry-captured (except `suppressed:*` which is an expected outcome and not a fault). Leads with no `email` on file are silently skipped.
 
 **Suppression**: rides on the existing `sendEmail` layer — `public.email_suppressions` blocks delivery and the helper returns `result.error = 'suppressed:<reason>'`.
 

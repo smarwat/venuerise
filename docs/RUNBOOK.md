@@ -706,26 +706,96 @@ select email, role, status, expires_at, accepted_at
 from venue_invitations order by created_at desc limit 20;
 ```
 
-## 7. Tour auto-pause + auto-resume (Phase 8F + 8G)
+## 7. Tour auto-pause + auto-resume + re-arm (Phase 8F + 8G + 8H)
 
 Two billing-driven side effects touch the `tours` table:
 
 - **Auto-pause cron** (`billing-tour-auto-pause`, daily 6pm UTC) — when a subscription is `past_due` for >7 days AND `metadata.tours_paused_at` is unset, it bulk-cancels every future `scheduled|confirmed` tour for that venue and stamps `tours_paused_at` / `tours_paused_reason='past_due_7_days'` / `tours_paused_count`.
 - **Auto-resume** (synchronous, inside the Stripe webhook dispatcher) — when a subscription transitions `past_due` → `active`/`trialing`, the dispatcher stamps `tours_resumed_at` + `tours_resumed_reason='payment_recovered'`. **It does NOT resurrect cancelled tours.** The audit pair "paused on X, resumed on Y" is preserved.
+- **Auto-pause re-arm** (Phase 8H) — if a venue paused, recovered, then lapses back to `past_due`, the cron archives the prior pause/resume tuple into `metadata.tour_pause_history` (append-only jsonb array) and stamps a fresh pause. Decision rule: the existing pause is "stale" iff `tours_resumed_at` predates `current_period_end`.
 
 ### Triage flow when a customer says "my tours disappeared"
 
 1. Check the subscription metadata:
    ```sql
-   select id, status,
-          metadata->>'tours_paused_at'    as paused_at,
-          metadata->>'tours_paused_count'  as paused_count,
-          metadata->>'tours_resumed_at'   as resumed_at
+   select id, status, current_period_end,
+          metadata->>'tours_paused_at'      as paused_at,
+          metadata->>'tours_paused_count'    as paused_count,
+          metadata->>'tours_resumed_at'     as resumed_at,
+          jsonb_array_length(metadata->'tour_pause_history') as history_len
    from public.subscriptions
    where venue_id = '<venue uuid>';
    ```
 2. If `paused_at` is set and `resumed_at` is null → the auto-pause cron fired. Have them update payment in `/dashboard/settings/billing`. The next Stripe webhook should flip status back and stamp `resumed_at`.
-3. After recovery, manually recreate any tours the venue needs back (see DEMO-RUNBOOK §13.2 — never bulk `UPDATE status='scheduled'`, that bypasses the lead notification email + leaves stale `outcome` text behind).
+3. If `paused_at` and `resumed_at` are both set AND `resumed_at < current_period_end` → the venue recovered and then lapsed again. The cron should re-arm on its next nightly run (`history_len` will increment by 1). If 24h+ have passed without re-arm, check `jobs.billing_tour_auto_pause.*` logs for that subscription id.
+4. After recovery, manually recreate any tours the venue needs back (see DEMO-RUNBOOK §13.2 — never bulk `UPDATE status='scheduled'`, that bypasses the lead notification email + leaves stale `outcome` text behind).
+
+### "Venue became past_due again but tours were not cancelled"
+
+This is the Phase 8H re-arm flow. Diagnostic sequence:
+
+1. Confirm the venue is currently `past_due`:
+   ```sql
+   select status, current_period_end
+   from public.subscriptions
+   where venue_id = '<uuid>';
+   ```
+2. Confirm `current_period_end` is more than 7 days in the past (the grace window). If not, the cron correctly skipped — wait.
+3. Inspect the pause/resume metadata:
+   ```sql
+   select metadata->>'tours_paused_at'      as paused_at,
+          metadata->>'tours_resumed_at'     as resumed_at,
+          metadata->>'tours_paused_reason'   as paused_reason,
+          metadata->'tour_pause_history'     as history,
+          current_period_end
+   from public.subscriptions
+   where venue_id = '<uuid>';
+   ```
+4. Apply the decision rule:
+   - `resumed_at` missing → the cron believes it's still paused. Check whether the venue actually has any future `scheduled|confirmed` tours; if zero, the previous pause did its job and there's nothing new to cancel.
+   - `resumed_at >= current_period_end` → the resume happened during/after this past-due window (i.e. you're inside the current pause window with a resume that hasn't been observed by the dispatcher yet). Wait for the next webhook.
+   - `resumed_at < current_period_end` → re-arm should fire on the next nightly cron run. Force a run via the Inngest dashboard if you don't want to wait.
+5. If the cron has clearly run since the recovery and still didn't re-arm, search for the structured event `jobs.billing_tour_auto_pause.history_archived` / `jobs.billing_tour_auto_pause.rearmed` for the subscription id. Absence of both with non-zero `scanned` in the run summary indicates the candidate query is excluding this row — usually because `current_period_end` isn't `< now() - 7 days`.
+
+### Bulk-cancel notification troubleshooting
+
+`POST /api/admin/tours/bulk-cancel` (Phase 8F + 8H) returns:
+
+```json
+{
+  "success": true,
+  "cancelled_count": <int>,
+  "notification_summary": {
+    "attempted": <int>,
+    "queued":    <int>,
+    "skipped":   <int>,
+    "failed":    <int>
+  }
+}
+```
+
+If a lead complains they didn't get a cancellation email after a bulk-cancel:
+
+1. Verify the tour was actually cancelled:
+   ```sql
+   select id, status, outcome, updated_at
+   from public.tours
+   where lead_id = '<lead uuid>'
+     and scheduled_at between '<from_date>'::timestamptz and '<to_date>'::timestamptz + interval '1 day';
+   ```
+2. Verify an outbound row exists:
+   ```sql
+   select created_at, kind, provider, message_id, error,
+          metadata->>'tour_notification_kind' as kind_tag
+   from public.outbound_messages
+   where lead_id = '<lead uuid>'
+     and related_table = 'tours'
+   order by created_at desc;
+   ```
+   - A row with `error IS NULL` + `provider='resend'` → handed to Resend successfully. Pivot to Resend webhook logs for actual delivery.
+   - A row with `error LIKE 'suppressed:%'` → the lead is in `public.email_suppressions`. Check `reason`. If they want to opt back in, manually delete the suppression row.
+   - No row at all → the lead probably had no `email` on file at the time of bulk-cancel. Inspect `public.leads`.
+3. If the API response `notification_summary.failed > 0`, search logs for `admin.tours_bulk_cancel.notify_threw` keyed to the request id (returned in the `X-Request-Id` response header).
 
 ### Listing every currently-paused venue
 
