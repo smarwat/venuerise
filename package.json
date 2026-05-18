@@ -15,7 +15,9 @@
     "launch:verify": "npm run verify && npm run smoke:prod",
     "stripe:listen": "stripe listen --forward-to localhost:3000/api/stripe/webhook",
     "billing:matrix": "node scripts/billing-gate-matrix.mjs",
-    "billing:seed": "node scripts/seed-subscription-state.mjs"
+    "billing:seed": "node scripts/seed-subscription-state.mjs",
+    "demo:seed": "node scripts/seed-demo-venue.mjs",
+    "demo:reset": "node scripts/reset-demo-venue.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",

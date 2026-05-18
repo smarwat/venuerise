@@ -92,6 +92,28 @@ export default async function AnalyticsPage() {
         ))}
       </div>
 
+      {/* Phase 8A — soft empty-state hint when nothing has been intaked yet.
+          Renders ABOVE the charts so an empty graph doesn't look broken. */}
+      {allLeads.length === 0 && (
+        <div className="mb-6 rounded-2xl border border-[#E2E8F0] bg-white px-5 py-4 flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#F1F5F9] text-[#0F172A] flex items-center justify-center shrink-0">
+            <TrendingUp className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-[#0F172A]">
+              Analytics will appear after leads and tours are created
+            </div>
+            <p className="text-[12px] text-[#64748B] mt-0.5">
+              Submit a test inquiry through your widget, or use{' '}
+              <code className="text-[11px] text-[#0F172A] bg-[#F1F5F9] px-1.5 py-0.5 rounded">
+                npm run demo:seed
+              </code>{' '}
+              for a populated walk-through. See <span className="text-[#0F172A]">docs/DEMO-RUNBOOK.md</span>.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <Card className="lg:col-span-2">
           <CardHeader>

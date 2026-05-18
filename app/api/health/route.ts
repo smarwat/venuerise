@@ -48,6 +48,7 @@ interface HealthBody {
     recovery_email: 'mounted'
     admin_clear_dunning: 'mounted'
   }
+  demo: { seed: 'mounted' }
   uptime_ms: number
   ts: string
 }
@@ -64,8 +65,9 @@ interface HealthBody {
  *   - Phase 7G: 8 (added billing-events list + detail)
  *   - Phase 7I: 9 (added billing-events/[id]/replay)
  *   - Phase 7N: 10 (added billing-events/[id]/clear-dunning)
+ *   - Phase 8A: 12 (added demo/seed + demo/reset)
  */
-const ADMIN_ENDPOINT_COUNT = 10
+const ADMIN_ENDPOINT_COUNT = 12
 
 const startedAt = Date.now()
 
@@ -208,6 +210,8 @@ export async function GET(request: Request) {
       // wipes prefix-matched entries from subscriptions.metadata.dunning_sent.
       admin_clear_dunning: 'mounted',
     },
+    // Phase 8A — demo seed + reset admin surface.
+    demo: { seed: 'mounted' },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }
