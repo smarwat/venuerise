@@ -52,8 +52,13 @@ interface HealthBody {
  * Kept as a constant rather than a runtime filesystem probe so a monitor
  * checking this value will alert if a new admin endpoint isn't mounted
  * (e.g. accidentally excluded from a build).
+ *
+ * Changelog:
+ *   - Phase 5E: 6 (ai-actions, anthropic-probe, outbound-messages,
+ *               suppressions, test-send, workflow-status)
+ *   - Phase 7G: 8 (added billing-events list + detail)
  */
-const ADMIN_ENDPOINT_COUNT = 6
+const ADMIN_ENDPOINT_COUNT = 8
 
 const startedAt = Date.now()
 

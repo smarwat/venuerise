@@ -222,6 +222,30 @@ order by received_at desc limit 20;
 
 **If the audit log itself is failing** (e.g. table missing, RLS misconfig): hit `/api/readiness` and look for `billing_events_log: "missing"` in `failed[]`. The webhook handler keeps running — losing audit coverage doesn't take down billing — but the operator surface goes dark. Re-apply migration 008.
 
+**Admin API (Phase 7G)** — inspect the audit log over HTTP without SQL.
+
+List recent events for your venue:
+```bash
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events?handled=false&limit=20"
+```
+
+Inspect a single event including the full Stripe payload:
+```bash
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events/<row-id>"
+```
+
+The list endpoint **never** returns `payload`. The detail endpoint does — use it sparingly and don't paste responses into shared channels (Stripe payloads contain customer PII; see [SECURITY.md §10e](./SECURITY.md)).
+
+Common filters on the list endpoint:
+| Filter | Example | Meaning |
+|---|---|---|
+| `handled=false` | `?handled=false` | webhook delivered, our handler failed |
+| `event_type=...` | `?event_type=invoice.payment_failed` | all events of a single type |
+| `venue_id=<uuid>` | `?venue_id=...` | admin of multiple venues, target a specific one (you must hold ADMIN_ROLES on it) |
+| `limit=<N>` | `?limit=200` | max 200; default 50 |
+
 ### 2.5 Stripe webhook failing or checkout returns 503
 
 Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.

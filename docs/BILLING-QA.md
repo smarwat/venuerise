@@ -207,6 +207,63 @@ After 30+ minutes of stable behavior in staging, the gate is safe to enable in p
 
 ---
 
+## 7b. Admin API for audit log (Phase 7G)
+
+For operators who don't want to write SQL, two endpoints expose the Phase 7F audit log over HTTP.
+
+### List
+
+```
+GET /api/admin/billing-events
+```
+
+Owner/admin only (`requireAdmin`). Rate-limited per caller (`admin:billing-events:{userId}`). Query params:
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `event_type` | string | — | e.g. `customer.subscription.updated` |
+| `handled` | `true`/`false`/`all` | `all` | restrict to handled / failed / no filter |
+| `venue_id` | UUID | caller's primary | if set and different from caller's primary, caller must hold ADMIN_ROLES on it (re-verified) |
+| `limit` | int 1–200 | 50 | |
+
+Response: `{ items: [{ id, stripe_event_id, event_type, venue_id, stripe_customer_id, stripe_subscription_id, handled, handled_at, handler_error, duplicate_count, received_at }] }`. **`payload` is intentionally omitted** — slimmer rows + privacy.
+
+Errors:
+- 400 `invalid_query` (Zod validation)
+- 401 `unauthorized`
+- 403 `forbidden` (no admin venue, or `venue_id` you don't admin)
+- 429 rate-limited
+- 500 `unexpected_error`
+
+### Detail
+
+```
+GET /api/admin/billing-events/[id]
+```
+
+Same auth. Different rate-limit key (`admin:billing-event-detail:{userId}`). Returns the **full** row including `payload`. 404 is the existence boundary — "not found", "row's venue_id is null", and "row belongs to a venue you don't admin" all return the same 404 so admins can't enumerate cross-tenant events.
+
+### Quick recipes
+
+```bash
+# 1. Most recent failures (most useful single query).
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events?handled=false&limit=50" | jq .
+
+# 2. All subscription updates in the last batch — surface for "did Stripe
+#    just retry us?" investigations.
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events?event_type=customer.subscription.updated&limit=20" | jq .
+
+# 3. Drill into one event (replace <id> with a list-response row.id).
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events/<row id>" | jq .item.payload
+```
+
+### Privacy reminder
+
+The detail endpoint is the only product surface that returns Stripe payloads. Stripe payloads contain customer email + billing-address fields. Do not screenshot or paste responses into shared channels.
+
 ## 7a. Audit log inspection (Phase 7F)
 
 Every Stripe webhook event is recorded in `public.billing_events_log` before dispatch — see [SECURITY.md §10e](./SECURITY.md) for the safety posture. The most useful operator queries:
