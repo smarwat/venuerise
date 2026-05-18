@@ -142,5 +142,12 @@ export async function GET(
     }
   }
 
-  return respond(NextResponse.json({ item: row }))
+  // Phase 7I — surface replay eligibility so a dashboard / operator
+  // tool can show or hide the "Replay" button without re-deriving the rule.
+  // Eligibility is purely structural: any non-null venue_id + a stripe_event_id.
+  // We deliberately do NOT check Stripe configuration here — that's a
+  // 503 surfaced by the replay route itself when the operator clicks.
+  const can_replay = Boolean(row.stripe_event_id && row.venue_id)
+
+  return respond(NextResponse.json({ item: { ...row, can_replay } }))
 }

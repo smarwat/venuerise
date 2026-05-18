@@ -293,6 +293,50 @@ where id='<subscription id>';
 ```
 Next cron run will re-send. ONLY do this when an operator has confirmed the original email genuinely didn't arrive (Resend bounce, etc.).
 
+### 2.4e How to replay a missed Stripe event (Phase 7I)
+
+When a webhook handler failed transiently (Supabase blip, downstream Anthropic timeout, etc.) the audit row in `billing_events_log` is left with `handled=false`. Two recovery paths:
+
+| Path | When to use | Side effects |
+|---|---|---|
+| Stripe dashboard → Webhooks → endpoint → click event → **Resend** | You suspect Stripe-side data changed since the original delivery, OR you want to verify the signature path is healthy | Insert hits the UNIQUE on `stripe_event_id` → audit helper bumps `duplicate_count` and the dispatcher short-circuits. You'll see `received: true, duplicate: true` in our response. The row's `handled`/`handler_error` is NOT updated. |
+| Our `/api/admin/billing-events/[id]/replay` | You want the same audit row to flip green and you want a single click | Re-fetches the event from Stripe (`stripe.events.retrieve`), re-dispatches via the shared dispatcher, updates the SAME audit row in place. Does NOT increment `duplicate_count`. |
+
+Most of the time, use our endpoint. The Stripe button is the right call only when the operator specifically needs to test the signature path or wants Stripe to re-prove its end.
+
+**Curl recipe**:
+```bash
+# Find a failed event id from the audit log:
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events?handled=false&limit=10" | jq '.items[].id'
+
+# Replay one:
+curl -X POST -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events/<id>/replay"
+# → { "replayed": true, "handled": true, "ignored": false, "handler_error": null }
+```
+
+**Verify**:
+```sql
+select id, stripe_event_id, handled, handler_error, handled_at
+from public.billing_events_log
+where id = '<id>';
+```
+
+`handled` should now be `true`, `handler_error` `null`, and `handled_at` updated to the replay time.
+
+**Failure modes**:
+- 401 — operator not signed in.
+- 404 — row missing, row's `venue_id` is null (forensic-only), or operator isn't admin of the row's venue.
+- 429 — replay rate limit per caller (`admin:billing-event-replay:{userId}`).
+- 502 `stripe_retrieve_failed` — Stripe API rejected our `events.retrieve` call (event purged, or invalid id). Replay can't proceed without Stripe.
+- 503 `billing_not_configured` — `STRIPE_SECRET_KEY` missing in this env.
+- 500 `unexpected_error` — anything else; Sentry-captured.
+
+**Warning**:
+- Replay re-runs the full handler against the freshest event payload. For `customer.subscription.updated`, it overwrites `subscriptions` with current Stripe state. For `invoice.payment_*`, it re-pulls + syncs the subscription. Don't spam replay if the event is already healthy — the response body will tell you (`handler_error: null` + `handled: true`).
+- Replay does NOT trigger downstream emails or in-app notifications. It's a state-sync operation only.
+
 ### 2.5 Stripe webhook failing or checkout returns 503
 
 Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.

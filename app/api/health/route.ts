@@ -43,6 +43,7 @@ interface HealthBody {
     gate: 'enabled' | 'disabled'
     events_log: 'mounted'
     trial_reminder: 'mounted'
+    replay: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -58,8 +59,9 @@ interface HealthBody {
  *   - Phase 5E: 6 (ai-actions, anthropic-probe, outbound-messages,
  *               suppressions, test-send, workflow-status)
  *   - Phase 7G: 8 (added billing-events list + detail)
+ *   - Phase 7I: 9 (added billing-events/[id]/replay)
  */
-const ADMIN_ENDPOINT_COUNT = 8
+const ADMIN_ENDPOINT_COUNT = 9
 
 const startedAt = Date.now()
 
@@ -186,6 +188,10 @@ export async function GET(request: Request) {
       // it as a compile-time mounted flag here. Operators verify the
       // function appears in the Inngest dashboard's function list.
       trial_reminder: 'mounted',
+      // 7I — admin replay endpoint /api/admin/billing-events/[id]/replay
+      // is compile-time mounted; runtime availability requires Stripe
+      // configuration (see `stripe`/`webhook` flags above).
+      replay: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

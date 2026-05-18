@@ -264,6 +264,85 @@ curl -H "Cookie: sb-...-auth-token=..." \
 
 The detail endpoint is the only product surface that returns Stripe payloads. Stripe payloads contain customer email + billing-address fields. Do not screenshot or paste responses into shared channels.
 
+## 7d. Stripe event replay (Phase 7I)
+
+When a handler failed transiently (audit row shows `handled=false`), the cleanest recovery is to POST to the replay endpoint instead of re-clicking "Resend" in the Stripe dashboard. The endpoint:
+
+1. Re-fetches the freshest event payload from Stripe (`stripe.events.retrieve`).
+2. Dispatches through the same handler the webhook would have used (the dispatcher was extracted in 7I — `lib/billing/stripe-event-dispatcher.ts` — so there's one source of truth).
+3. Updates the **same** audit row in place. No new row, no `duplicate_count` bump.
+
+### Curl
+
+```bash
+# Find a failed event id:
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events?handled=false&limit=10" | jq '.items[].id'
+
+# Replay:
+curl -X POST -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events/<id>/replay"
+```
+
+### Response shapes
+
+Success:
+```json
+{
+  "replayed": true,
+  "handled": true,
+  "ignored": false,
+  "handler_error": null
+}
+```
+
+Handler failed again (audit row's `handled` flipped back to `false`, `handler_error` populated):
+```json
+{
+  "replayed": true,
+  "handled": false,
+  "ignored": false,
+  "handler_error": "<failure message>"
+}
+```
+
+Event was intentionally ignored (unknown type):
+```json
+{
+  "replayed": true,
+  "handled": true,
+  "ignored": true,
+  "handler_error": null
+}
+```
+
+Errors: 401, 404 (missing / null venue / cross-tenant), 429, 502 (Stripe API failure), 503 (Stripe key missing), 500.
+
+### When to use it vs Stripe dashboard "Resend"
+
+- **Use `/replay`** for "this audit row failed; fix it in place." Most common case.
+- **Use Stripe dashboard "Resend"** only when you specifically want Stripe to re-prove the signature path, or when the original payload was lost from our DB but Stripe still has it. (Our endpoint requires the audit row to exist; if it's been hard-deleted, Resend is the only option.)
+
+### Discovery from the detail endpoint
+
+The Phase 7G detail endpoint now includes `can_replay` so a future operator UI can show/hide the button without re-deriving the rule:
+
+```bash
+curl -H "Cookie: sb-...-auth-token=..." \
+  "$APP/api/admin/billing-events/<id>" | jq '.item.can_replay'
+# true  ← row has both stripe_event_id and venue_id
+# false ← row is forensic-only (null venue_id) or missing stripe_event_id
+```
+
+`can_replay` is purely structural — it does NOT check whether `STRIPE_SECRET_KEY` is set. The replay endpoint itself returns 503 `billing_not_configured` when Stripe is unavailable.
+
+### Safety
+
+- Replay re-runs the full handler with the latest Stripe payload. For `customer.subscription.*`, that means overwriting our `subscriptions` row with current Stripe state. For `invoice.payment_*`, it pulls the parent subscription and re-syncs.
+- The dispatcher uses the same idempotency story as the webhook path (`syncSubscriptionFromStripeSubscription` upserts on `stripe_subscription_id`), so back-to-back replays converge.
+- Rate-limited per caller (`admin:billing-event-replay:{userId}`); accidental click-loops can't blow up the table.
+- Replay does NOT trigger downstream emails or in-app notifications.
+
 ## 7c. Trial reminder cron (Phase 7H)
 
 Daily Inngest function `billing-trial-reminder`, cron `0 14 * * *` (2pm UTC ≈ 9am ET / 8am CT depending on DST). For every `subscriptions` row whose `trial_end` lands on (now + 3 days, UTC) and hasn't been reminded yet, the owner gets a "Your VenueRise trial ends in 3 days" email.
