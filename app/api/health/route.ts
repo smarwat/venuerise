@@ -31,6 +31,10 @@ interface HealthBody {
   upstash: RateLimitStatus
   sentry: 'configured' | 'missing'
   admin: { mounted: true; endpoints: number }
+  tenant_access: {
+    venue_members: 'ok' | 'missing'
+    rls_membership: 'ok' | 'missing'
+  }
   uptime_ms: number
   ts: string
 }
@@ -65,6 +69,48 @@ async function checkSupabase(): Promise<Status> {
   }
 }
 
+/**
+ * Cheap probe — does the venue_members table exist? Uses a HEAD-style
+ * count so no row data is fetched (and no count is exposed in the
+ * response — we report only ok/missing).
+ */
+async function checkTenantAccess(): Promise<'ok' | 'missing'> {
+  try {
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from('venue_members')
+      .select('id', { count: 'exact', head: true })
+      .limit(1)
+    if (error) return 'missing'
+    return 'ok'
+  } catch {
+    return 'missing'
+  }
+}
+
+/**
+ * Phase 6B probe — is the member-aware RLS in place?
+ *
+ * Calls the `is_venue_member` SECURITY DEFINER helper (migration 004) that
+ * every new RLS policy in migration 005 references. If the function exists
+ * and answers, the membership-aware policy graph is reachable. We pass
+ * zero-UUIDs so the call is harmless (returns false) and never touches a
+ * real tenant. A missing function or RPC error → 'missing'.
+ */
+async function checkRlsMembership(): Promise<'ok' | 'missing'> {
+  try {
+    const supabase = createServiceClient()
+    const { error } = await supabase.rpc('is_venue_member', {
+      check_venue_id: '00000000-0000-0000-0000-000000000000',
+      check_user_id: '00000000-0000-0000-0000-000000000000',
+    })
+    if (error) return 'missing'
+    return 'ok'
+  } catch {
+    return 'missing'
+  }
+}
+
 function checkAnthropic(): Status {
   return process.env.ANTHROPIC_API_KEY ? 'configured' : 'missing'
 }
@@ -81,7 +127,12 @@ function checkEmail(): Status {
 
 export async function GET(request: Request) {
   const requestId = getOrCreateRequestId(request)
-  const supabase = await checkSupabase()
+  // Run independent probes in parallel.
+  const [supabase, venueMembers, rlsMembership] = await Promise.all([
+    checkSupabase(),
+    checkTenantAccess(),
+    checkRlsMembership(),
+  ])
   const anthropic = checkAnthropic()
   const email = checkEmail()
   const jobs = getJobsRuntime()
@@ -104,6 +155,7 @@ export async function GET(request: Request) {
     upstash,
     sentry,
     admin: { mounted: true, endpoints: ADMIN_ENDPOINT_COUNT },
+    tenant_access: { venue_members: venueMembers, rls_membership: rlsMembership },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }

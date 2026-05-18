@@ -4,6 +4,8 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
+import { SALES_ROLES } from '@/lib/auth/roles'
 import { z } from 'zod'
 
 const CreateLeadSchema = z.object({
@@ -27,8 +29,8 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
-  const { data: venue } = await supabase
-    .from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
+  // Phase 6B: any member (readonly+) can list leads.
+  const venue = await getCurrentVenueForUser(user.id)
   if (!venue) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
 
   const { searchParams } = new URL(request.url)
@@ -37,14 +39,14 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from('leads')
     .select('*')
-    .eq('venue_id', venue.id)
+    .eq('venue_id', venue.venueId)
     .order('created_at', { ascending: false })
 
   if (stage) query = query.eq('stage', stage)
 
   const { data, error } = await query
   if (error) {
-    captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.id })
+    captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.venueId })
     return respond(NextResponse.json({ error: error.message }, { status: 500 }))
   }
 
@@ -68,9 +70,12 @@ export async function POST(request: NextRequest) {
     return respond(rateLimitedResponse(rl))
   }
 
-  const { data: venue } = await supabase
-    .from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
+  // Phase 6B: only SALES_ROLES can create leads. Viewers are read-only.
+  const venue = await getCurrentVenueForUser(user.id)
   if (!venue) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
+  if (!(SALES_ROLES as readonly string[]).includes(venue.role)) {
+    return respond(NextResponse.json({ error: 'forbidden' }, { status: 403 }))
+  }
 
   const body = await request.json()
   const parsed = CreateLeadSchema.safeParse(body)
@@ -78,12 +83,12 @@ export async function POST(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('leads')
-    .insert({ ...parsed.data, venue_id: venue.id, lead_score: 0 })
+    .insert({ ...parsed.data, venue_id: venue.venueId, lead_score: 0 })
     .select()
     .single()
 
   if (error) {
-    captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.id })
+    captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.venueId })
     return respond(NextResponse.json({ error: error.message }, { status: 500 }))
   }
 

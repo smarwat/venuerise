@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { handleNewLead } from '@/lib/agents/orchestrator'
 import { verifyInternalRequest, INTERNAL_SIGNATURE_HEADER } from '@/lib/auth/internal-hmac'
 import { assertOwnsLead, OwnershipError } from '@/lib/auth/assert-ownership'
+import { SALES_ROLES } from '@/lib/auth/roles'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -90,7 +91,10 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      const own = await assertOwnsLead(supabase, user.id, lead_id)
+      // User-initiated requalification is a write action — gate to SALES_ROLES.
+      // Internal HMAC mode (above) is intentionally exempt: it's our own
+      // job runtime, governed by Inngest concurrency, not user RBAC.
+      const own = await assertOwnsLead(supabase, user.id, lead_id, SALES_ROLES)
       venueId = own.venue_id
     } catch (err) {
       if (err instanceof OwnershipError) {

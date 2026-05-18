@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
+import { SALES_ROLES } from '@/lib/auth/roles'
 import { z } from 'zod'
 
 const CreateTourSchema = z.object({
@@ -19,9 +21,10 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
-  const { data: venueRaw } = await supabase.from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
-  const venueId = (venueRaw as { id?: string } | null)?.id
-  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
+  // Phase 6B: any member (incl. viewer) can list tours.
+  const venue = await getCurrentVenueForUser(user.id)
+  if (!venue) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
+  const venueId = venue.venueId
 
   const { searchParams } = new URL(request.url)
   const from = searchParams.get('from')
@@ -52,9 +55,13 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
-  const { data: venueRaw } = await supabase.from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()
-  const venueId = (venueRaw as { id?: string } | null)?.id
-  if (!venueId) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
+  // Phase 6B: SALES_ROLES only.
+  const venue = await getCurrentVenueForUser(user.id)
+  if (!venue) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
+  if (!(SALES_ROLES as readonly string[]).includes(venue.role)) {
+    return respond(NextResponse.json({ error: 'forbidden' }, { status: 403 }))
+  }
+  const venueId = venue.venueId
 
   const body = await request.json()
   const parsed = CreateTourSchema.safeParse(body)

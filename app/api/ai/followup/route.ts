@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { processPendingFollowUp } from '@/lib/agents/orchestrator'
 import { assertOwnsFollowUp, OwnershipError } from '@/lib/auth/assert-ownership'
+import { SALES_ROLES } from '@/lib/auth/roles'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -25,8 +26,9 @@ export async function POST(request: NextRequest) {
   const parsed = Schema.safeParse(body)
   if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
+  // Phase 6B: send-now is a write — SALES_ROLES only.
   try {
-    await assertOwnsFollowUp(supabase, user.id, parsed.data.follow_up_id)
+    await assertOwnsFollowUp(supabase, user.id, parsed.data.follow_up_id, SALES_ROLES)
   } catch (err) {
     if (err instanceof OwnershipError) {
       return respond(NextResponse.json({ error: 'Follow-up not found' }, { status: 404 }))

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { handleIncomingMessage } from '@/lib/agents/orchestrator'
 import { assertOwnsConversation, OwnershipError } from '@/lib/auth/assert-ownership'
+import { SALES_ROLES } from '@/lib/auth/roles'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -27,9 +28,9 @@ export async function POST(request: NextRequest) {
   const parsed = PostSchema.safeParse(body)
   if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
-  // Ownership check — fail closed before any service-role work happens.
+  // Ownership + role check — POSTing a reply is a write action, gate to SALES_ROLES.
   try {
-    await assertOwnsConversation(supabase, user.id, parsed.data.conversation_id)
+    await assertOwnsConversation(supabase, user.id, parsed.data.conversation_id, SALES_ROLES)
   } catch (err) {
     if (err instanceof OwnershipError) {
       return respond(NextResponse.json({ error: 'Conversation not found' }, { status: 404 }))

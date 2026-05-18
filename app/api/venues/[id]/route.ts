@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { requireVenueRole, TenantAccessError } from '@/lib/auth/tenant-access'
+import { ADMIN_ROLES } from '@/lib/auth/roles'
 import { z } from 'zod'
 
 const UpdateVenueSchema = z.object({
@@ -28,11 +30,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
+  // Phase 6B: any member can read venue settings.
   const { data, error } = await supabase
     .from('venues')
     .select('*')
     .eq('id', id)
-    .eq('owner_user_id', user.id)
     .single()
 
   if (error) return respond(NextResponse.json({ error: error.message }, { status: 404 }))
@@ -48,6 +50,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return respond(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }))
 
+  // Phase 6B: ADMIN_ROLES only — venue settings are sensitive.
+  try {
+    await requireVenueRole(user.id, id, ADMIN_ROLES)
+  } catch (err) {
+    if (err instanceof TenantAccessError) {
+      return respond(NextResponse.json({ error: err.code }, { status: err.status }))
+    }
+    throw err
+  }
+
   const body = await request.json()
   const parsed = UpdateVenueSchema.safeParse(body)
   if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
@@ -56,7 +68,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .from('venues')
     .update(parsed.data)
     .eq('id', id)
-    .eq('owner_user_id', user.id)
     .select()
     .single()
 
