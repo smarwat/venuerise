@@ -47,6 +47,9 @@ interface ReadinessChecks {
   sentry: Check
   internal_secret: Check
   app_url: Check
+  stripe: Check
+  stripe_webhook: Check
+  stripe_price: Check
 }
 
 const MIN_INTERNAL_SECRET_LEN = 32
@@ -111,6 +114,18 @@ function checkAppUrl(): Check {
   }
 }
 
+function checkStripe(): Check {
+  return process.env.STRIPE_SECRET_KEY ? 'configured' : 'missing'
+}
+
+function checkStripeWebhook(): Check {
+  return process.env.STRIPE_WEBHOOK_SECRET ? 'configured' : 'missing'
+}
+
+function checkStripePrice(): Check {
+  return process.env.STRIPE_DEFAULT_PRICE_ID ? 'configured' : 'missing'
+}
+
 function isPassing(c: Check): boolean {
   return c === 'ok' || c === 'configured'
 }
@@ -131,6 +146,10 @@ export async function GET(request: Request) {
       sentry: checkSentry(),
       internal_secret: checkInternalSecret(),
       app_url: checkAppUrl(),
+      // Phase 7C — billing readiness. All three required in production.
+      stripe: checkStripe(),
+      stripe_webhook: checkStripeWebhook(),
+      stripe_price: checkStripePrice(),
     }
   } catch (err) {
     log.error({ err, route: '/api/readiness' }, 'readiness.unexpected_throw')

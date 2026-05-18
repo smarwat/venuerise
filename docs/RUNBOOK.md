@@ -121,7 +121,21 @@ Symptoms: bounces in Resend dashboard aren't reflected in Supabase `outbound_mes
 3. If 200 but no DB update: search Sentry for `route:/api/resend/webhook`. The signature verification helper logs `webhook.resend.signature_mismatch` on token rotation problems.
 4. Rotation procedure: in Resend, generate a new signing secret; deploy with the new value FIRST, then click "Rotate" in Resend to invalidate the old. There's a ~30s gap where both work — coordinate.
 
-### 2.5 Inngest jobs not running
+### 2.5 Stripe webhook failing or checkout returns 503
+
+Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.
+
+1. Hit `$APP/api/health` and confirm `billing.stripe = "configured"` and `billing.webhook = "configured"`. If either is `missing`, set the env var and redeploy.
+2. Hit `$APP/api/readiness` — `stripe`, `stripe_webhook`, `stripe_price` must all be `configured`. A missing default price id makes checkout 400 (not 503), so confirm `STRIPE_DEFAULT_PRICE_ID` is set if checkout returns `price_id_missing`.
+3. If webhook attempts are 401: the signing secret rotated or is wrong. Re-copy from Stripe → Webhooks → endpoint → Signing secret. Deploy with the new value FIRST, then click "Rotate" in Stripe to invalidate the old. There's a brief overlap window where both work.
+4. If webhook attempts are 200 but `subscriptions` rows aren't updating: check Sentry for `webhook.stripe.handler_failed` events. The most common cause is a missing `venue_id` in subscription metadata — fixable by retrying the most recent `customer.subscription.updated` event from Stripe (the route is idempotent), or by manually upserting the `billing_customers` row to map the customer to the venue, then re-syncing.
+
+To **rotate the secret safely**:
+1. Stripe → Webhooks → endpoint → "Roll secret". Stripe shows the new value AND keeps the old one valid for ~24h.
+2. Update `STRIPE_WEBHOOK_SECRET` in Vercel; redeploy.
+3. After the deploy is live, click "Stop accepting old secret" in Stripe.
+
+### 2.6 Inngest jobs not running
 
 1. Check Inngest dashboard → Apps → your app → "Sync status". A failed sync means Inngest can't reach `$APP/api/inngest`. Most common: missing or wrong `INNGEST_SIGNING_KEY`.
 2. Trigger a manual sync from the dashboard.
@@ -132,7 +146,7 @@ Symptoms: bounces in Resend dashboard aren't reflected in Supabase `outbound_mes
    ```
    The `lead.created` event should appear in Inngest's event stream within seconds.
 
-### 2.6 Rate limiting misfires
+### 2.7 Rate limiting misfires
 
 Symptoms: legitimate users seeing 429 from `/api/widget` or `/api/ai/*`.
 
@@ -173,6 +187,8 @@ Full alert wiring (Sentry / Inngest / Resend) is in [LAUNCH-DAY.md §4](./LAUNCH
 | `INNGEST_EVENT_KEY` + `INNGEST_SIGNING_KEY` | On leak | Generate new pair in Inngest. Deploy. Re-sync from Inngest dashboard. |
 | `RESEND_API_KEY` | On leak | Create new key in Resend. Deploy. Delete old key after Vercel reports the new deploy as ready. |
 | `RESEND_WEBHOOK_SECRET` | On leak; otherwise on Resend's prompt | See "Rotation procedure" in §2.4. |
+| `STRIPE_SECRET_KEY` | On leak | Stripe → API Keys → Roll. Deploy the new key first; the old key keeps working until you click "Reveal and delete" on the old one. Switch test/live carefully. |
+| `STRIPE_WEBHOOK_SECRET` | On leak or every 90 days | See §2.5 "rotate the secret safely". |
 | `UPSTASH_REDIS_REST_TOKEN` | On leak | Rotate in Upstash; deploy. Brief window where requests fail open is acceptable. |
 | `SENTRY_AUTH_TOKEN` | Annual / on org change | Build-time only; rotate in CI without touching runtime. |
 

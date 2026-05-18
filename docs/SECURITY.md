@@ -189,6 +189,36 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10b. Stripe billing (Phase 7C)
+
+Stripe is the source of truth for subscription state. Local Postgres tables `billing_customers` and `subscriptions` are caches populated exclusively by the webhook handler at `/api/stripe/webhook`.
+
+**Webhook verification**: every POST to `/api/stripe/webhook` is verified via `Stripe.webhooks.constructEvent(rawBody, sigHeader, STRIPE_WEBHOOK_SECRET)`. Unsigned, mis-signed, or replay-protected requests return 401 with no body. Missing webhook secret in production is a readiness failure.
+
+**Raw-body requirement**: the webhook route reads `await request.text()` BEFORE any JSON parsing — calling `request.json()` first would parse + re-stringify and the HMAC would never match. This is enforced in code by the order of operations in `app/api/stripe/webhook/route.ts`.
+
+**Idempotency**:
+- `getOrCreateStripeCustomer` resolves a 23505 unique violation by re-reading the winning row.
+- `syncSubscriptionFromStripeSubscription` upserts on `stripe_subscription_id`, so webhook redeliveries don't create duplicates.
+- `createCheckoutSession` passes an idempotency key shaped `checkout:<venue>:<hour>` so a quick double-click doesn't create two Stripe sessions.
+
+**Authorization**:
+- `/api/billing/checkout` + `/api/billing/portal` require ADMIN_ROLES (owner or admin) of the caller's venue.
+- `/api/stripe/webhook` is unauthenticated to Supabase but authenticated to Stripe via the signature header — the equivalent of an HMAC bearer token.
+
+**RLS posture for billing rows** (migration 007):
+- `billing_customers` + `subscriptions` SELECT → ADMIN_ROLES only. Viewers and sales/coordinator roles cannot read billing state.
+- No INSERT/UPDATE/DELETE policies for `authenticated`; service-role-only writes via the webhook handler.
+
+**Secrets**: `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are server-only — never `NEXT_PUBLIC_`. `STRIPE_DEFAULT_PRICE_ID` is server-only by convention (not sensitive, but mismatched env/var-name discipline causes deploys to fail). `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is public by design once Phase 7D wires the client SDK.
+
+**Known gaps for Phase 7C**:
+- No subscription-gated product access yet. Phase 7D will introduce middleware that consults `subscriptions.status` and short-circuits non-paying tenants.
+- No `billing_events_log` table — webhook events are only persisted to the extent that they mutate `subscriptions`. Re-deliver from Stripe if you need to replay history.
+- Customer Portal allows ALL self-service operations Stripe supports for the configuration. Lock the portal down in Stripe → Settings → Customer Portal if you want to disable specific actions (e.g. plan switching).
+
+---
+
 ## 11. Security headers (Phase 7A)
 
 Applied in `next.config.js`:
@@ -214,4 +244,6 @@ Tradeoff: we don't set a strict `script-src` CSP because Next.js inlines runtime
 - No automated PII redaction in Sentry beyond the manual `beforeSend` allowlist. Mitigation: ad-hoc audit before each release.
 - Service-role key has no per-environment scoping — a leaked prod key has full access. Mitigation: rotate on any suspicion (§4 of RUNBOOK).
 - `INTERNAL_API_SECRET` rotation invalidates outstanding unsubscribe links. Acceptable today; revisit if we ship long-lived shareable invite links signed with the same secret.
-- Webhook secret rotation has a ~30s overlap window where both old and new are valid. Acceptable; documented in RUNBOOK §2.4.
+- Webhook secret rotation (Resend) has a ~30s overlap window where both old and new are valid. Acceptable; documented in RUNBOOK §2.4.
+- Stripe webhook secret rotation (Phase 7C) has a longer overlap window controlled by the Stripe dashboard ("Roll secret" → "Stop accepting old secret"). Documented in RUNBOOK §2.5.
+- Billing tables expose subscription state to ADMIN_ROLES, NOT to sales/coordinator/viewer. If a salesperson needs "is this venue billable?" awareness, expose a derived field via a dedicated read API instead of widening the RLS policy.

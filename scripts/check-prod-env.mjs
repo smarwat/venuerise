@@ -27,6 +27,10 @@ const REQUIRED = [
   'UPSTASH_REDIS_REST_TOKEN',
   'SENTRY_DSN',
   'NEXT_PUBLIC_SENTRY_DSN',
+  // Phase 7C — Stripe billing. Required in prod; readiness fails if missing.
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_DEFAULT_PRICE_ID',
 ]
 
 const MIN_SECRET_LEN = 32

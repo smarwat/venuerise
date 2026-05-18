@@ -75,7 +75,19 @@ The `.env.example` file is the canonical machine-readable list; this doc is the 
 | `UPSTASH_REDIS_REST_URL` | **Yes** in prod | Server-only | https://console.upstash.com → Redis → REST URL | Rate limiting becomes a no-op; readiness fails |
 | `UPSTASH_REDIS_REST_TOKEN` | **Yes** in prod | Server-only | Same panel → REST token | Same as above |
 
-### 1.8 Sentry
+### 1.8 Stripe (Phase 7C)
+
+| Var | Required in prod? | Public? | Source | Breaks if missing |
+|---|---|---|---|---|
+| `STRIPE_SECRET_KEY` | **Yes** | **Server-only** | Stripe dashboard → Developers → API Keys (`sk_live_…` for prod, `sk_test_…` for staging) | `/api/billing/checkout` + `/api/billing/portal` return 503 `billing_not_configured`; readiness fails |
+| `STRIPE_WEBHOOK_SECRET` | **Yes** | Server-only | Stripe dashboard → Developers → Webhooks → your endpoint → Signing secret (`whsec_…`) | `/api/stripe/webhook` returns 401 on every event; subscription state never syncs |
+| `STRIPE_DEFAULT_PRICE_ID` | **Yes** | Server-only | Stripe dashboard → Product Catalog → your recurring price (`price_…`) | Checkout returns 400 `price_id_missing` for clients that omit `price_id` |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | No (until Phase 7D wires client SDK) | Yes (publishable by design) | Same panel as the secret (`pk_live_…` / `pk_test_…`) | — |
+| `STRIPE_API_VERSION` | No | Server-only | Override only when testing against a non-default API version | SDK uses its compiled-in default (`2026-04-22.dahlia` in Stripe 22.x) |
+
+**Hard rule: never mix live + test keys.** Match the prefix to the environment. The `getStripeMode()` helper inspects the key prefix and returns `live | test | unknown` — surface it in your release notes.
+
+### 1.9 Sentry
 
 | Var | Required in prod? | Public? | Source | Breaks if missing |
 |---|---|---|---|---|
@@ -124,13 +136,28 @@ Follow this order so each upstream system is ready when the next one needs it.
 1. Create a Global Redis database at https://console.upstash.com.
 2. Stash `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`.
 
-### 2.6 Configure Sentry
+### 2.6 Configure Stripe
+
+1. Create a Stripe account; flip to **Test mode** in the dashboard for staging, **Live mode** for production.
+2. Dashboard → Developers → API Keys:
+   - Stash the **Secret key** as `STRIPE_SECRET_KEY`.
+   - Stash the **Publishable key** as `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (unused until Phase 7D wires the client SDK).
+3. Dashboard → Product Catalog → New product → New recurring price:
+   - Stash the price id (e.g. `price_1XXXX…`) as `STRIPE_DEFAULT_PRICE_ID`.
+4. After the Vercel deploy is live (step 2.9), add the webhook endpoint:
+   - URL: `https://<your-deploy>/api/stripe/webhook`
+   - Events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`
+   - Stash the **Signing secret** (`whsec_…`) as `STRIPE_WEBHOOK_SECRET`.
+
+> **Test the webhook before going live**: in the Stripe dashboard, send a test `checkout.session.completed` event and confirm `200` in "Recent attempts". A 401 means the secret is missing or mismatched.
+
+### 2.7 Configure Sentry
 
 1. Create a new Next.js project at https://sentry.io.
 2. Stash `SENTRY_DSN` (use the same value for `NEXT_PUBLIC_SENTRY_DSN`).
 3. Create a build-time auth token with `project:releases` scope → stash as `SENTRY_AUTH_TOKEN`.
 
-### 2.7 Generate the internal secret
+### 2.8 Generate the internal secret
 
 ```bash
 openssl rand -hex 32
@@ -138,7 +165,7 @@ openssl rand -hex 32
 
 Stash as `INTERNAL_API_SECRET`.
 
-### 2.8 Create the Vercel project
+### 2.9 Create the Vercel project
 
 1. Import the repo in Vercel.
 2. Framework preset: **Next.js**.
@@ -149,10 +176,11 @@ Stash as `INTERNAL_API_SECRET`.
 7. Note the resulting canonical https URL → set `NEXT_PUBLIC_APP_URL` to it.
 8. Trigger one more deploy so the env change picks up.
 
-### 2.9 Wire the upstream webhooks
+### 2.10 Wire the upstream webhooks
 
 1. Inngest → Apps → your app → set serve URL to `https://<your-deploy>/api/inngest`. Click "Sync".
 2. Resend → Webhooks → set URL to `https://<your-deploy>/api/resend/webhook`. Send a test event; verify it returns 200 in Resend's UI.
+3. Stripe → Developers → Webhooks → set URL to `https://<your-deploy>/api/stripe/webhook` with the event set from §2.6. Send a test event; verify it returns 200.
 
 ---
 
