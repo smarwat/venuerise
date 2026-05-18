@@ -48,7 +48,7 @@ interface HealthBody {
     recovery_email: 'mounted'
     admin_clear_dunning: 'mounted'
   }
-  demo: { seed: 'mounted' }
+  demo: { seed: 'mounted'; realtime: 'mounted' }
   uptime_ms: number
   ts: string
 }
@@ -211,7 +211,8 @@ export async function GET(request: Request) {
       admin_clear_dunning: 'mounted',
     },
     // Phase 8A — demo seed + reset admin surface.
-    demo: { seed: 'mounted' },
+    // Phase 8B — realtime layers on /dashboard/leads + /dashboard/inbox.
+    demo: { seed: 'mounted', realtime: 'mounted' },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }

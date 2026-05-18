@@ -230,6 +230,75 @@ If `demo.seed` is missing or `admin.endpoints != 12`, the demo routes aren't loa
 
 ---
 
+## 10. Live demo mode (Phase 8B)
+
+Two complementary upgrades land here:
+- **Realtime refresh** on `/dashboard/leads` and `/dashboard/inbox` — new leads + conversations appear without a page refresh.
+- **"Send test inquiry" button** on `/dashboard/leads` — fires a real `/api/widget` POST with a randomized realistic wedding payload. The full pipeline runs (lead insert → conversation pre-create → Inngest enqueue → AI qualification → first AI message → follow-up schedule). The button is hidden unless explicitly enabled.
+
+### 10.1 Enable the demo button
+
+```bash
+# In .env.local:
+NEXT_PUBLIC_DEMO_BUTTON=1
+```
+
+Restart `npm run dev`. The Leads page header will show a "Send test inquiry" button in the top-right.
+
+### 10.2 The 60-second live demo
+
+1. Open `http://localhost:3000/dashboard/leads`.
+2. Click **Send test inquiry** in the page header.
+3. Wait ~1 second — a toast appears in the bottom-right: *"New lead just landed: Sophia Miller"*. The kanban refreshes; the new card shows up in **New Inquiry**.
+4. Click into the new lead — opens the detail panel with the message body.
+5. Hop to `http://localhost:3000/dashboard/inbox` — the new conversation is at the top of the list (sorted by `last_message_at`). If Anthropic is configured, an AI message will appear within ~5–30s and the message bubble will pop in via the existing `ConversationThread` realtime subscription.
+6. Click into the conversation — show the full lead → AI thread updating without refresh.
+
+### 10.3 What's happening under the hood
+
+| Layer | Behavior |
+|---|---|
+| `DemoInquiryButton` | Posts to `/api/widget` from the browser. Browser sets `Origin` header automatically — matches `NEXT_PUBLIC_APP_URL` if that's the same host you're demoing on. |
+| `RealtimeLeadsLayer` | Subscribes to `leads:venue:<venueId>` postgres_changes. On any event, calls `router.refresh()` and (for INSERTs) shows the toast. |
+| `RealtimeMessagesLayer` | Subscribes to `conversations:venue:<venueId>` for inbox-list re-ordering. |
+| `ConversationThread` (pre-existing) | Subscribes to `messages:<conversationId>` for live bubble updates in the open thread. |
+| `KanbanBoard` (Phase 8B sync) | `useEffect([initialLeads])` re-syncs local state when the server-fetched leads change via `router.refresh()`. |
+
+### 10.4 Troubleshooting
+
+**Button doesn't appear**:
+- Check `NEXT_PUBLIC_DEMO_BUTTON` — must be exactly `"1"`. Anything else (unset, `true`, `yes`, `0`) hides it.
+- Restart `npm run dev` after changing the env var (Next bundles public env at build/start time).
+
+**Button click → 4xx**:
+- 403 `origin_not_allowed` → the browser's `Origin` header doesn't match `NEXT_PUBLIC_APP_URL`. Either set `NEXT_PUBLIC_APP_URL=http://localhost:3000` or run the dashboard on the URL that matches.
+- 404 `Venue not found` → the test user's primary venue isn't seeded yet. Run `npm run demo:seed` first (or sign in + complete onboarding).
+- 429 → widget rate limit (10/min/IP/venue). Wait and retry.
+
+**Lead doesn't appear after click**:
+- Wait 2 seconds — the button schedules a fallback `router.refresh()` after that window if Realtime didn't fire.
+- Check browser DevTools → Console / Network. If you see WebSocket errors from `supabase.realtime`, your Supabase project may have Realtime disabled or the publication isn't synced. Verify:
+  ```sql
+  select schemaname, tablename
+  from pg_publication_tables
+  where pubname = 'supabase_realtime'
+    and tablename in ('leads', 'conversations', 'messages');
+  ```
+  Should return three rows. Migration 001 adds them.
+- If realtime is unavailable, the page still works — every click on the kanban (or any natural navigation) re-fetches.
+
+**Duplicate cards**:
+- Shouldn't happen — KanbanBoard's `useEffect([initialLeads])` replaces local state wholesale on refresh. If it does, the `useEffect` may have been skipped due to stale React closure; hard refresh the page.
+
+**Inbox doesn't re-order**:
+- The `conversations.last_message_at` field is bumped by the orchestrator when a new message lands. If the orchestrator didn't fire (no `ANTHROPIC_API_KEY`), the row never updates → no realtime event → no re-order. Add the key.
+
+### 10.5 Demo cleanup
+
+The button's payload uses `demo+live-<timestamp>-<rand>@venuerise.test`. The Phase 8A `npm run demo:reset` matches `demo+%@venuerise.test` so these get cleaned up alongside seeded fixtures.
+
+---
+
 ## 9. Quick reference
 
 | Command | Effect |

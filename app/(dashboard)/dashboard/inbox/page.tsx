@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import ConversationList from '@/components/dashboard/ConversationList'
+import RealtimeMessagesLayer from '@/components/dashboard/inbox/RealtimeMessagesLayer'
 import { MessageSquare } from 'lucide-react'
 
 export default async function InboxPage() {
@@ -37,6 +38,12 @@ export default async function InboxPage() {
       <ConversationList
         conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
       />
+      {/* Phase 8B — non-rendering client component. Subscribes to
+          `public.conversations` postgres_changes filtered by venue_id and
+          refreshes the page when a new conversation appears OR an
+          existing conversation's last_message_at shifts. ConversationThread
+          already handles per-thread realtime for the active inbox view. */}
+      {venueId && <RealtimeMessagesLayer venueId={venueId} />}
     </div>
   )
 }

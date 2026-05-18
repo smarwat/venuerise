@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -37,6 +37,22 @@ export default function KanbanBoard({ initialLeads }: KanbanBoardProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [search, setSearch] = useState('')
+
+  // Phase 8B — sync local state when the server-rendered `initialLeads`
+  // changes (e.g. RealtimeLeadsLayer calls router.refresh() after a
+  // postgres_changes event). Without this `useState(initialLeads)` only
+  // seeds on first mount and live updates would be invisible.
+  //
+  // Trade-off: any in-flight optimistic stage change (the second between
+  // the user dropping a card and the PATCH /api/leads/[id] response
+  // landing) gets reset by an incoming server-refresh. In practice the
+  // PATCH completes in <300ms and Realtime debounces at the supabase
+  // layer, so the race is small + recoverable. If it ever becomes
+  // visible, switch to a merge strategy that prefers in-flight optimistic
+  // rows over server-fetched ones for ~1s after a local mutation.
+  useEffect(() => {
+    setLeads(initialLeads)
+  }, [initialLeads])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
