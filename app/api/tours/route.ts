@@ -5,6 +5,7 @@ import { captureApiError } from '@/lib/observability/sentry'
 import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
 import { SALES_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
+import { sendTourNotificationEmail } from '@/lib/integrations/tour-notifications'
 import { z } from 'zod'
 
 const CreateTourSchema = z.object({
@@ -96,6 +97,39 @@ export async function POST(request: NextRequest) {
 
   // Update lead stage
   await supabase.from('leads').update({ stage: 'tour_scheduled' }).eq('id', parsed.data.lead_id)
+
+  // Phase 8G — fire-and-forget lead notification. We look up the lead
+  // contact AFTER the insert so the email reflects what's actually in
+  // the DB. The `.catch(() => {})` is belt-and-suspenders — the helper
+  // already swallows internally, but if a future bug surfaces it, we'd
+  // rather log it than crash the route.
+  const tour = data as {
+    id: string
+    lead_id: string
+    scheduled_at: string
+    duration_minutes: number | null
+    location_notes: string | null
+  }
+  const { data: leadRow } = await supabase
+    .from('leads')
+    .select('name, email')
+    .eq('id', tour.lead_id)
+    .maybeSingle()
+  const lead = (leadRow ?? null) as { name?: string | null; email?: string | null } | null
+  void sendTourNotificationEmail({
+    kind: 'created',
+    tourId: tour.id,
+    venueId,
+    leadId: tour.lead_id,
+    leadEmail: lead?.email ?? null,
+    leadName: lead?.name ?? null,
+    scheduledAt: tour.scheduled_at,
+    durationMinutes: tour.duration_minutes ?? null,
+    locationNotes: tour.location_notes ?? null,
+    requestId,
+  }).catch(() => {
+    /* swallowed — helper already logs + Sentry-captures */
+  })
 
   return respond(NextResponse.json(data, { status: 201 }))
 }

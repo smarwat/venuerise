@@ -627,6 +627,62 @@ All rows should have `status = 'cancelled'` and (if a reason was supplied) `outc
 
 ---
 
+## 13. Auto-pause / auto-resume + lead notification emails (Phase 8G)
+
+Phase 8F added the auto-pause cron (cancel future tours when billing is >7d past due). Phase 8G closes the loop:
+
+1. **Auto-resume metadata** — when Stripe transitions a subscription back to `active` / `trialing`, the dispatcher stamps `subscriptions.metadata.tours_resumed_at` + `tours_resumed_reason = 'payment_recovered'`. This does NOT resurrect previously cancelled tours — those stay cancelled by design.
+2. **Auto-pause banner on `/dashboard/tours`** — amber strip with a "Manage billing" CTA whenever `tours_paused_at` is set AND `tours_resumed_at` is unset. Disappears automatically once Stripe recovers + the dispatcher stamps `tours_resumed_at`.
+3. **Lead notification emails** — `POST /api/tours` and `PATCH /api/tours/[id]` now send the lead a plain-text email when a tour is created, rescheduled, confirmed, or cancelled. Best-effort: the tour write succeeds even if Resend is down.
+4. **Admin paused-venues endpoint** — `GET /api/admin/tours/paused-venues` returns the same data the banner uses, but cross-tenant for operator triage.
+
+### 13.1 Inspect tour-pause metadata
+
+```sql
+-- which venues are currently showing the auto-pause banner?
+select id, venue_id, status,
+       metadata->>'tours_paused_at'    as paused_at,
+       metadata->>'tours_paused_count'  as paused_count
+from public.subscriptions
+where metadata ? 'tours_paused_at'
+  and not (metadata ? 'tours_resumed_at');
+
+-- which venues paused + recovered (banner hidden)?
+select id, venue_id, status,
+       metadata->>'tours_paused_at'  as paused_at,
+       metadata->>'tours_resumed_at' as resumed_at
+from public.subscriptions
+where metadata ? 'tours_paused_at'
+  and metadata ? 'tours_resumed_at';
+```
+
+### 13.2 Manually recreating tours after recovery
+
+A venue that recovers payment will sometimes ask you to restore the tours that were auto-cancelled. There is no automatic restore — auto-resume is an operational flag, not a data action. The recommended workflow:
+
+1. Inspect the cancelled tours so you know what to re-create:
+   ```sql
+   select id, lead_id, scheduled_at, duration_minutes, location_notes, outcome
+   from public.tours
+   where venue_id = '<venue uuid>'
+     and status = 'cancelled'
+     and updated_at >= '<the tours_paused_at timestamp>'
+   order by scheduled_at;
+   ```
+2. Coordinate with the venue + the affected leads on new times.
+3. Re-create each tour via the dashboard's `ScheduleTourDrawer` (Phase 8D) — this naturally fires the Phase 8G `created` notification email so the lead gets a fresh confirmation.
+
+Do NOT bulk-resurrect via `UPDATE tours SET status='scheduled'` — that bypasses the notification email AND leaves stale `outcome` text on the row. Re-creating gives you clean rows + consistent lead comms.
+
+### 13.3 Notification email behavior
+
+- Sent on: create, reschedule (`scheduled_at` change), confirm (status → confirmed), cancel (status → cancelled).
+- Skipped silently when: lead `email` is null/empty, or the lead is suppressed.
+- Failure does NOT block the API response. The tour write succeeds even when Resend errors.
+- A single PATCH that changes status AND time fires ONE email — priority `cancelled` > `confirmed` > `rescheduled`.
+
+---
+
 ## 9. Quick reference
 
 | Command | Effect |

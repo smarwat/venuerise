@@ -42,6 +42,13 @@ import { captureApiError } from '@/lib/observability/sentry'
 
 const REMINDER_KIND = 'payment_recovered' as const
 
+// Phase 8G — when payment recovers, we ALSO stamp the subscription metadata
+// to signal that tour scheduling is no longer in the "paused" operational
+// state. We never resurrect already-cancelled tours; this is purely a UI
+// + operational flag so the /dashboard/tours banner can flip back to
+// normal and operators can see which venues have recovered.
+const RESUME_REASON = 'payment_recovered' as const
+
 export interface SendPaymentRecoveryEmailArgs {
   venueId: string
   subscriptionId: string
@@ -257,4 +264,138 @@ export async function sendPaymentRecoveryEmail(
     'billing.payment_recovery.sent'
   )
   return { sent: true, skipped: false }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8G — markTourSchedulingResumed
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 8G — operational counterpart to the Phase 8F auto-pause cron.
+ *
+ * When Stripe transitions a subscription back from `past_due` → `active`
+ * / `trialing`, we stamp `subscriptions.metadata.tours_resumed_at` +
+ * `tours_resumed_reason='payment_recovered'`. We do NOT resurrect any
+ * tour that was previously auto-cancelled — that's deliberately
+ * destructive only with operator consent.
+ *
+ * ── BEHAVIOR ───────────────────────────────────────────────────────────────
+ *   - No-op (returns `{ stamped: false, reason: 'never_paused' }`) when
+ *     `metadata.tours_paused_at` is missing. We don't pollute metadata
+ *     with resume markers for venues that were never paused in the first
+ *     place.
+ *   - No-op (`reason: 'already_resumed'`) when `tours_resumed_at` is
+ *     already set — idempotent on webhook redeliveries.
+ *   - On success, writes both `tours_resumed_at` (ISO timestamp) and
+ *     `tours_resumed_reason` ('payment_recovered'). Existing
+ *     `tours_paused_at` + `tours_paused_count` are preserved so the
+ *     audit trail of "this venue was paused on X and recovered on Y"
+ *     stays readable in admin tooling.
+ *
+ * ── WHY DIRECT UPDATE (NOT 7L ATOMIC-APPEND RPC) ──────────────────────────
+ * Same rationale as billing-tour-auto-pause (BILLING-QA §7b): these are
+ * scalar metadata fields, not array entries. The webhook-vs-cron race
+ * window is small and the worst case (a `dunning` cron writing
+ * dunning_sent[] at the same instant) is metadata array merge — Phase 7L
+ * RPC handles arrays, scalars get last-write-wins which is fine here.
+ *
+ * ── ERROR POSTURE ──────────────────────────────────────────────────────────
+ * Never throws — returns `{ stamped: false, reason: '…' }` so the
+ * dispatcher can include the outcome in its result without try/catch.
+ * DB errors are Sentry-captured + structured-logged; the recovery email
+ * (the user-visible signal) still gets a chance to fire.
+ */
+
+export interface MarkTourSchedulingResumedArgs {
+  venueId: string
+  subscriptionId: string
+  requestId?: string
+}
+
+export interface MarkTourSchedulingResumedResult {
+  stamped: boolean
+  reason?: 'never_paused' | 'already_resumed' | 'lookup_failed' | 'write_failed' | 'subscription_not_found'
+  tours_resumed_at?: string
+}
+
+export async function markTourSchedulingResumed(
+  args: MarkTourSchedulingResumedArgs
+): Promise<MarkTourSchedulingResumedResult> {
+  const { venueId, subscriptionId, requestId } = args
+  const reqLog = log.child({
+    requestId,
+    venueId,
+    subscriptionId,
+    op: 'billing.tour_auto_resume',
+  })
+
+  const svc = createServiceClient()
+
+  // 1. Read current metadata. Service-role read mirrors the recovery-email
+  // lookup above so a single row read powers both branches.
+  const { data: subRow, error: subErr } = await svc
+    .from('subscriptions')
+    .select('id, metadata')
+    .eq('id', subscriptionId)
+    .maybeSingle()
+
+  if (subErr) {
+    reqLog.error({ err: subErr }, 'billing.tour_auto_resume.lookup_failed')
+    captureApiError(subErr, {
+      requestId,
+      route: 'billing.markTourSchedulingResumed',
+      venueId,
+    })
+    return { stamped: false, reason: 'lookup_failed' }
+  }
+  if (!subRow) {
+    reqLog.warn({}, 'billing.tour_auto_resume.subscription_not_found')
+    return { stamped: false, reason: 'subscription_not_found' }
+  }
+
+  const metadata =
+    ((subRow as { metadata: Record<string, unknown> | null }).metadata ?? {}) as Record<
+      string,
+      unknown
+    >
+  const pausedAt = typeof metadata.tours_paused_at === 'string' ? metadata.tours_paused_at : null
+  const resumedAt =
+    typeof metadata.tours_resumed_at === 'string' ? metadata.tours_resumed_at : null
+
+  // 2. Skip cases — avoid polluting metadata.
+  if (!pausedAt) {
+    reqLog.info({}, 'billing.tour_auto_resume.skip_never_paused')
+    return { stamped: false, reason: 'never_paused' }
+  }
+  if (resumedAt) {
+    reqLog.info({ resumedAt }, 'billing.tour_auto_resume.skip_already_resumed')
+    return { stamped: false, reason: 'already_resumed' }
+  }
+
+  // 3. Write the resume stamp. We preserve every other key (notably the
+  // paused_* trio) so the audit trail survives.
+  const nowIso = new Date().toISOString()
+  const next: Record<string, unknown> = {
+    ...metadata,
+    tours_resumed_at: nowIso,
+    tours_resumed_reason: RESUME_REASON,
+  }
+
+  const { error: updateErr } = await svc
+    .from('subscriptions')
+    .update({ metadata: next })
+    .eq('id', subscriptionId)
+
+  if (updateErr) {
+    reqLog.error({ err: updateErr }, 'billing.tour_auto_resume.write_failed')
+    captureApiError(updateErr, {
+      requestId,
+      route: 'billing.markTourSchedulingResumed',
+      venueId,
+    })
+    return { stamped: false, reason: 'write_failed' }
+  }
+
+  reqLog.info({ resumedAt: nowIso, pausedAt }, 'billing.tour_auto_resume.stamped')
+  return { stamped: true, tours_resumed_at: nowIso }
 }

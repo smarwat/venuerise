@@ -705,3 +705,53 @@ Recent invitations (verify a teammate didn't get spammed):
 select email, role, status, expires_at, accepted_at
 from venue_invitations order by created_at desc limit 20;
 ```
+
+## 7. Tour auto-pause + auto-resume (Phase 8F + 8G)
+
+Two billing-driven side effects touch the `tours` table:
+
+- **Auto-pause cron** (`billing-tour-auto-pause`, daily 6pm UTC) — when a subscription is `past_due` for >7 days AND `metadata.tours_paused_at` is unset, it bulk-cancels every future `scheduled|confirmed` tour for that venue and stamps `tours_paused_at` / `tours_paused_reason='past_due_7_days'` / `tours_paused_count`.
+- **Auto-resume** (synchronous, inside the Stripe webhook dispatcher) — when a subscription transitions `past_due` → `active`/`trialing`, the dispatcher stamps `tours_resumed_at` + `tours_resumed_reason='payment_recovered'`. **It does NOT resurrect cancelled tours.** The audit pair "paused on X, resumed on Y" is preserved.
+
+### Triage flow when a customer says "my tours disappeared"
+
+1. Check the subscription metadata:
+   ```sql
+   select id, status,
+          metadata->>'tours_paused_at'    as paused_at,
+          metadata->>'tours_paused_count'  as paused_count,
+          metadata->>'tours_resumed_at'   as resumed_at
+   from public.subscriptions
+   where venue_id = '<venue uuid>';
+   ```
+2. If `paused_at` is set and `resumed_at` is null → the auto-pause cron fired. Have them update payment in `/dashboard/settings/billing`. The next Stripe webhook should flip status back and stamp `resumed_at`.
+3. After recovery, manually recreate any tours the venue needs back (see DEMO-RUNBOOK §13.2 — never bulk `UPDATE status='scheduled'`, that bypasses the lead notification email + leaves stale `outcome` text behind).
+
+### Listing every currently-paused venue
+
+```bash
+curl -s http://localhost:3000/api/admin/tours/paused-venues \
+  -H "Cookie: <admin session>" | jq '.items'
+```
+
+Returns `venue_id`, `subscription_id`, `status`, `tours_paused_at`, `tours_paused_count`. No PII; auth = `requireAdmin()`.
+
+### Notification email failures
+
+Tour notification emails (created / rescheduled / confirmed / cancelled) are best-effort. If a lead complains they didn't get a notification:
+
+```sql
+-- audit log of outbound emails for one lead
+select created_at, kind, provider, message_id, error
+from public.outbound_messages
+where lead_id = '<lead uuid>'
+  and related_table = 'tours'
+order by created_at desc;
+```
+
+Common reasons for skips:
+- Lead has no email on file → silent skip (never an error).
+- Lead in `email_suppressions` → `error: 'suppressed:<reason>'`.
+- Resend down / not configured → console-fallback in dev, `error: '<provider message>'` in prod.
+
+In every case the tour write itself succeeded — the email failure is a delivery issue, not a data issue.

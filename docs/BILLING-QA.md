@@ -953,6 +953,101 @@ This cron has no automatic unpause. When billing recovers (Stripe webhook flips 
 - Per-venue failures (cancel UPDATE failed / metadata UPDATE failed) get `captureJobError('billing-tour-auto-pause', err, { venueId })` and increment `failed` in the summary — they do NOT abort the batch, so one bad venue can't block the rest.
 - The scan summary `{ scanned, paused, cancelled_tours, skipped, failed }` is logged at INFO level on completion. Set up an Inngest run alert if `failed > 0` for two consecutive runs.
 
+## 7j. Tour auto-resume on payment recovery (Phase 8G)
+
+The operational mirror of §7b. When Stripe transitions a subscription from `past_due` → `active` / `trialing`, the dispatcher (`lib/billing/stripe-event-dispatcher.ts`) fires **two** side effects in sequence:
+
+1. **Recovery email** (Phase 7M) — owner-facing "your account is active again" notice.
+2. **Tour auto-resume stamp** (Phase 8G) — writes `subscriptions.metadata.tours_resumed_at` (ISO timestamp) + `tours_resumed_reason = 'payment_recovered'`.
+
+Both run on the same transition; both are idempotent on webhook redeliveries. Failure in one does NOT block the other.
+
+### What auto-resume does NOT do
+
+- **It does not resurrect cancelled tours.** Any tour that was cancelled by the Phase 8F auto-pause cron stays `status='cancelled'`. The lifecycle of those rows is intentionally operator-controlled — if the venue wants them back, an admin recreates them via the dashboard or asks the leads to re-book.
+- **It does not clear `tours_paused_at`.** The audit pair "paused on X, resumed on Y" remains readable for forensics.
+
+### Known limitation: re-arming after a bounce
+
+Because `tours_paused_at` is preserved across the resume, the Phase 8F auto-pause cron's `alreadyPaused()` guard considers the venue "still paused" if it bounces back to `past_due` later. The cron will **NOT** re-cancel a future round of tours for a venue that has already been paused once.
+
+Workaround for operators: clear both metadata keys via SQL when you want to re-arm the cron:
+
+```sql
+update public.subscriptions
+set metadata = metadata - 'tours_paused_at'
+                       - 'tours_paused_reason'
+                       - 'tours_paused_count'
+                       - 'tours_resumed_at'
+                       - 'tours_resumed_reason'
+where id = '<subscription_id>';
+```
+
+A future phase may add a self-clearing guard (e.g. allow re-pause if `tours_resumed_at` predates the new `past_due` window).
+
+### Inspect paused / resumed venues
+
+```sql
+-- venues currently in the paused state (banner is showing for them)
+select id, venue_id, status,
+       metadata->>'tours_paused_at'    as paused_at,
+       metadata->>'tours_paused_count'  as paused_count,
+       metadata->>'tours_resumed_at'    as resumed_at
+from public.subscriptions
+where metadata ? 'tours_paused_at'
+  and not (metadata ? 'tours_resumed_at')
+order by paused_at desc;
+
+-- venues that paused + recovered (banner hidden again)
+select id, venue_id, status,
+       metadata->>'tours_paused_at'  as paused_at,
+       metadata->>'tours_resumed_at' as resumed_at
+from public.subscriptions
+where metadata ? 'tours_paused_at'
+  and metadata ? 'tours_resumed_at'
+order by resumed_at desc;
+```
+
+There is also a thin admin endpoint that returns the first query as JSON:
+
+```bash
+curl -s http://localhost:3000/api/admin/tours/paused-venues \
+  -H "Cookie: <copy from logged-in browser session>" | jq .
+```
+
+Auth: `requireAdmin()` only. Returns 401 unauthenticated, 403 if the user has no admin/owner membership anywhere, and `{ items: [...] }` otherwise. Each item contains `venue_id`, `subscription_id`, `status`, `tours_paused_at`, `tours_paused_count` — no PII.
+
+### Tour notification emails (Phase 8G)
+
+Best-effort lead-facing emails fire on every tour status event:
+
+| Event | Trigger | Subject |
+|---|---|---|
+| Created | `POST /api/tours` | `Your venue tour is scheduled` |
+| Rescheduled | `PATCH /api/tours/[id]` changes `scheduled_at` | `Your venue tour has been updated` |
+| Confirmed | `PATCH` flips status to `confirmed` | `Your venue tour is confirmed` |
+| Cancelled | `PATCH` flips status to `cancelled` | `Your venue tour was cancelled` |
+
+If a single PATCH changes both `status` AND `scheduled_at`, only one email is sent — priority is `cancelled` > `confirmed` > `rescheduled`.
+
+**Failure model**: the email send is fire-and-forget. The tour write succeeds regardless of email outcome (Resend down, suppression hit, transient network error). Failures are structured-logged + Sentry-captured (except for `suppressed:*` which is an expected outcome and not a fault). Leads with no `email` on file are silently skipped.
+
+**Suppression**: rides on the existing `sendEmail` layer — `public.email_suppressions` blocks delivery and the helper returns `result.error = 'suppressed:<reason>'`.
+
+### Health surface
+
+```json
+{
+  "billing": {
+    "...": "...",
+    "tour_auto_pause": "mounted",
+    "tour_auto_resume": "mounted"
+  }
+}
+```
+
+`ADMIN_ENDPOINT_COUNT` bumped from 13 → 14 (added `/api/admin/tours/paused-venues`).
+
 ## 7. Adding a new write route
 
 When you add a new mutation endpoint, you MUST:

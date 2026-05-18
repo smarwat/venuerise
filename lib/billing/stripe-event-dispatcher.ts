@@ -5,7 +5,11 @@ import {
   syncSubscriptionFromStripeSubscription,
   type SyncSubscriptionResult,
 } from './billing-service'
-import { sendPaymentRecoveryEmail } from './payment-recovery'
+import {
+  sendPaymentRecoveryEmail,
+  markTourSchedulingResumed,
+  type MarkTourSchedulingResumedResult,
+} from './payment-recovery'
 import { log } from '@/lib/log'
 import { captureWebhookError } from '@/lib/observability/sentry'
 
@@ -87,29 +91,59 @@ export interface DispatchResult {
     skipped: boolean
     reason?: string
   }
+  /**
+   * Phase 8G — populated alongside `recoveryEmail` when the dispatcher
+   * detected a past_due → active/trialing transition. Reflects whether
+   * the `tours_resumed_at` metadata stamp was written. `stamped:false`
+   * with `reason:'never_paused'` is the common case for venues that
+   * never hit the 7-day auto-pause threshold.
+   */
+  tourAutoResume?: MarkTourSchedulingResumedResult
 }
 
 const RECOVERY_TRANSITION_TO = new Set(['active', 'trialing'])
 
+interface RecoveryActions {
+  email?: DispatchResult['recoveryEmail']
+  tourAutoResume?: MarkTourSchedulingResumedResult
+}
+
 /**
- * Phase 7M — given a sync result, decide whether to fire the recovery
- * email. Returns undefined when no recovery attempt was made (different
- * transition, missing ids, etc.) — surfaces in DispatchResult.recoveryEmail
- * the same way.
+ * Phase 7M + 8G — given a sync result, decide whether to fire the
+ * recovery email AND stamp the tour-auto-resume metadata. Both fire
+ * together on the same past_due → active/trialing transition.
+ *
+ * Returns an empty object when no recovery attempt was made (different
+ * transition, missing ids, etc.) — surfaces in DispatchResult the same
+ * way.
+ *
+ * We run the two side effects sequentially: email first (user-visible),
+ * then metadata stamp. A failure on either does NOT block the other —
+ * we always attempt the resume stamp even if the email send threw, so
+ * the dashboard banner reflects reality.
  */
 async function maybeFirePaymentRecovery(
   syncResult: SyncSubscriptionResult,
   requestId: string | undefined
-): Promise<DispatchResult['recoveryEmail']> {
-  if (syncResult.previousStatus !== 'past_due') return undefined
-  if (!RECOVERY_TRANSITION_TO.has(syncResult.newStatus)) return undefined
-  if (!syncResult.venueId || !syncResult.subscriptionId) return undefined
-  return sendPaymentRecoveryEmail({
+): Promise<RecoveryActions> {
+  if (syncResult.previousStatus !== 'past_due') return {}
+  if (!RECOVERY_TRANSITION_TO.has(syncResult.newStatus)) return {}
+  if (!syncResult.venueId || !syncResult.subscriptionId) return {}
+
+  const email = await sendPaymentRecoveryEmail({
     venueId: syncResult.venueId,
     subscriptionId: syncResult.subscriptionId,
     currentPeriodEnd: syncResult.currentPeriodEnd,
     requestId,
   })
+
+  const tourAutoResume = await markTourSchedulingResumed({
+    venueId: syncResult.venueId,
+    subscriptionId: syncResult.subscriptionId,
+    requestId,
+  })
+
+  return { email, tourAutoResume }
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +197,7 @@ export async function dispatchStripeEvent(
 
   try {
     let venueId: string | null = null
-    let recoveryEmail: DispatchResult['recoveryEmail']
+    let actions: RecoveryActions = {}
 
     switch (event.type) {
       case 'checkout.session.completed': {
@@ -178,7 +212,7 @@ export async function dispatchStripeEvent(
         const sub = await stripe().subscriptions.retrieve(subscriptionId)
         venueId = venueId ?? venueIdFromMetadata(sub)
         const syncResult = await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
-        recoveryEmail = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
+        actions = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
         break
       }
 
@@ -188,7 +222,7 @@ export async function dispatchStripeEvent(
         const sub = event.data.object as Stripe.Subscription
         venueId = venueIdFromMetadata(sub)
         const syncResult = await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
-        recoveryEmail = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
+        actions = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
         break
       }
 
@@ -204,7 +238,7 @@ export async function dispatchStripeEvent(
         const sub = await stripe().subscriptions.retrieve(subscriptionId)
         venueId = venueId ?? venueIdFromMetadata(sub)
         const syncResult = await syncSubscriptionFromStripeSubscription(sub, ctx.requestId)
-        recoveryEmail = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
+        actions = await maybeFirePaymentRecovery(syncResult, ctx.requestId)
         break
       }
 
@@ -215,15 +249,28 @@ export async function dispatchStripeEvent(
       }
     }
 
-    if (recoveryEmail) {
+    if (actions.email) {
       reqLog.info(
-        { recoveryEmail },
+        { recoveryEmail: actions.email },
         'stripe.dispatch.recovery_email_outcome'
+      )
+    }
+    if (actions.tourAutoResume) {
+      reqLog.info(
+        { tourAutoResume: actions.tourAutoResume },
+        'stripe.dispatch.tour_auto_resume_outcome'
       )
     }
 
     reqLog.info({ venueId }, 'stripe.dispatch.completed')
-    return { handled: true, ignored: false, venueId, handlerError: null, recoveryEmail }
+    return {
+      handled: true,
+      ignored: false,
+      venueId,
+      handlerError: null,
+      recoveryEmail: actions.email,
+      tourAutoResume: actions.tourAutoResume,
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     reqLog.error({ err }, 'stripe.dispatch.failed')

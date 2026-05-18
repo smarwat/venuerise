@@ -48,6 +48,7 @@ interface HealthBody {
     recovery_email: 'mounted'
     admin_clear_dunning: 'mounted'
     tour_auto_pause: 'mounted'
+    tour_auto_resume: 'mounted'
   }
   demo: {
     seed: 'mounted'
@@ -75,8 +76,9 @@ interface HealthBody {
  *   - Phase 7N: 10 (added billing-events/[id]/clear-dunning)
  *   - Phase 8A: 12 (added demo/seed + demo/reset)
  *   - Phase 8F: 13 (added tours/bulk-cancel)
+ *   - Phase 8G: 14 (added tours/paused-venues)
  */
-const ADMIN_ENDPOINT_COUNT = 13
+const ADMIN_ENDPOINT_COUNT = 14
 
 const startedAt = Date.now()
 
@@ -223,6 +225,12 @@ export async function GET(request: Request) {
       // future scheduled/confirmed tours for venues past_due > 7 days
       // and stamps subscriptions.metadata.tours_paused_at/reason/count.
       tour_auto_pause: 'mounted',
+      // 8G — operational counterpart to tour_auto_pause. When the Stripe
+      // dispatcher detects past_due → active/trialing, it stamps
+      // subscriptions.metadata.tours_resumed_at + tours_resumed_reason
+      // so the /dashboard/tours banner can flip off. Does NOT resurrect
+      // any already-cancelled tour — that remains operator-controlled.
+      tour_auto_resume: 'mounted',
     },
     // Phase 8A — demo seed + reset admin surface.
     // Phase 8B — realtime layers on /dashboard/leads + /dashboard/inbox.

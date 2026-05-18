@@ -17,6 +17,7 @@ import RealtimeToursLayer from '@/components/dashboard/tours/RealtimeToursLayer'
 import TourSchedulingClient from '@/components/dashboard/tours/TourSchedulingClient'
 import MonthNavClient from '@/components/dashboard/tours/MonthNavClient'
 import TourInteractionClient from '@/components/dashboard/tours/TourInteractionClient'
+import TourPausedBanner from '@/components/dashboard/tours/TourPausedBanner'
 
 type TourStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -97,6 +98,39 @@ export default async function ToursPage({
       ).data ?? []
     : []
 
+  // Phase 8G — read subscription metadata to decide whether to render
+  // the auto-pause banner. We pick the most recently-created subscription
+  // row for the venue (matches the priority order used by the dashboard
+  // billing banner). RLS on subscriptions is ADMIN_ROLES-only for SELECT;
+  // if the current user is sales/coordinator/viewer, the read returns
+  // null and the banner stays hidden — which is the right behavior
+  // (only admins/owners see billing prompts).
+  const subscriptionRaw = venueId
+    ? (await supabase
+        .from('subscriptions')
+        .select('metadata')
+        .eq('venue_id', venueId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      ).data
+    : null
+  const subscriptionMetadata =
+    (subscriptionRaw as { metadata?: Record<string, unknown> | null } | null)?.metadata ?? null
+  const toursPausedAt =
+    typeof subscriptionMetadata?.tours_paused_at === 'string'
+      ? (subscriptionMetadata.tours_paused_at as string)
+      : null
+  const toursResumedAt =
+    typeof subscriptionMetadata?.tours_resumed_at === 'string'
+      ? (subscriptionMetadata.tours_resumed_at as string)
+      : null
+  const toursPausedCount =
+    typeof subscriptionMetadata?.tours_paused_count === 'number'
+      ? (subscriptionMetadata.tours_paused_count as number)
+      : null
+  const showPausedBanner = Boolean(toursPausedAt) && !toursResumedAt
+
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd })
 
   const countByStatus = (s: TourStatus) => tours.filter((t) => (t as Record<string, unknown>).status === s).length
@@ -141,6 +175,15 @@ export default async function ToursPage({
           </div>
         }
       />
+
+      {/* Phase 8G — auto-paused banner. Renders only when the
+          subscription metadata indicates Phase 8F cancelled tours and
+          billing hasn't recovered yet. Sales/coordinator/viewer roles
+          can't read subscriptions (RLS), so this stays invisible for
+          them — only admins/owners see billing prompts. */}
+      {showPausedBanner && toursPausedAt && (
+        <TourPausedBanner pausedAt={toursPausedAt} pausedCount={toursPausedCount} />
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
