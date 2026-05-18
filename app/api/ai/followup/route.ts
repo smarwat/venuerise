@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { processPendingFollowUp } from '@/lib/agents/orchestrator'
 import { assertOwnsFollowUp, OwnershipError } from '@/lib/auth/assert-ownership'
+import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { z } from 'zod'
 
 const Schema = z.object({
@@ -25,6 +26,12 @@ export async function POST(request: NextRequest) {
     }
     throw err
   }
+
+  // Rate limit per user + follow_up — guards against accidental "Send now"
+  // button hammering. Internal job-runtime follow-ups go through the queue,
+  // not this endpoint.
+  const rl = await rateLimitAi(request, `followup:${user.id}:${parsed.data.follow_up_id}`)
+  if (!rl.allowed) return rateLimitedResponse(rl)
 
   try {
     const result = await processPendingFollowUp(parsed.data.follow_up_id)

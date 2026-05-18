@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { getJobsRuntime } from '@/lib/jobs/queue'
 import { emailConfigured } from '@/lib/integrations/email'
+import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
 
 /**
  * Health endpoint for uptime monitors.
@@ -20,7 +21,9 @@ interface HealthBody {
   supabase: Status
   anthropic: Status
   email: Status
+  resend_webhook: 'configured' | 'missing'
   jobs: 'inngest' | 'local-fallback'
+  upstash: RateLimitStatus
   uptime_ms: number
   ts: string
 }
@@ -64,13 +67,20 @@ export async function GET() {
   const anthropic = checkAnthropic()
   const email = checkEmail()
   const jobs = getJobsRuntime()
+  const upstash = getRateLimitStatus()
+  // Webhook health: env-presence only. We never call Resend's verifier here.
+  const resend_webhook: 'configured' | 'missing' = process.env.RESEND_WEBHOOK_SECRET
+    ? 'configured'
+    : 'missing'
 
   const body: HealthBody = {
     ok: supabase !== 'down',
     supabase,
     anthropic,
     email,
+    resend_webhook,
     jobs,
+    upstash,
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }

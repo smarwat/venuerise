@@ -148,15 +148,19 @@ export async function runProcessSingleFollowUp(
 
   // 5. Send the email (or console-fallback in dev). The function NEVER lies:
   //    delivered=true only if Resend accepted; console-fallback returns false.
+  //    Phase 4B: sendEmail also checks the suppression list, writes an
+  //    outbound_messages row, and decorates the body with an unsubscribe link.
   const sendResult = await sendEmail({
     to: leadEmail,
     subject: message.subject,
     text: message.body,
+    venueId: fu.venue_id,
+    leadId: fu.lead_id,
+    relatedTable: 'follow_up_schedules',
+    relatedId: fu.id,
     metadata: {
-      lead_id: fu.lead_id,
       follow_up_id: fu.id,
       touch: String(fu.touch_number),
-      venue_id: fu.venue_id,
     },
   })
 
@@ -196,7 +200,34 @@ export async function runProcessSingleFollowUp(
     return 'sent'
   }
 
-  // 7. Not delivered — distinguish console-fallback (dev) from real provider error.
+  // 7. Not delivered — three failure modes:
+  //    (a) suppression hit (bounce/complaint/manual/unsubscribe)
+  //    (b) console-fallback (dev mode, no Resend keys)
+  //    (c) real provider error
+  if (sendResult.error?.startsWith('suppressed:')) {
+    const { error: updateErr } = await supabase
+      .from('follow_up_schedules')
+      .update({
+        ...base,
+        status: 'skipped',
+        delivery_error: sendResult.error.slice(0, 500),
+      })
+      .eq('id', followUpId)
+      .eq('status', 'pending')
+
+    if (updateErr) {
+      console.error('[job:follow-up] persist after suppression failed', { followUpId, error: updateErr.message })
+      return 'failed'
+    }
+    console.warn('[job:follow-up] skipped — recipient is on suppression list', {
+      followUpId,
+      to: leadEmail,
+      reason: sendResult.error,
+      outboundMessageId: sendResult.outboundMessageId,
+    })
+    return 'skipped'
+  }
+
   if (sendResult.provider === 'console' && !emailConfigured()) {
     // Dev mode, no Resend key. Persist generated text + mark 'skipped' so we
     // do not falsely claim delivery. The text is preserved so the dashboard

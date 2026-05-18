@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { handleNewLead } from '@/lib/agents/orchestrator'
 import { verifyInternalRequest, INTERNAL_SIGNATURE_HEADER } from '@/lib/auth/internal-hmac'
 import { assertOwnsLead, OwnershipError } from '@/lib/auth/assert-ownership'
+import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -67,6 +68,12 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    // Rate limit user-initiated requalification. Internal HMAC calls (above)
+    // are intentionally exempt — those come from our own job runtime and
+    // are governed by Inngest concurrency, not per-request budgets.
+    const rl = await rateLimitAi(request, `qualify:user:${user.id}`)
+    if (!rl.allowed) return rateLimitedResponse(rl)
 
     try {
       const own = await assertOwnsLead(supabase, user.id, lead_id)

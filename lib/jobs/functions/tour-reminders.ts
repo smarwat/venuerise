@@ -139,15 +139,18 @@ async function processReminderBatch(
       continue
     }
 
-    // 2. Send the email.
+    // 2. Send the email. Phase 4B: sendEmail handles suppression checks,
+    //    writes an outbound_messages row, and decorates with unsubscribe link.
     const sendResult = await sendEmail({
       to: tour.leads.email,
       subject: `${hoursUntil === 24 ? 'Tomorrow' : 'In 2 hours'}: your tour at ${tour.venues.name}`,
       text: reminderText,
+      venueId: tour.venue_id,
+      leadId: tour.lead_id,
+      relatedTable: 'tours',
+      relatedId: tour.id,
       metadata: {
         tour_id: tour.id,
-        lead_id: tour.lead_id,
-        venue_id: tour.venue_id,
         reminder_window: `${hoursUntil}h`,
       },
     })
@@ -184,7 +187,34 @@ async function processReminderBatch(
       continue
     }
 
-    // 3b. Not delivered — distinguish dev fallback from provider error.
+    // 3b. Not delivered — three failure modes:
+    //     (i)   suppression hit → flag NOT flipped (no real send possible)
+    //     (ii)  console-fallback (dev) → flag NOT flipped, will retry next scan
+    //     (iii) real provider error → flag NOT flipped, log + count failed
+    if (sendResult.error?.startsWith('suppressed:')) {
+      console.warn(`[job:tour-reminders:${hoursUntil}h] skipped — recipient suppressed`, {
+        tour_id: tour.id,
+        to: tour.leads.email,
+        reason: sendResult.error,
+      })
+      await logTourAction(supabase, {
+        venue_id: tour.venue_id,
+        lead_id: tour.lead_id,
+        action: `tour_reminder_${hoursUntil}h_skipped`,
+        output_summary: `Suppressed recipient ${tour.leads.email} (${sendResult.error})`,
+        success: false,
+        error_message: sendResult.error.slice(0, 500),
+      })
+      // IMPORTANT: do NOT flip the flag — but ALSO don't retry pointlessly
+      // for a permanently suppressed address. We rely on the flag staying
+      // false; if a venue owner unsubscribes the address by mistake the
+      // dashboard surface will reveal repeated skips. A future phase can
+      // add a `tours.reminder_*_status` enum to record "suppressed" once
+      // and stop scanning. For now: skipped counter incremented, no flag.
+      skipped++
+      continue
+    }
+
     if (sendResult.provider === 'console' && !emailConfigured()) {
       console.warn(`[job:tour-reminders:${hoursUntil}h] console-fallback — NOT delivered`, {
         tour_id: tour.id,

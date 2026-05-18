@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { handleIncomingMessage } from '@/lib/agents/orchestrator'
 import { assertOwnsConversation, OwnershipError } from '@/lib/auth/assert-ownership'
+import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { z } from 'zod'
 
 const PostSchema = z.object({
@@ -28,6 +29,10 @@ export async function POST(request: NextRequest) {
     }
     throw err
   }
+
+  // Rate limit POSTs per user + conversation (each AI reply burns tokens).
+  const rl = await rateLimitAi(request, `chat:post:${user.id}:${parsed.data.conversation_id}`)
+  if (!rl.allowed) return rateLimitedResponse(rl)
 
   try {
     const result = await handleIncomingMessage(parsed.data.conversation_id, parsed.data.message)
@@ -62,6 +67,11 @@ export async function GET(request: NextRequest) {
     }
     throw err
   }
+
+  // GET — looser limit than POST (no AI tokens spent here). Realtime drives
+  // the inbox, so realistic GET traffic is low; 60/min/user is plenty.
+  const rl = await rateLimitAi(request, `chat:get:${user.id}`)
+  if (!rl.allowed) return rateLimitedResponse(rl)
 
   const { data, error } = await supabase
     .from('messages')

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { z } from 'zod'
 
 const CreateLeadSchema = z.object({
@@ -45,6 +46,11 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  // Rate limit manual lead creation per user (dashboard-facing). 30/min.
+  // GET is intentionally not rate-limited — it's a read-heavy list view.
+  const rl = await rateLimitUserAction(request, `leads:create:${user.id}`)
+  if (!rl.allowed) return rateLimitedResponse(rl)
 
   const { data: venue } = await supabase
     .from('venues').select('id').eq('owner_user_id', user.id).order('created_at').limit(1).maybeSingle()

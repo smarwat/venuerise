@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { enqueueLeadCreated } from '@/lib/jobs/queue'
+import { rateLimitWidget, rateLimitedResponse } from '@/lib/rate-limit'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -59,6 +60,21 @@ export async function POST(request: NextRequest) {
   }
 
   const { venue_id, name, email, phone, event_date, guest_count, budget, message } = parsed.data
+
+  // 2b. Rate-limit by IP + venue. 10/min sliding (see lib/rate-limit.ts).
+  //     A misconfigured / hostile embedder of one venue's widget cannot DoS
+  //     another venue's pipeline.
+  const rl = await rateLimitWidget(request, venue_id)
+  if (!rl.allowed) {
+    if (isDev) {
+      console.warn('[widget] rate-limited', {
+        venue_id,
+        retryMs: rl.retryAfterMs,
+        mode: rl.mode,
+      })
+    }
+    return rateLimitedResponse(rl)
+  }
 
   // 3. Look up venue — distinguish "doesn't exist" vs. "inactive" vs. "db error"
   const { data: venueRow, error: venueErr } = await supabase
