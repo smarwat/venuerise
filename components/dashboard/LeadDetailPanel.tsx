@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { X, Mail, Phone, Calendar, Users, DollarSign, Bot, BotOff, Trash2, MessageSquare } from 'lucide-react'
+import { X, Mail, Phone, Calendar, Users, DollarSign, Bot, BotOff, Trash2, MessageSquare, CalendarCheck } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Badge } from './ui/Badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/Select'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import type { Database, LeadStage } from '@/types/database'
 import { format } from 'date-fns'
 import QuickScheduleTourButton from './tours/QuickScheduleTourButton'
+import ScheduleTourDrawer from './tours/ScheduleTourDrawer'
 
 type Lead = Database['public']['Tables']['leads']['Row']
 
@@ -36,8 +37,17 @@ interface LeadDetailPanelProps {
   onDelete: (leadId: string) => void
 }
 
+// Phase 8D — public env access from a client component. Next replaces
+// the literal at build time, so the conditional branch can be tree-
+// shaken when the value is statically known to be off.
+const SHOW_DEMO_QUICK_SCHEDULE = process.env.NEXT_PUBLIC_DEMO_BUTTON === '1'
+
 export default function LeadDetailPanel({ lead, onClose, onUpdate, onDelete }: LeadDetailPanelProps) {
   const [saving, setSaving] = useState(false)
+  // Phase 8D — drawer state lives here so the panel can open it pre-
+  // filled with the current lead. The drawer's onScheduled refreshes the
+  // route so the kanban + tours page both pick up the new tour.
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   if (!lead) return null
 
@@ -167,10 +177,24 @@ export default function LeadDetailPanel({ lead, onClose, onUpdate, onDelete }: L
           </div>
         </div>
 
-        {/* Phase 8C — quick-schedule-tour action. Self-hides for
-            stages where a tour doesn't make sense (lost/booked/new_inquiry). */}
-        <div className="px-6 pt-4">
-          <QuickScheduleTourButton leadId={lead.id} stage={lead.stage} />
+        {/* Phase 8D — full schedule-tour drawer, always available regardless
+            of demo flag. Opens prefilled with the current lead. */}
+        <div className="px-6 pt-4 space-y-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="w-full"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <CalendarCheck className="w-3.5 h-3.5" />
+            Schedule tour…
+          </Button>
+          {/* Phase 8C — quick-schedule-tour action. Demo-only after Phase 8D
+              moved the full drawer into the standard footer; self-hides for
+              stages where a tour doesn't make sense (lost/booked/new_inquiry). */}
+          {SHOW_DEMO_QUICK_SCHEDULE && (
+            <QuickScheduleTourButton leadId={lead.id} stage={lead.stage} />
+          )}
         </div>
 
         <div className="px-6 py-4 border-t border-[#F1F5F9] flex gap-2">
@@ -195,6 +219,18 @@ export default function LeadDetailPanel({ lead, onClose, onUpdate, onDelete }: L
           </Button>
         </div>
       </div>
+
+      {/* Phase 8D — drawer mounted alongside the panel so it portals
+          above everything. Single-item leads array; the drawer's picker
+          is therefore a pre-chosen lead the operator can't accidentally
+          swap from this entry point. */}
+      <ScheduleTourDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        leads={[{ id: lead.id, name: lead.name, email: lead.email, stage: lead.stage }]}
+        defaultLeadId={lead.id}
+        defaultNotes="Scheduled from lead detail."
+      />
     </div>
   )
 }

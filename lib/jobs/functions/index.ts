@@ -4,6 +4,7 @@ import { processFollowUpsCronFn, processSingleFollowUpFn } from './process-follo
 import { tourRemindersFn } from './tour-reminders'
 import { billingTrialReminderFn } from './billing-trial-reminder'
 import { billingDunningFn } from './billing-dunning'
+import { billingTourAutoPauseFn } from './billing-tour-auto-pause'
 
 /** Every Inngest function the app exposes. Single source of truth. */
 export const allJobFunctions = [
@@ -13,4 +14,5 @@ export const allJobFunctions = [
   tourRemindersFn,
   billingTrialReminderFn,
   billingDunningFn,
+  billingTourAutoPauseFn,
 ]

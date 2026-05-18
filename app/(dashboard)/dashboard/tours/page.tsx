@@ -1,11 +1,22 @@
 import { createClient } from '@/lib/supabase/server'
 import PageHeader from '@/components/dashboard/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle, CardSubtitle } from '@/components/dashboard/ui/Card'
-import { Button } from '@/components/dashboard/ui/Button'
 import { Badge } from '@/components/dashboard/ui/Badge'
-import { CalendarCheck, Clock, Plus, MapPin } from 'lucide-react'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from 'date-fns'
+// Phase 8D — `Button` + `Plus` previously rendered the header CTA, now
+// owned by TourSchedulingClient (which mounts the drawer).
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  eachDayOfInterval,
+  isSameDay,
+  parse,
+  isValid,
+} from 'date-fns'
 import RealtimeToursLayer from '@/components/dashboard/tours/RealtimeToursLayer'
+import TourSchedulingClient from '@/components/dashboard/tours/TourSchedulingClient'
+import MonthNavClient from '@/components/dashboard/tours/MonthNavClient'
+import TourInteractionClient from '@/components/dashboard/tours/TourInteractionClient'
 
 type TourStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -17,7 +28,39 @@ const STATUS_CONFIG: Record<TourStatus, { label: string; variant: Parameters<typ
   no_show:   { label: 'No Show',   variant: 'red',     chip: 'bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA]' },
 }
 
-export default async function ToursPage() {
+/**
+ * Phase 8E — server-resolved month from `?month=YYYY-MM`.
+ *
+ * Invalid or absent values default to the current month. We always pass
+ * a STABLE 1st-of-month Date downstream so date-fns helpers behave
+ * deterministically regardless of when the page was rendered relative
+ * to today.
+ */
+function resolveMonth(raw: string | undefined): { displayMonth: Date; monthSlug: string } {
+  if (raw) {
+    const parsed = parse(raw, 'yyyy-MM', new Date())
+    if (isValid(parsed)) {
+      return {
+        displayMonth: startOfMonth(parsed),
+        monthSlug: format(parsed, 'yyyy-MM'),
+      }
+    }
+  }
+  const today = new Date()
+  return {
+    displayMonth: startOfMonth(today),
+    monthSlug: format(today, 'yyyy-MM'),
+  }
+}
+
+export default async function ToursPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>
+}) {
+  const { month: monthParam } = await searchParams
+  const { displayMonth, monthSlug } = resolveMonth(monthParam)
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -26,9 +69,9 @@ export default async function ToursPage() {
     .order('created_at').limit(1).maybeSingle()
   const venueId = (venueRaw as { id?: string } | null)?.id ?? null
 
+  const monthStart = displayMonth
+  const monthEnd = endOfMonth(displayMonth)
   const now = new Date()
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
 
   const tours = venueId
     ? (await supabase
@@ -41,9 +84,43 @@ export default async function ToursPage() {
       ).data ?? []
     : []
 
+  // Phase 8D — fetch leads for the schedule drawer's picker. Limited to
+  // the 100 most recently created so the dropdown stays manageable; if a
+  // venue ever has >100 active leads we'll add a typeahead.
+  const drawerLeads = venueId
+    ? (await supabase
+        .from('leads')
+        .select('id, name, email, stage')
+        .eq('venue_id', venueId)
+        .order('created_at', { ascending: false })
+        .limit(100)
+      ).data ?? []
+    : []
+
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd })
 
   const countByStatus = (s: TourStatus) => tours.filter((t) => (t as Record<string, unknown>).status === s).length
+
+  // Phase 8E — narrow + serialize for the client interaction wrapper.
+  // We pass only the fields TourInteractionClient + EditTourDrawer need
+  // so the client bundle stays lean.
+  const upcomingTours = (tours as Array<Record<string, unknown>>)
+    .filter((t) => ['scheduled', 'confirmed'].includes(t.status as string))
+    .slice(0, 5)
+    .map((t) => {
+      const leadRel = t.leads as { name?: string | null; email?: string | null } | null
+      return {
+        id: t.id as string,
+        lead_id: t.lead_id as string,
+        scheduled_at: t.scheduled_at as string,
+        duration_minutes: (t.duration_minutes as number | null) ?? null,
+        location_notes: (t.location_notes as string | null) ?? null,
+        status: t.status as TourStatus,
+        lead: leadRel
+          ? { name: leadRel.name ?? null, email: leadRel.email ?? null }
+          : null,
+      }
+    })
 
   return (
     <div className="p-6 lg:p-8 animate-slide-up">
@@ -51,10 +128,17 @@ export default async function ToursPage() {
         title="Tours"
         subtitle="Schedule, confirm, and track every venue tour"
         actions={
-          <Button size="sm">
-            <Plus className="w-3.5 h-3.5" />
-            Schedule Tour
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Phase 8E — URL-based month nav. Clicking chevrons or "Today"
+                pushes ?month=YYYY-MM and the server re-fetches. */}
+            <MonthNavClient
+              currentMonth={monthSlug}
+              currentMonthLabel={format(displayMonth, 'MMMM yyyy')}
+            />
+            <TourSchedulingClient
+              leads={drawerLeads as Parameters<typeof TourSchedulingClient>[0]['leads']}
+            />
+          </div>
         }
       />
 
@@ -72,11 +156,12 @@ export default async function ToursPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Calendar */}
+        {/* Calendar — server-rendered. Per Phase 8E spec, click-to-edit
+            is only on the Upcoming Tours rows for the surgical pass. */}
         <Card className="lg:col-span-2">
           <CardHeader>
             <div>
-              <CardTitle>{format(now, 'MMMM yyyy')}</CardTitle>
+              <CardTitle>{format(displayMonth, 'MMMM yyyy')}</CardTitle>
               <CardSubtitle>Visual overview of this month</CardSubtitle>
             </div>
           </CardHeader>
@@ -126,7 +211,9 @@ export default async function ToursPage() {
           </CardContent>
         </Card>
 
-        {/* Upcoming */}
+        {/* Upcoming — now interactive via Phase 8E client wrapper.
+            Renders the same shape as before but click → opens EditTourDrawer,
+            and scheduled rows get an inline "Mark confirmed" action. */}
         <Card>
           <CardHeader>
             <div>
@@ -135,53 +222,14 @@ export default async function ToursPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {tours.length === 0 ? (
-              <div className="text-center py-10">
-                <div className="w-11 h-11 rounded-xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-2.5">
-                  <CalendarCheck className="w-5 h-5 text-[#0F172A]" />
-                </div>
-                <p className="text-[13px] text-[#475569]">No tours scheduled this month.</p>
-              </div>
-            ) : (
-              <div className="space-y-2.5">
-                {tours
-                  .filter((t) => ['scheduled', 'confirmed'].includes((t as Record<string, unknown>).status as string))
-                  .slice(0, 5)
-                  .map((tour) => {
-                    const t = tour as Record<string, unknown>
-                    const lead = t.leads as { name?: string } | null
-                    const cfg = STATUS_CONFIG[t.status as TourStatus]
-                    return (
-                      <div key={t.id as string} className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl p-3.5 hover:border-[#CBD5E1] hover:bg-white transition-colors">
-                        <div className="flex items-start gap-2.5">
-                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#1E293B] to-[#0F172A] flex items-center justify-center text-white text-[12px] font-bold shrink-0">
-                            {lead?.name?.charAt(0) ?? '?'}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[13px] font-semibold text-[#0F172A] truncate">{lead?.name ?? 'Unknown'}</p>
-                            <div className="flex items-center gap-2 text-[11px] text-[#475569] mt-0.5">
-                              <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" />{format(new Date(t.scheduled_at as string), 'MMM d • h:mm a')}</span>
-                            </div>
-                            {t.location_notes ? (
-                              <div className="flex items-center gap-1 text-[11px] text-[#94A3B8] mt-1">
-                                <MapPin className="w-3 h-3" />
-                                {t.location_notes as string}
-                              </div>
-                            ) : null}
-                          </div>
-                          <Badge variant={cfg.variant}>{cfg.label}</Badge>
-                        </div>
-                      </div>
-                    )
-                  })}
-              </div>
-            )}
+            <TourInteractionClient tours={upcomingTours} />
           </CardContent>
         </Card>
       </div>
       {/* Phase 8C — non-rendering client component (except for a toast).
           Subscribes to public.tours postgres_changes filtered by venue_id
-          and refreshes the page on any event. */}
+          and refreshes the page on any event. `router.refresh()` preserves
+          the current ?month=YYYY-MM search param so we stay on the same view. */}
       {venueId && <RealtimeToursLayer venueId={venueId} />}
     </div>
   )

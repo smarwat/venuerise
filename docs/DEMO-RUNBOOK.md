@@ -230,6 +230,176 @@ If `demo.seed` is missing or `admin.endpoints != 12`, the demo routes aren't loa
 
 ---
 
+## 13. Editing, confirming, cancelling, and navigating tours (Phase 8E)
+
+Closes the two remaining gaps on `/dashboard/tours`: operators can now **edit, confirm, and cancel** existing tours, and the page supports **URL-based month navigation** so a tour scheduled into a future month is one chevron-click away.
+
+### 13.1 Quick reference
+
+| Action | How |
+|---|---|
+| Schedule a new tour | Click **Schedule Tour** in the header → `ScheduleTourDrawer` (Phase 8D). |
+| Edit an existing tour | Click any row in **Upcoming Tours** → `EditTourDrawer` opens prefilled. |
+| Mark scheduled tour as confirmed | Click the inline **Mark confirmed** button on the row (only shows for `scheduled`). |
+| Cancel a tour | Open the edit drawer → **Cancel tour** button in the footer. Soft-cancel — row stays in DB with `status='cancelled'`. |
+| Navigate months | Chevron pair + "Today" in the page header → URL becomes `?month=YYYY-MM`. |
+
+### 13.2 The full walkthrough
+
+1. Open `http://localhost:3000/dashboard/tours`. Page header shows: `[‹] October 2026 [›] [Today]` and `[+ Schedule Tour]`.
+2. Click **‹** (previous month) — URL becomes `?month=2026-09`, page re-fetches for September.
+3. Click **›** (next month) twice — `?month=2026-11`.
+4. Click **Today** — URL strips the param; you're back on the current month.
+5. Click **Schedule Tour**, pick a lead, submit. The tour appears in the Upcoming Tours list (via realtime + `router.refresh()`).
+6. Click that newly-scheduled row. `EditTourDrawer` opens prefilled with the date, time, duration, notes, and status.
+7. Bump the duration to 90 minutes, add `"Bring portfolio + sample menus."` to the notes, click **Save changes**. Green banner → drawer auto-closes → row updates.
+8. Hover the row again — the inline **Mark confirmed** button is visible (status is still `scheduled`). Click it. The badge flips from `Scheduled` to `Confirmed`, the inline button disappears.
+9. Click the row again to re-open the drawer. The status select now reads `Confirmed`. Click **Cancel tour** in the footer → window.confirm → on accept, the drawer flashes a "Tour cancelled" banner and auto-closes.
+10. Refresh the page — the cancelled tour is gone from Upcoming (filter excludes `cancelled`) but still visible in the calendar grid with the `cancelled` chip.
+11. Soft-cancel means the row is preserved for audit + reschedule context. Use SQL or a future bulk-cleanup tool if you need to hard-delete.
+
+### 13.3 What's happening under the hood
+
+| Surface | Behavior |
+|---|---|
+| `MonthNavClient` | Reads `?month` from `useSearchParams`, pushes new value via `useRouter().push()`. "Today" deletes the param entirely so the URL stays clean. Server re-fetches the tour rows for the new month. |
+| `TourInteractionClient` | Wraps the Upcoming Tours list. Each row is a button → `setSelectedTour` + `setDrawerOpen(true)`. Inline **Mark confirmed** stops event propagation so it doesn't double-fire the drawer open. |
+| `EditTourDrawer` | Same shape as `ScheduleTourDrawer` (Phase 8D) but PATCHes `/api/tours/[id]` instead of POSTing. Re-seeds local state on every open via `useEffect([open, tour])` so clicking row A then row B loads B's values. |
+| Cancel button | PATCHes `{ status: 'cancelled' }`. window.confirm prompts the operator first. The drawer's status state machine surfaces a `cancelling` spinner. |
+| Calendar grid | Stays server-rendered. Click handlers only live on the Upcoming Tours list per the Phase 8E spec (surgical pass). |
+| `RealtimeToursLayer` (Phase 8C) | Subscription unchanged. `router.refresh()` preserves `?month=YYYY-MM` so a realtime event doesn't bounce the operator to the current month. |
+
+### 13.4 PATCH `/api/tours/[id]` shapes
+
+The route's existing Phase 7D Zod schema accepts:
+
+```ts
+{
+  status?: 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+  scheduled_at?: <ISO datetime>
+  duration_minutes?: <int 15–480>
+  location_notes?: <string | null>
+  reminder_24h_sent?: boolean
+  reminder_2h_sent?: boolean
+  outcome?: <string | null>
+}
+```
+
+Phase 8E uses these bodies:
+
+**Save changes** (full edit):
+```json
+{
+  "scheduled_at": "<ISO datetime, UTC>",
+  "duration_minutes": 60,
+  "location_notes": "<string|null>",
+  "status": "<scheduled|confirmed|completed|cancelled|no_show>"
+}
+```
+
+**Mark confirmed** (inline):
+```json
+{ "status": "confirmed" }
+```
+
+**Cancel tour** (drawer footer):
+```json
+{ "status": "cancelled" }
+```
+
+### 13.5 Troubleshooting
+
+**Edit submit returns 401** — operator's session expired. Sign back in.
+
+**Edit submit returns 403** — operator's role on the venue isn't in `SALES_ROLES`. Re-check `venue_members`.
+
+**Edit submit returns 402 `subscription_required`** — Phase 7D billing gate is on AND the venue's subscription isn't `active`/`trialing`. Flip the gate off for demos, or seed:
+```bash
+SEED_SUBSCRIPTION_STATUS=trialing npm run billing:seed
+```
+
+**Edit submit returns 404 `Tour not found`** — the tour was deleted (rare; we soft-cancel rather than delete) OR the row's `venue_id` doesn't match the caller's venue (cross-tenant attempt). Refresh the page.
+
+**Tour not visible in Upcoming Tours** — check the URL's `?month=YYYY-MM` value matches the tour's `scheduled_at`. Click **Today** to jump back. Cancelled/completed rows are filtered from Upcoming by design but still appear in the calendar grid + month-level stat cards.
+
+**Realtime stale** — the bottom-right "Tours updated" toast should fire on any tour change. If it doesn't, verify the `tours` table is still in the `supabase_realtime` publication:
+```sql
+select tablename from pg_publication_tables
+where pubname='supabase_realtime' and tablename='tours';
+```
+
+**Month nav chevron does nothing** — check the URL bar; the param updates immediately. If the calendar doesn't re-render, your `useSearchParams` cache might be stale — hard refresh.
+
+---
+
+## 12. Full schedule-tour drawer (Phase 8D)
+
+Always-available drawer for the real product flow. Lives on:
+- **`/dashboard/tours`** — header **Schedule Tour** button opens the drawer with the venue's full lead list.
+- **`/dashboard/leads`** → click any lead → right-side detail panel → **Schedule tour…** button opens the drawer prefilled with the chosen lead.
+
+Both entry points POST the same `/api/tours` payload (existing Phase 6B route, SALES_ROLES + billing-gated):
+
+```json
+{
+  "lead_id": "<uuid>",
+  "scheduled_at": "<ISO datetime, UTC>",
+  "duration_minutes": 60,
+  "location_notes": "<string|null, max 500 chars>"
+}
+```
+
+The drawer defaults match Phase 8C's quick-schedule helper: next Tuesday at 10:00 local time, 60-minute duration, empty notes (or `"Scheduled from lead detail."` when launched from the lead panel).
+
+### 12.1 The full flow
+
+1. Open `http://localhost:3000/dashboard/tours`.
+2. Click **Schedule Tour** in the page header. Drawer opens.
+3. Pick a lead from the dropdown — sorted by `created_at desc`, capped at 100.
+4. Adjust date / time / duration. Type a location note (optional).
+5. Click **Schedule tour**. Spinner → green "Tour scheduled" banner → drawer auto-closes after ~700ms.
+6. The new tour appears in the calendar + Upcoming Tours list — via `RealtimeToursLayer` (no manual refresh).
+
+### 12.2 From the lead detail panel
+
+1. Open `/dashboard/leads`. Click any lead card.
+2. In the right drawer, click **Schedule tour…** (always visible, regardless of stage — the API itself decides what's valid).
+3. The dialog opens with the lead pre-selected (single-item picker). Operator can't swap from here — go to `/dashboard/tours` for cross-lead scheduling.
+4. Defaults + submit identical to §12.1.
+
+> The demo-only **QuickScheduleTourButton** (Phase 8C) stays in the LeadDetailPanel but only renders when `NEXT_PUBLIC_DEMO_BUTTON=1`. Production users see only the full drawer.
+
+### 12.3 What's happening under the hood
+
+| Surface | Behavior |
+|---|---|
+| `ScheduleTourDrawer` | Radix Dialog. Lead picker is a Radix Select; date/time/duration are HTML inputs; notes are a styled `<textarea>`. Combines date + time into a local Date and serializes with `.toISOString()` for an unambiguous UTC wire format. |
+| `TourSchedulingClient` | Tiny client wrapper that owns the drawer's open state. Mounted from the server-rendered tours page so the page stays a Server Component. |
+| Tours page server fetch | Loads `id, name, email, stage` for the 100 most recent leads in addition to the existing tours fetch. Passes them into `TourSchedulingClient`. |
+| LeadDetailPanel | Renders `ScheduleTourDrawer` alongside the panel. Drawer's `leads` array is a single entry — the active lead. Drawer's `defaultNotes` is `"Scheduled from lead detail."`. |
+| Realtime | Submit → `router.refresh()` + `RealtimeToursLayer` (Phase 8C) → calendar + Upcoming Tours both update without a hard refresh. |
+
+### 12.4 Troubleshooting
+
+**Drawer submit returns 401** — operator's Supabase session expired. Sign back in.
+
+**Drawer submit returns 403** — operator's role on the venue isn't in `SALES_ROLES` (`owner | admin | sales_manager | coordinator`). Re-check `venue_members`.
+
+**Drawer submit returns 402 `subscription_required`** — `BILLING_GATE_ENABLED=1` AND the venue's subscription isn't `active`/`trialing`. Flip the gate off for demos, or seed the subscription:
+```bash
+SEED_SUBSCRIPTION_STATUS=trialing npm run billing:seed
+```
+
+**Drawer submit returns 400 `validation_failed`** — body schema rejected. Most common cause: date+time combined into an invalid Date. Check the operator's browser locale; format inputs through the date/time pickers rather than typing manually.
+
+**Tour doesn't appear after submit** — `router.refresh()` ran (drawer success banner showed) but the calendar didn't update. Either:
+- `tours` table isn't in `supabase_realtime` publication (verify with `select tablename from pg_publication_tables where pubname='supabase_realtime' and tablename='tours';`).
+- The tour was created with a `scheduled_at` outside the current month window — the page only loads the current month's rows. Navigate to the right month (a future phase will add month navigation).
+
+**Lead picker is empty** — no leads exist for this venue. Either submit a widget inquiry (Phase 8B `Send test inquiry` button) or run `npm run demo:seed`.
+
+---
+
 ## 11. Variant inquiries + quick tour scheduling (Phase 8C)
 
 Three additions on top of the Phase 8B live-demo loop:
@@ -358,6 +528,102 @@ Restart `npm run dev`. The Leads page header will show a "Send test inquiry" but
 ### 10.5 Demo cleanup
 
 The button's payload uses `demo+live-<timestamp>-<rand>@venuerise.test`. The Phase 8A `npm run demo:reset` matches `demo+%@venuerise.test` so these get cleaned up alongside seeded fixtures.
+
+---
+
+## 11. Rescheduling tours from the inbox (Phase 8F)
+
+The `/dashboard/inbox/[leadId]` view now renders a **TourLifecycleStrip** between the conversation header and the message thread. It surfaces the most relevant tour for the lead and a one-click action so an operator can schedule, reschedule, or edit a tour without leaving the conversation.
+
+The "most relevant" pick is server-resolved in `app/(dashboard)/dashboard/inbox/[leadId]/page.tsx::pickRelevantTour`:
+
+1. Prefer any **upcoming** `scheduled` or `confirmed` tour (`scheduled_at > now`).
+2. Otherwise fall back to the most recent past tour (any status) so the operator sees "last tour completed / cancelled / no-show".
+3. If the lead has never had a tour, the strip shows "No tour scheduled yet" with a **Schedule tour** button.
+
+The strip reuses the Phase 8D `ScheduleTourDrawer` and the Phase 8E `EditTourDrawer` verbatim — no duplicate scheduling logic anywhere. Both drawers call `router.refresh()` on success, so the strip re-fetches the relevant tour and the badge / date line update without a manual reload.
+
+### 11.1 Demo script
+
+1. Open `/dashboard/inbox` and click any conversation that doesn't yet have a tour.
+2. Strip says **"No tour scheduled yet"** → click **Schedule tour**. The drawer's lead picker is pre-filled with the active lead.
+3. Pick a future date/time + duration → submit. Strip flips to show the upcoming tour with a blue "Scheduled" badge.
+4. Click **Edit / reschedule** → drawer opens with the existing tour. Change the time, save. Strip updates.
+5. Open the drawer again → set status to `cancelled` and save. Strip now shows **"Last tour"** with a slate "Cancelled" badge and a **Schedule another tour** button.
+
+### 11.2 Troubleshooting
+
+- **Strip shows the wrong tour** → check the `tours` table for this lead. The strip prefers an upcoming `scheduled` or `confirmed` row. If multiple are upcoming, it picks the soonest. Past rows ordered desc by `scheduled_at`.
+- **Drawer says "Tour not found" after edit** → an admin or another operator may have deleted the tour. Close the drawer; the strip will re-fetch on next render.
+- **Date picker shows past dates** → that's intentional for the edit drawer (you may legitimately need to backdate a completed tour). The schedule drawer rejects past dates at submit time.
+
+---
+
+## 12. Bulk cancel tours for a date range (Phase 8F)
+
+Operators can mass-cancel every future `scheduled|confirmed` tour for a venue in a date window without hand-running SQL. Useful when a venue closes for a holiday, weather event, or any incident that forces a sweeping reschedule.
+
+**Endpoint**: `POST /api/admin/tours/bulk-cancel`
+
+**Auth**:
+- `requireAdmin()` — caller must be owner/admin of some venue.
+- If `venue_id` is supplied and differs from the caller's primary venue, `requireVenueRole(ADMIN_ROLES)` re-verifies access. Cross-tenant attempts collapse to `404` so admins can't enumerate other venues by guessing UUIDs.
+- Rate-limited per caller (key `admin:tours-bulk-cancel:{userId}`).
+
+**Body**:
+
+```json
+{
+  "venue_id": "<uuid, optional — defaults to caller's primary venue>",
+  "from_date": "YYYY-MM-DD",
+  "to_date":   "YYYY-MM-DD",
+  "reason":    "Optional free-text, max 240 chars"
+}
+```
+
+**Validation**:
+- `from_date <= to_date` (else 400 `from_after_to`).
+- Range `<= 90` days inclusive (else 400 `range_too_large`).
+- Only rows where `status ∈ {scheduled, confirmed}` AND `scheduled_at > now()` are touched. Completed / cancelled / no-show / past rows are left alone — we never retroactively rewrite history.
+- If `reason` is present it gets written to `tours.outcome` so the EditTourDrawer surfaces it.
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "venue_id": "<uuid>",
+  "cancelled_count": 12,
+  "from_date": "2026-07-04",
+  "to_date":   "2026-07-06"
+}
+```
+
+**Example**:
+
+```bash
+curl -i -X POST http://localhost:3000/api/admin/tours/bulk-cancel \
+  -H "Cookie: <copy from your logged-in browser session>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from_date": "2026-07-04",
+    "to_date":   "2026-07-06",
+    "reason":    "Fire damage — venue closed for restoration"
+  }'
+```
+
+**Verify**:
+
+```sql
+select id, scheduled_at, status, outcome
+from public.tours
+where venue_id = '<uuid>'
+  and scheduled_at >= '2026-07-04'
+  and scheduled_at <  '2026-07-07'
+order by scheduled_at;
+```
+
+All rows should have `status = 'cancelled'` and (if a reason was supplied) `outcome` set to that string. The cancellations propagate through the Phase 8C realtime layer so any open dashboard tab sees the calendar update within seconds.
 
 ---
 

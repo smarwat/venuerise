@@ -47,11 +47,15 @@ interface HealthBody {
     dunning: 'mounted'
     recovery_email: 'mounted'
     admin_clear_dunning: 'mounted'
+    tour_auto_pause: 'mounted'
   }
   demo: {
     seed: 'mounted'
     realtime: 'mounted'
     tour_quick_schedule: 'mounted'
+    tour_drawer: 'mounted'
+    tour_edit: 'mounted'
+    tour_reschedule_from_inbox: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -70,8 +74,9 @@ interface HealthBody {
  *   - Phase 7I: 9 (added billing-events/[id]/replay)
  *   - Phase 7N: 10 (added billing-events/[id]/clear-dunning)
  *   - Phase 8A: 12 (added demo/seed + demo/reset)
+ *   - Phase 8F: 13 (added tours/bulk-cancel)
  */
-const ADMIN_ENDPOINT_COUNT = 12
+const ADMIN_ENDPOINT_COUNT = 13
 
 const startedAt = Date.now()
 
@@ -213,6 +218,11 @@ export async function GET(request: Request) {
       // 7N — operator escape hatch: POST /api/admin/billing-events/[id]/clear-dunning
       // wipes prefix-matched entries from subscriptions.metadata.dunning_sent.
       admin_clear_dunning: 'mounted',
+      // 8F — past-due tour auto-pause cron `billing-tour-auto-pause` is
+      // registered in allJobFunctions; runs daily at 6pm UTC. Cancels
+      // future scheduled/confirmed tours for venues past_due > 7 days
+      // and stamps subscriptions.metadata.tours_paused_at/reason/count.
+      tour_auto_pause: 'mounted',
     },
     // Phase 8A — demo seed + reset admin surface.
     // Phase 8B — realtime layers on /dashboard/leads + /dashboard/inbox.
@@ -221,6 +231,17 @@ export async function GET(request: Request) {
       realtime: 'mounted',
       // 8C — variant inquiries + quick-schedule-tour + tours realtime.
       tour_quick_schedule: 'mounted',
+      // 8D — full ScheduleTourDrawer mounted on /dashboard/tours +
+      // LeadDetailPanel. Always available regardless of NEXT_PUBLIC_DEMO_BUTTON.
+      tour_drawer: 'mounted',
+      // 8E — EditTourDrawer + click-to-edit + Mark-confirmed inline +
+      // URL-based ?month=YYYY-MM navigation on /dashboard/tours. All
+      // production UX, no demo flag required.
+      tour_edit: 'mounted',
+      // 8F — TourLifecycleStrip on /dashboard/inbox/[leadId] surfaces
+      // the most relevant tour with a one-click schedule / edit /
+      // reschedule action. Reuses the 8D/8E drawers verbatim.
+      tour_reschedule_from_inbox: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

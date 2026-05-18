@@ -3,8 +3,31 @@ import { notFound } from 'next/navigation'
 import ConversationList from '@/components/dashboard/ConversationList'
 import ConversationThread from '@/components/dashboard/ConversationThread'
 import MessageComposer from '@/components/dashboard/MessageComposer'
+import TourLifecycleStrip from '@/components/dashboard/inbox/TourLifecycleStrip'
 import { Badge } from '@/components/dashboard/ui/Badge'
 import { MoreHorizontal, Star, Share2 } from 'lucide-react'
+
+/**
+ * Phase 8F — pick the most relevant tour for a lead.
+ *
+ * Priority: an upcoming `scheduled` or `confirmed` tour wins over any
+ * past row. If there's no upcoming, return the most recent past tour
+ * (any status) so the strip can show "last tour completed/cancelled".
+ * Falls back to null when the lead has never had a tour.
+ */
+function pickRelevantTour(rows: Array<Record<string, unknown>>) {
+  if (rows.length === 0) return null
+  const now = Date.now()
+  const upcomingOpen = rows.find((t) => {
+    const status = t.status as string
+    if (!['scheduled', 'confirmed'].includes(status)) return false
+    return new Date(t.scheduled_at as string).getTime() > now
+  })
+  if (upcomingOpen) return upcomingOpen
+  // Rows arrive ordered by scheduled_at desc, so the first one is the
+  // latest past tour regardless of status.
+  return rows[0]
+}
 
 function scoreBadge(score: number) {
   if (score >= 80) return 'score_high' as const
@@ -37,6 +60,21 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
   const conversations = conversationsRes.data ?? []
   const lead = leadRes.data as Record<string, unknown> | null
   if (!lead) notFound()
+
+  // Phase 8F — fetch the most relevant tour for this lead. We pull up to
+  // 10 rows ordered desc so `pickRelevantTour` can prefer an upcoming
+  // scheduled/confirmed one without needing two round-trips.
+  const tourRows = venueId
+    ? (await supabase
+        .from('tours')
+        .select('id, lead_id, scheduled_at, duration_minutes, location_notes, status')
+        .eq('venue_id', venueId)
+        .eq('lead_id', leadId)
+        .order('scheduled_at', { ascending: false })
+        .limit(10)
+      ).data ?? []
+    : []
+  const relevantTour = pickRelevantTour(tourRows as Array<Record<string, unknown>>)
 
   const conv = conversations.find((c) => {
     const cl = c as Record<string, unknown>
@@ -81,6 +119,30 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
             </button>
           </div>
         </div>
+
+        {/* Phase 8F — tour lifecycle strip. Renders above the conversation
+            so the operator sees tour status at a glance + a one-click
+            schedule/edit button. */}
+        <TourLifecycleStrip
+          lead={{
+            id: leadId,
+            name: lead.name as string,
+            email: (lead.email as string | null) ?? null,
+            stage: (lead.stage as string | null) ?? null,
+          }}
+          tour={
+            relevantTour
+              ? {
+                  id: relevantTour.id as string,
+                  lead_id: relevantTour.lead_id as string,
+                  scheduled_at: relevantTour.scheduled_at as string,
+                  duration_minutes: (relevantTour.duration_minutes as number | null) ?? null,
+                  location_notes: (relevantTour.location_notes as string | null) ?? null,
+                  status: (relevantTour.status as string | null) ?? null,
+                }
+              : null
+          }
+        />
 
         {conv ? (
           <>

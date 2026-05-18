@@ -874,6 +874,85 @@ Our webhook handler treats a redelivery as: insert hits the UNIQUE on `stripe_ev
 
 If you need to **force a re-sync**, change something Stripe-side (e.g. add metadata, toggle cancel-at-period-end) so Stripe emits a fresh `customer.subscription.updated` event with a NEW `stripe_event_id`. That will land as a new audit row and run the handler.
 
+## 7b. Tour auto-pause for past_due venues (Phase 8F)
+
+VenueRise runs a daily Inngest cron (`billing-tour-auto-pause`, schedule `0 18 * * *`) that cancels every future `scheduled|confirmed` tour for any venue whose subscription has been `past_due` for more than 7 days. This is the operational counterpart to the Phase 7K dunning cron — by the time we reach 7 days past due, the venue has already received their three dunning emails, so further outreach is unlikely to recover the payment.
+
+### How it picks venues
+
+```sql
+-- The candidate query (logical equivalent — actual code is in
+-- lib/jobs/functions/billing-tour-auto-pause.ts).
+select id, venue_id, status, current_period_end, metadata
+from public.subscriptions
+where status = 'past_due'
+  and current_period_end is not null
+  and current_period_end < now() - interval '7 days'
+order by current_period_end asc
+limit 200;
+```
+
+The cron then filters in JS to skip any row whose `metadata->>'tours_paused_at'` is already set — so a second run on the same day is a no-op for venues we've already paused.
+
+### What it writes
+
+For each eligible venue:
+
+1. **Cancels future tours** — bulk `UPDATE tours SET status='cancelled' WHERE venue_id=$ AND scheduled_at > now() AND status IN ('scheduled','confirmed')`. Past tours and already-cancelled / completed / no-show rows are left untouched.
+2. **Stamps the subscription** — sets three scalar fields on `subscriptions.metadata`:
+   - `tours_paused_at` — ISO timestamp of the pause
+   - `tours_paused_reason` — always `"past_due_7_days"` for this cron
+   - `tours_paused_count` — how many rows the cancellation touched
+
+### Why a direct UPDATE (not the Phase 7L atomic-append RPC)
+
+These are scalar metadata fields, not array entries. The webhook-vs-cron race window is small (the cron runs nightly, the webhook lands on a Stripe event), and the worst case is one missed pause stamp that the next nightly pass will reapply. The Phase 7L RPC is reserved for cases where multiple writers genuinely contend on the same array.
+
+### Manual verification
+
+After the cron runs:
+
+```sql
+-- venues that got auto-paused in the last 24h
+select s.venue_id,
+       s.metadata->>'tours_paused_at'    as paused_at,
+       s.metadata->>'tours_paused_reason' as reason,
+       s.metadata->>'tours_paused_count'  as paused_count
+from public.subscriptions s
+where s.metadata ? 'tours_paused_at'
+  and (s.metadata->>'tours_paused_at')::timestamptz > now() - interval '24 hours';
+
+-- confirm the tour cancellations match the recorded count
+select venue_id, count(*) as cancelled_today
+from public.tours
+where status = 'cancelled'
+  and updated_at > now() - interval '24 hours'
+group by venue_id;
+```
+
+The two counts per venue should agree (modulo any operator-initiated cancels in the same window).
+
+### Run it manually
+
+For staging / debugging, hit the Inngest dashboard and trigger `billing-tour-auto-pause` directly. Or in a Node REPL with service-role creds:
+
+```ts
+import { runAutoPauseScan } from '@/lib/jobs/functions/billing-tour-auto-pause'
+const summary = await runAutoPauseScan()
+console.log(summary)
+// → { scanned, paused, cancelled_tours, skipped, failed }
+```
+
+### Recovery / unpause
+
+This cron has no automatic unpause. When billing recovers (Stripe webhook flips status back to `active` or `trialing`), the venue's tours stay cancelled. Operators who want to restore them should ask the venue to re-schedule via the inbox lifecycle strip (Phase 8F), or drop the `tours_paused_at` key from metadata and re-insert tours manually.
+
+### Logging + Sentry
+
+- Every per-venue action logs structured fields: `venueId`, `subscriptionId`, `periodEnd`, `cancelledCount`, `pausedAtIso`.
+- Per-venue failures (cancel UPDATE failed / metadata UPDATE failed) get `captureJobError('billing-tour-auto-pause', err, { venueId })` and increment `failed` in the summary — they do NOT abort the batch, so one bad venue can't block the rest.
+- The scan summary `{ scanned, paused, cancelled_tours, skipped, failed }` is logged at INFO level on completion. Set up an Inngest run alert if `failed > 0` for two consecutive runs.
+
 ## 7. Adding a new write route
 
 When you add a new mutation endpoint, you MUST:
