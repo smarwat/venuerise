@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { signInternalRequest, INTERNAL_SIGNATURE_HEADER } from '@/lib/auth/internal-hmac'
+import { enqueueLeadCreated } from '@/lib/jobs/queue'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -152,65 +152,26 @@ export async function POST(request: NextRequest) {
     console.log('[widget] lead created:', leadData.id, 'conv:', conversationId, 'venue:', venue.name)
   }
 
-  // 6. Trigger AI qualification via signed internal call (NOT user-session auth).
-  //    Fire-and-forget — the response is returned to the visitor immediately.
-  //    This is a temporary bridge until a job queue replaces it.
-  triggerQualificationInternal(leadData.id, conversationId)
+  // 6. Enqueue AI qualification on the job runtime (Inngest in prod, local
+  //    setImmediate in dev). The response below returns immediately — the
+  //    visitor never waits for Anthropic, Supabase writes, or follow-up
+  //    scheduling. We await `enqueueLeadCreated` only because Inngest's
+  //    `.send()` is itself a network call; the actual qualification work
+  //    runs in the background regardless.
+  try {
+    await enqueueLeadCreated({
+      lead_id: leadData.id,
+      conversation_id: conversationId,
+    })
+  } catch (err) {
+    // Even if enqueue fails, the lead is in the DB — the visitor sees success.
+    // A monitor on ai_actions / Inngest dashboard will catch the gap.
+    if (isDev) console.error('[widget] enqueue failed (lead still saved):', err)
+    else console.error('[widget] enqueue failed')
+  }
 
   return NextResponse.json(
     { success: true, lead_id: leadData.id, conversation_id: conversationId },
     { status: 201 }
   )
-}
-
-/**
- * Fire-and-forget signed POST to /api/ai/qualify. Errors are logged in dev
- * but never block the widget response. When this is replaced by a job queue,
- * the only change here will be `await queue.enqueue('qualify-lead', payload)`.
- */
-function triggerQualificationInternal(leadId: string, conversationId: string | null) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-
-  const payload = {
-    lead_id: leadId,
-    conversation_id: conversationId,
-    source: 'internal_widget' as const,
-  }
-
-  let signature: string
-  try {
-    signature = signInternalRequest(payload)
-  } catch (err) {
-    // Missing INTERNAL_API_SECRET — surface loudly in dev so the operator
-    // notices the AI pipeline is dead in the water.
-    if (isDev) {
-      console.error(
-        '[widget] cannot sign internal qualify request — INTERNAL_API_SECRET missing or invalid:',
-        err instanceof Error ? err.message : err
-      )
-    } else {
-      console.error('[widget] internal signing failed')
-    }
-    return
-  }
-
-  fetch(`${appUrl}/api/ai/qualify`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      [INTERNAL_SIGNATURE_HEADER]: signature,
-    },
-    body: JSON.stringify(payload),
-  })
-    .then(async (res) => {
-      if (!res.ok && isDev) {
-        const text = await res.text().catch(() => '<unreadable>')
-        console.error('[widget] qualify trigger returned', res.status, text)
-      }
-    })
-    .catch((err) => {
-      // Network/dns failure. Log but never throw.
-      if (isDev) console.error('[widget] qualify trigger network error:', err)
-      else console.error('[widget] qualify trigger failed')
-    })
 }
