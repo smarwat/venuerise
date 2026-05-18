@@ -30,9 +30,18 @@ interface HealthBody {
   jobs: 'inngest' | 'local-fallback'
   upstash: RateLimitStatus
   sentry: 'configured' | 'missing'
+  admin: { mounted: true; endpoints: number }
   uptime_ms: number
   ts: string
 }
+
+/**
+ * Phase 5E admin surface. Bumped manually when /api/admin/* routes change.
+ * Kept as a constant rather than a runtime filesystem probe so a monitor
+ * checking this value will alert if a new admin endpoint isn't mounted
+ * (e.g. accidentally excluded from a build).
+ */
+const ADMIN_ENDPOINT_COUNT = 6
 
 const startedAt = Date.now()
 
@@ -94,6 +103,7 @@ export async function GET(request: Request) {
     jobs,
     upstash,
     sentry,
+    admin: { mounted: true, endpoints: ADMIN_ENDPOINT_COUNT },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }
