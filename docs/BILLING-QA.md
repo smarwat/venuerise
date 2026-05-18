@@ -264,6 +264,71 @@ curl -H "Cookie: sb-...-auth-token=..." \
 
 The detail endpoint is the only product surface that returns Stripe payloads. Stripe payloads contain customer email + billing-address fields. Do not screenshot or paste responses into shared channels.
 
+## 7c. Trial reminder cron (Phase 7H)
+
+Daily Inngest function `billing-trial-reminder`, cron `0 14 * * *` (2pm UTC ≈ 9am ET / 8am CT depending on DST). For every `subscriptions` row whose `trial_end` lands on (now + 3 days, UTC) and hasn't been reminded yet, the owner gets a "Your VenueRise trial ends in 3 days" email.
+
+**Idempotency** lives on `subscriptions.metadata.reminders_sent` (jsonb array). Each entry has shape:
+```json
+{
+  "kind": "trial_3d",
+  "key": "trial_3d:<venue_id>:<trial_end YYYY-MM-DD>",
+  "sent_at": "2026-05-18T14:00:23.111Z",
+  "provider": "resend",
+  "message_id": "..."
+}
+```
+
+The key includes the trial_end date, so:
+- A second cron run on the same day finds the key already present and skips (cron drift safe).
+- Extending a trial (new `trial_end`) generates a NEW key and re-arms the reminder.
+- A venue with multiple subscription rows gets at most one reminder per row per date.
+
+**Delivery honesty**: the reminder entry is only appended when `sendEmail({...}).delivered === true`. Console-fallback (no Resend) does NOT flip the flag — the next run retries once Resend is wired. Provider errors also don't flip the flag; they log + Sentry-capture and continue the batch.
+
+### Candidate query
+
+```sql
+select id, venue_id, status, trial_end, metadata
+from public.subscriptions
+where status = 'trialing'
+  and trial_end::date = (now() + interval '3 days')::date;
+```
+
+### Audit query — who's been reminded?
+
+```sql
+select id, venue_id, metadata->'reminders_sent' as reminders_sent
+from public.subscriptions
+where metadata ? 'reminders_sent';
+```
+
+### Manual trigger (Inngest dev / dashboard)
+
+Local dev:
+```bash
+INNGEST_DEV=1 npm run dev
+# in a second shell
+npx inngest-cli@latest dev
+```
+Then open the Inngest dev UI (default `http://localhost:8288`) → Functions → `billing-trial-reminder` → "Invoke".
+
+Production:
+Inngest dashboard → Apps → your app → Functions → `billing-trial-reminder` → "Invoke".
+
+The function returns `{ scanned, sent, skipped, failed }`. `skipped` covers both "already reminded" and "no owner email"; `failed` covers provider errors. Healthy steady-state: most runs return `{ scanned: 0 }` because there usually aren't venues hitting the exact-3-days mark.
+
+### What to check when no email sends
+
+Full diagnostic playbook: [RUNBOOK.md §2.4d](./RUNBOOK.md). The short version:
+1. Inngest function registered (`/api/health` → `billing.trial_reminder: "mounted"`).
+2. Today's run shows green in Inngest dashboard.
+3. Candidate SQL returns the venue.
+4. The metadata key for today isn't already present.
+5. Owner row exists in `venue_members` with role=owner.
+6. Owner has an email in `auth.users`.
+7. Resend is `configured` (not console-fallback) in production.
+
 ## 7a. Audit log inspection (Phase 7F)
 
 Every Stripe webhook event is recorded in `public.billing_events_log` before dispatch — see [SECURITY.md §10e](./SECURITY.md) for the safety posture. The most useful operator queries:

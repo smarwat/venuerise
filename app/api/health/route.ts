@@ -42,6 +42,7 @@ interface HealthBody {
     webhook: 'configured' | 'missing'
     gate: 'enabled' | 'disabled'
     events_log: 'mounted'
+    trial_reminder: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -174,13 +175,17 @@ export async function GET(request: Request) {
     onboarding: { api: 'mounted' },
     // Phase 6D + 6E — team API + dashboard surface presence signals.
     team: { invitations: 'mounted', dashboard: 'mounted' },
-    // Phase 7C + 7D + 7F — billing surface. Env-presence + compile-time
-    // presence of the audit log code path. Never pings Stripe.
+    // Phase 7C + 7D + 7F + 7H — billing surface. Env presence + compile-time
+    // presence of the audit log / trial reminder code paths. Never pings Stripe.
     billing: {
       stripe: process.env.STRIPE_SECRET_KEY ? 'configured' : 'missing',
       webhook: process.env.STRIPE_WEBHOOK_SECRET ? 'configured' : 'missing',
       gate: process.env.BILLING_GATE_ENABLED === '1' ? 'enabled' : 'disabled',
       events_log: 'mounted',
+      // 7H — the Inngest cron is registered in allJobFunctions; we surface
+      // it as a compile-time mounted flag here. Operators verify the
+      // function appears in the Inngest dashboard's function list.
+      trial_reminder: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

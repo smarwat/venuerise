@@ -246,6 +246,53 @@ Common filters on the list endpoint:
 | `venue_id=<uuid>` | `?venue_id=...` | admin of multiple venues, target a specific one (you must hold ADMIN_ROLES on it) |
 | `limit=<N>` | `?limit=200` | max 200; default 50 |
 
+### 2.4d Trial reminder didn't send (Phase 7H)
+
+The trial reminder is an Inngest cron (`billing-trial-reminder`) on schedule `0 14 * * *` (daily 2pm UTC). It selects venues whose `trial_end` falls on (now + 3 days, UTC) and emails the owner once. Idempotency lives on `subscriptions.metadata.reminders_sent` — no new tables.
+
+**Symptom**: a venue reports they didn't get a trial-ending email.
+
+1. **Is the function even registered?**
+   - `curl $APP/api/health | jq .billing.trial_reminder` → should be `"mounted"`.
+   - Inngest dashboard → Apps → your app → Functions → confirm `billing-trial-reminder` appears with schedule `0 14 * * *`.
+2. **Did today's run fire?**
+   - Inngest dashboard → Functions → `billing-trial-reminder` → Runs. The most recent successful run was today at 14:00 UTC.
+   - If no run today: check `INNGEST_SIGNING_KEY` / app sync (covered in §2.6).
+3. **Did the venue match the candidate query?**
+   ```sql
+   select id, venue_id, status, trial_end, metadata
+   from public.subscriptions
+   where status='trialing'
+     and trial_end::date = (now() + interval '3 days')::date;
+   ```
+   - If empty: the venue's `trial_end` isn't exactly 3 days out (UTC). Stripe trials shift +/- a day around DST/timezones; consider extending manually via `update subscriptions set trial_end = ... where id = ...`.
+4. **Was the reminder already recorded as sent?**
+   ```sql
+   select id, venue_id, metadata->'reminders_sent' as reminders_sent
+   from public.subscriptions
+   where venue_id='<venue id>' and metadata ? 'reminders_sent';
+   ```
+   Each row in `reminders_sent` has shape `{ kind, key, sent_at, provider, message_id? }`. The key is `trial_3d:<venue_id>:<trial_end YYYY-MM-DD>` — if it's present for today's trial_end, the cron has already sent (probably to the email below).
+5. **Does the owner have a usable email?**
+   ```sql
+   select vm.user_id
+   from public.venue_members vm
+   where vm.venue_id='<venue id>' and vm.role='owner'
+   order by vm.created_at asc limit 1;
+   ```
+   Then look up that user's email in `auth.users` via Supabase dashboard. If null, the cron logs `jobs.billing_trial_reminder.skip_no_owner_email`.
+6. **Is Resend configured?**
+   - `curl $APP/api/health | jq .email` → should be `"configured"` in prod. If `"console-fallback"`, the cron logged the email to stdout and did NOT mark the reminder as sent (so it will retry once Resend is configured).
+7. **Manually retrigger** from Inngest UI: Functions → `billing-trial-reminder` → "Invoke". The function will scan again and pick up anyone missed.
+
+**To force a fresh send to a venue that's already received the reminder** (rare — usually you don't want this): delete that row's `reminders_sent` entry:
+```sql
+update public.subscriptions
+set metadata = metadata - 'reminders_sent'
+where id='<subscription id>';
+```
+Next cron run will re-send. ONLY do this when an operator has confirmed the original email genuinely didn't arrive (Resend bounce, etc.).
+
 ### 2.5 Stripe webhook failing or checkout returns 503
 
 Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.

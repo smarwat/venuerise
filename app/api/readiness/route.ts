@@ -54,6 +54,8 @@ interface ReadinessChecks {
   billing_gate: 'enabled' | 'disabled'
   /** Phase 7F — does the audit table exist + accept reads? */
   billing_events_log: Check
+  /** Phase 7H — compile-time mounted flag for the trial reminder cron. */
+  billing_trial_reminder: 'mounted'
 }
 
 const MIN_INTERNAL_SECRET_LEN = 32
@@ -184,6 +186,9 @@ export async function GET(request: Request) {
       billing_gate: checkBillingGate(),
       // Phase 7F — audit table existence check (required in production).
       billing_events_log: await checkBillingEventsLog(),
+      // Phase 7H — informational; the Inngest function exists at build time
+      // and its production health is observable in the Inngest dashboard.
+      billing_trial_reminder: 'mounted',
     }
   } catch (err) {
     log.error({ err, route: '/api/readiness' }, 'readiness.unexpected_throw')
@@ -196,11 +201,15 @@ export async function GET(request: Request) {
     )
   }
 
-  // Exclude `billing_gate` from the failure set — it's a string flag, not
-  // a check that needs to pass for prod traffic.
+  // Exclude `billing_gate` + `billing_trial_reminder` from the failure set —
+  // they're informational string flags, not checks that need to pass.
+  const INFO_KEYS = new Set<keyof ReadinessChecks>([
+    'billing_gate',
+    'billing_trial_reminder',
+  ])
   const failed = (Object.entries(checks) as Array<[keyof ReadinessChecks, Check | string]>)
     .filter(([k, v]) =>
-      k !== 'billing_gate' && !isPassing(v as Check)
+      !INFO_KEYS.has(k) && !isPassing(v as Check)
     )
     .map(([k]) => k)
 
