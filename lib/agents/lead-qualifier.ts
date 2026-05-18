@@ -1,4 +1,5 @@
 import { anthropic, MODEL } from '@/lib/anthropic'
+import { withAnthropicRetry } from '@/lib/anthropic-retry'
 import { log } from '@/lib/log'
 
 interface VenueContext {
@@ -35,7 +36,8 @@ export interface QualificationResult {
 
 export async function qualifyLead(
   lead: LeadContext,
-  venue: VenueContext
+  venue: VenueContext,
+  requestId?: string
 ): Promise<QualificationResult> {
   const systemPrompt = `You are an expert lead qualification AI for ${venue.name}, a wedding venue.
 
@@ -71,29 +73,30 @@ Message/Notes: ${lead.notes ?? 'none'}
 
 Venue Style: ${venue.style_tags.join(', ') || 'general'}`
 
-  const start = Date.now()
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 500,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }],
-  })
+  // Anthropic call now flows through the retry wrapper. The wrapper owns
+  // `ai.anthropic.started/completed/retry/failed` lines + Sentry capture on
+  // terminal failure — so we no longer log latency/tokens here.
+  const response = await withAnthropicRetry(
+    (signal) =>
+      anthropic.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 500,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMessage }],
+        },
+        { signal }
+      ),
+    { agent: 'lead-qualifier', requestId, model: MODEL }
+  )
 
-  const elapsed = Date.now() - start
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
 
   try {
     // Strip possible markdown fences
     const clean = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
     const result = JSON.parse(clean) as QualificationResult
-    log.info(
-      {
-        score: result.score,
-        latencyMs: elapsed,
-        tokens: response.usage.input_tokens + response.usage.output_tokens,
-      },
-      'ai.lead_qualifier.completed'
-    )
+    log.info({ score: result.score, requestId }, 'ai.lead_qualifier.completed')
     return result
   } catch {
     // Intentionally do NOT log the raw model output — it may contain echoed

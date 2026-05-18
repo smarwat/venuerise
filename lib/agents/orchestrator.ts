@@ -24,7 +24,9 @@ export async function handleNewLead(
   leadId: string,
   venueId: string,
   /** Optional: reuse a conversation pre-created by the caller (e.g. widget). */
-  existingConversationId?: string | null
+  existingConversationId?: string | null,
+  /** Optional Phase 5B request id — threaded into agent calls + Sentry tags. */
+  requestId?: string
 ) {
   const supabase = createServiceClient()
   const start = Date.now()
@@ -78,7 +80,8 @@ export async function handleNewLead(
         base_price: venue.base_price as number | null,
         style_tags: (venue.style_tags as string[]) ?? [],
         ai_persona_name: venue.ai_persona_name as string,
-      }
+      },
+      requestId
     )
 
     // 2. Update lead with score, urgency, and potentially extracted data
@@ -193,7 +196,8 @@ export async function handleNewLead(
       },
       [],
       kb,
-      true
+      true,
+      requestId
     )
 
     await supabase.from('messages').insert({

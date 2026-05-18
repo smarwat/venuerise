@@ -1,4 +1,5 @@
 import { anthropic, MODEL } from '@/lib/anthropic'
+import { withAnthropicRetry } from '@/lib/anthropic-retry'
 
 interface Lead {
   id: string
@@ -33,7 +34,8 @@ export async function generateFollowUpMessage(
   lead: Lead,
   venue: Venue,
   touchNumber: number,
-  previousMessages: { role: string; content: string }[]
+  previousMessages: { role: string; content: string }[],
+  requestId?: string
 ): Promise<FollowUpMessage> {
   const tones: Record<number, string> = {
     1: 'Warm intro — excited to connect, reference their specific inquiry details',
@@ -61,12 +63,19 @@ Rules:
     ? `Previous conversation:\n${previousMessages.slice(-4).map((m) => `${m.role}: ${m.content}`).join('\n')}`
     : `Lead info: ${firstName}, ${lead.guest_count ?? 'N/A'} guests, event date: ${lead.event_date ?? 'TBD'}, budget: ${lead.budget ? `$${lead.budget}` : 'TBD'}`
 
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 400,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: `Write touch #${touchNumber} for lead ${firstName}.\n\n${context}` }],
-  })
+  const response = await withAnthropicRetry(
+    (signal) =>
+      anthropic.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 400,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: `Write touch #${touchNumber} for lead ${firstName}.\n\n${context}` }],
+        },
+        { signal }
+      ),
+    { agent: 'followup', requestId, model: MODEL }
+  )
 
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
   try {

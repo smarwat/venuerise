@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
   // 3. Run orchestrator
   reqLog.info({ leadId: lead_id, venueId }, 'ai.qualify.started')
   try {
-    const result = await handleNewLead(lead_id, venueId, conversation_id ?? null)
+    const result = await handleNewLead(lead_id, venueId, conversation_id ?? null, requestId)
     reqLog.info({ leadId: lead_id, venueId }, 'ai.qualify.completed')
     return respond(NextResponse.json(result))
   } catch (err) {

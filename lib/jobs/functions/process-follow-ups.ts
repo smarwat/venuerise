@@ -139,7 +139,8 @@ export async function runProcessSingleFollowUp(
         ai_persona_name: venue.ai_persona_name as string,
       },
       fu.touch_number,
-      history
+      history,
+      requestId
     )
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err)

@@ -69,8 +69,9 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
   }
 
   // 3. Hand off to the orchestrator. It's idempotent: a second run for the
-  //    same conversation will exit early and not call Anthropic again.
-  const result = await handleNewLead(lead.id, venue.id, conversation_id ?? null)
+  //    same conversation will exit early and not call Anthropic again. The
+  //    request id is threaded through so Anthropic call lines join the trace.
+  const result = await handleNewLead(lead.id, venue.id, conversation_id ?? null, request_id)
 
   if ((result as { skipped?: boolean }).skipped) {
     jobLog.info({ leadId: lead_id, venueId: venue.id }, 'jobs.lead_created.skipped')

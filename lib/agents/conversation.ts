@@ -1,4 +1,5 @@
 import { anthropic, MODEL } from '@/lib/anthropic'
+import { withAnthropicRetry } from '@/lib/anthropic-retry'
 
 interface Message {
   role: 'lead' | 'ai' | 'human' | 'system'
@@ -42,7 +43,8 @@ export async function generateConversationReply(
   venue: VenueContext,
   conversationHistory: Message[],
   knowledgeBase: KnowledgeBaseEntry[],
-  isFirstMessage: boolean
+  isFirstMessage: boolean,
+  requestId?: string
 ): Promise<ConversationResponse> {
   const kbContext = knowledgeBase
     .slice(0, 10)
@@ -83,15 +85,24 @@ LEAD INTEL (use subtly, don't repeat back mechanically):
       content: m.content,
     }))
 
+  // Wall-clock latency around the wrapper (includes any retry/backoff time).
+  // The wrapper additionally logs per-attempt latency.
   const start = Date.now()
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 300,
-    system: systemPrompt,
-    messages: messages.length > 0 ? messages : [
-      { role: 'user', content: `Hi, I'm interested in ${venue.name} for my event.` }
-    ],
-  })
+  const response = await withAnthropicRetry(
+    (signal) =>
+      anthropic.messages.create(
+        {
+          model: MODEL,
+          max_tokens: 300,
+          system: systemPrompt,
+          messages: messages.length > 0 ? messages : [
+            { role: 'user', content: `Hi, I'm interested in ${venue.name} for my event.` }
+          ],
+        },
+        { signal }
+      ),
+    { agent: 'conversation', requestId, model: MODEL }
+  )
 
   const elapsed = Date.now() - start
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
