@@ -230,6 +230,68 @@ If `demo.seed` is missing or `admin.endpoints != 12`, the demo routes aren't loa
 
 ---
 
+## 11. Variant inquiries + quick tour scheduling (Phase 8C)
+
+Three additions on top of the Phase 8B live-demo loop:
+- The "Send test inquiry" button now has a **variant selector** next to it (Garden / Greenhouse / All-inclusive) so the AI replies feel distinct across multiple demo clicks.
+- The **Lead Detail panel** has a "Quick schedule tour" button for any lead in `qualified`, `tour_scheduled`, `tour_completed`, or `negotiation`. Defaults to next Tuesday at 10am local time.
+- The **Tours page** subscribes to realtime — newly scheduled tours appear without manual refresh.
+
+### 11.1 Pre-flight
+
+```bash
+# In .env.local:
+NEXT_PUBLIC_DEMO_BUTTON=1
+```
+
+Restart `npm run dev`. The variant selector + button live in the Leads page header. The quick-schedule action lives inside the lead detail drawer regardless of the flag (it's role-gated to SALES_ROLES at the API).
+
+### 11.2 The full 90-second demo
+
+1. Open `http://localhost:3000/dashboard/leads`.
+2. With the variant dropdown set to **Garden venue inquiry**, click **Send test inquiry**. A toast appears, kanban shows the new lead in `new_inquiry`.
+3. Switch the dropdown to **Greenhouse vibe**, click again. A different name + budget arrives. Talk track: "Same widget endpoint, the AI tailors the first reply to the message body — watch the inbox in a second."
+4. Switch to **All-inclusive package question**, click again. Three distinct leads now in the kanban; the AI is qualifying all three in parallel via Inngest.
+5. Click into one of the qualified leads (Phase 8A seed leaves several in the `qualified` column).
+6. In the right-side drawer, click **Quick schedule tour**. The button shows a spinner → "Tour scheduled ✓".
+7. Hop to `http://localhost:3000/dashboard/tours`. The new tour appears at the top of the calendar grid + the Upcoming Tours list — via realtime, no refresh. A toast in the bottom-right reads "Tours updated".
+8. Click into the tour to show the auto-generated `location_notes`: "Quick-scheduled from demo dashboard."
+
+### 11.3 What's happening under the hood
+
+| Surface | Behavior |
+|---|---|
+| `DemoInquiryButton` (variant) | Renders a native `<select>` keyed to `DEMO_INQUIRY_VARIANTS`. Each click POSTs `/api/widget` with the variant's message + a budget/guest band tuned to feel realistic. Email follows `demo+live-<variant>-<stamp>-<rand>@venuerise.test` so Phase 8A reset still sweeps it up. |
+| `QuickScheduleTourButton` | POSTs `/api/tours` with `{ lead_id, scheduled_at: <next Tuesday 10am local>, duration_minutes: 60, location_notes: "Quick-scheduled from demo dashboard." }`. Hidden for `lost`, `booked`, `new_inquiry`. Re-scheduling on a lead with an existing tour is allowed — the API doesn't dedupe. |
+| `RealtimeToursLayer` | `supabase.channel('tours:venue:<venueId>').on('postgres_changes', { event: '*', table: 'tours', filter: 'venue_id=eq.<venueId>' })`. Calls `router.refresh()` and shows a "Tours updated" toast on any change. |
+| Dashboard overview banner | Shown only when `totalLeads === 0`. Hidden the moment the first seed/inquiry lands. |
+
+### 11.4 Troubleshooting
+
+**Tour doesn't appear on /dashboard/tours**:
+- Hard refresh — the realtime layer + the 2s router.refresh fallback both should have fired.
+- Check `/api/tours` response in DevTools → Network. Common error codes:
+  - `forbidden` → caller doesn't have SALES_ROLES on the venue.
+  - `subscription_required` → Phase 7D billing gate is on AND the venue's subscription isn't `active`/`trialing`. Either flip `BILLING_GATE_ENABLED=0` for the demo, or seed the subscription to `trialing` (`npm run billing:seed SEED_SUBSCRIPTION_STATUS=trialing`).
+  - `Venue not found` → no venue context (user hasn't completed onboarding).
+- Verify the publication carries `tours`:
+  ```sql
+  select tablename from pg_publication_tables
+  where pubname = 'supabase_realtime' and tablename = 'tours';
+  ```
+  Should return one row. Migration 001 adds it.
+
+**Variant button shows but click fails with `origin_not_allowed`**:
+- Same Phase 8B fix: ensure `NEXT_PUBLIC_APP_URL` equals the host serving the dashboard.
+
+**Quick schedule tour says "Sales / coordinator role required"**:
+- The signed-in user isn't in SALES_ROLES (`owner | admin | sales_manager | coordinator`) on the venue. Re-check `venue_members` for that user.
+
+**Same variant used twice in a row produces identical-looking lead cards**:
+- Names + budgets are randomized within the variant's band; collisions are visual not structural. Each click creates a real new row with a unique email. Cards differ on `created_at` (a few seconds apart) and the random name pool of 7 entries.
+
+---
+
 ## 10. Live demo mode (Phase 8B)
 
 Two complementary upgrades land here:

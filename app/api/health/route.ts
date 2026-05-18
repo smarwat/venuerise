@@ -48,7 +48,11 @@ interface HealthBody {
     recovery_email: 'mounted'
     admin_clear_dunning: 'mounted'
   }
-  demo: { seed: 'mounted'; realtime: 'mounted' }
+  demo: {
+    seed: 'mounted'
+    realtime: 'mounted'
+    tour_quick_schedule: 'mounted'
+  }
   uptime_ms: number
   ts: string
 }
@@ -212,7 +216,12 @@ export async function GET(request: Request) {
     },
     // Phase 8A — demo seed + reset admin surface.
     // Phase 8B — realtime layers on /dashboard/leads + /dashboard/inbox.
-    demo: { seed: 'mounted', realtime: 'mounted' },
+    demo: {
+      seed: 'mounted',
+      realtime: 'mounted',
+      // 8C — variant inquiries + quick-schedule-tour + tours realtime.
+      tour_quick_schedule: 'mounted',
+    },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }

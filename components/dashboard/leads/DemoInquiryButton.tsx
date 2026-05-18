@@ -2,21 +2,34 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Sparkles, Loader2 } from 'lucide-react'
+import { Sparkles, Loader2, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/dashboard/ui/Button'
-import { buildDemoInquiry } from '@/lib/demo/demo-inquiry'
+import {
+  buildDemoInquiry,
+  DEMO_INQUIRY_VARIANTS,
+  DEMO_INQUIRY_VARIANT_ORDER,
+  type DemoInquiryVariant,
+} from '@/lib/demo/demo-inquiry'
 
 /**
- * Phase 8B — demo-mode "Send test inquiry" button.
+ * Phase 8B → 8C — demo-mode "Send test inquiry" button + variant select.
  *
  * Only rendered by the caller when `NEXT_PUBLIC_DEMO_BUTTON === '1'`.
- * Posts a real payload to `/api/widget` so the FULL pipeline runs:
- *   widget intake → lead insert → conversation pre-create → Inngest enqueue →
- *   AI qualification → first AI message → follow-up schedule.
+ *
+ * Phase 8C extension: a native `<select>` next to the button lets the
+ * operator pick which of three preset payloads to send. Each fires a
+ * real `/api/widget` POST so the full pipeline runs (lead insert →
+ * conversation pre-create → Inngest enqueue → AI qualification → first
+ * AI message → follow-up schedule).
  *
  * Realtime (Phase 8B's RealtimeLeadsLayer) picks up the new lead and
- * routes a `router.refresh()`. As a fallback (e.g. Realtime not configured),
- * we trigger a manual refresh after 2s if the realtime layer didn't.
+ * routes a `router.refresh()`. As a fallback (e.g. Realtime not
+ * configured), we trigger a manual refresh after 2s.
+ *
+ * Why a native `<select>` instead of a Radix dropdown? Keeps the bundle
+ * lean (no new deps), keyboard-accessible by default, and the demo
+ * doesn't need pixel-perfect styling — the surrounding Button shell
+ * carries the design.
  */
 
 interface DemoInquiryButtonProps {
@@ -27,6 +40,7 @@ export default function DemoInquiryButton({ venueId }: DemoInquiryButtonProps) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [variant, setVariant] = useState<DemoInquiryVariant>('garden')
 
   async function handleClick() {
     if (!venueId) {
@@ -36,7 +50,7 @@ export default function DemoInquiryButton({ venueId }: DemoInquiryButtonProps) {
     setBusy(true)
     setError(null)
     try {
-      const payload = buildDemoInquiry(venueId)
+      const payload = buildDemoInquiry(venueId, variant)
       const res = await fetch('/api/widget', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -50,8 +64,7 @@ export default function DemoInquiryButton({ venueId }: DemoInquiryButtonProps) {
       }
       // Realtime should reload the page within a few hundred ms. If it
       // doesn't (e.g. Realtime publication not synced, browser blocked
-      // websockets), force a refresh after 2 seconds so the demo doesn't
-      // hang on an empty kanban.
+      // websockets), force a refresh after 2 seconds.
       window.setTimeout(() => router.refresh(), 2000)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error')
@@ -62,20 +75,40 @@ export default function DemoInquiryButton({ venueId }: DemoInquiryButtonProps) {
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={handleClick}
-        disabled={busy}
-        title="Demo-only — fires a real /api/widget POST"
-      >
-        {busy ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-        ) : (
-          <Sparkles className="w-3.5 h-3.5" />
-        )}
-        {busy ? 'Sending…' : 'Send test inquiry'}
-      </Button>
+      <div className="flex items-center gap-2">
+        {/* Native select — accessible, zero new deps, matches the surrounding
+            Input style enough for an internal demo control. */}
+        <div className="relative">
+          <select
+            value={variant}
+            onChange={(e) => setVariant(e.target.value as DemoInquiryVariant)}
+            disabled={busy}
+            aria-label="Demo inquiry variant"
+            className="appearance-none h-8 pl-3 pr-7 rounded-lg bg-white border border-[#E2E8F0] text-xs text-[#0F172A] hover:border-[#CBD5E1] focus:outline-none focus:border-[#1D4ED8] focus:ring-[3px] focus:ring-[#3B82F6]/15 disabled:opacity-60"
+          >
+            {DEMO_INQUIRY_VARIANT_ORDER.map((v) => (
+              <option key={v} value={v}>
+                {DEMO_INQUIRY_VARIANTS[v].label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none w-3 h-3 text-[#94A3B8] absolute right-2 top-1/2 -translate-y-1/2" />
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleClick}
+          disabled={busy}
+          title="Demo-only — fires a real /api/widget POST"
+        >
+          {busy ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Sparkles className="w-3.5 h-3.5" />
+          )}
+          {busy ? 'Sending…' : 'Send test inquiry'}
+        </Button>
+      </div>
       {error && (
         <div className="text-[11px] text-[#B91C1C] max-w-xs text-right">{error}</div>
       )}

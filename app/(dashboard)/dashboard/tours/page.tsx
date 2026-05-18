@@ -5,6 +5,7 @@ import { Button } from '@/components/dashboard/ui/Button'
 import { Badge } from '@/components/dashboard/ui/Badge'
 import { CalendarCheck, Clock, Plus, MapPin } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from 'date-fns'
+import RealtimeToursLayer from '@/components/dashboard/tours/RealtimeToursLayer'
 
 type TourStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -178,6 +179,10 @@ export default async function ToursPage() {
           </CardContent>
         </Card>
       </div>
+      {/* Phase 8C — non-rendering client component (except for a toast).
+          Subscribes to public.tours postgres_changes filtered by venue_id
+          and refreshes the page on any event. */}
+      {venueId && <RealtimeToursLayer venueId={venueId} />}
     </div>
   )
 }

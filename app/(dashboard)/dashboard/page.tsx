@@ -4,7 +4,7 @@ import MetricCard from '@/components/dashboard/MetricCard'
 import { Card, CardHeader, CardTitle, CardSubtitle, CardContent } from '@/components/dashboard/ui/Card'
 import { Button } from '@/components/dashboard/ui/Button'
 import { Badge } from '@/components/dashboard/ui/Badge'
-import { Users, Clock, CalendarCheck, DollarSign, Download, Bot, Sparkles, Send } from 'lucide-react'
+import { Users, Clock, CalendarCheck, DollarSign, Download, Bot, Sparkles, Send, Wand2 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import Link from 'next/link'
 
@@ -74,6 +74,33 @@ export default async function DashboardPage() {
           </>
         }
       />
+
+      {/* Phase 8C — soft empty-state banner. Renders only when the venue
+          has no leads at all (real OR seeded). Hidden once the first lead
+          lands. Mirrors the analytics page's empty-state pattern. */}
+      {totalLeads === 0 && (
+        <div className="mb-6 rounded-2xl border border-[#E2E8F0] bg-white px-5 py-4 flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[#EFF6FF] text-[#1D4ED8] flex items-center justify-center shrink-0">
+            <Wand2 className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-[#0F172A]">
+              Your dashboard is ready for a live demo
+            </div>
+            <p className="text-[12px] text-[#64748B] mt-0.5">
+              Seed sample data with{' '}
+              <code className="text-[11px] text-[#0F172A] bg-[#F1F5F9] px-1.5 py-0.5 rounded">
+                npm run demo:seed
+              </code>
+              , or enable{' '}
+              <code className="text-[11px] text-[#0F172A] bg-[#F1F5F9] px-1.5 py-0.5 rounded">
+                NEXT_PUBLIC_DEMO_BUTTON=1
+              </code>{' '}
+              and send a live test inquiry from the Leads page.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Metric cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

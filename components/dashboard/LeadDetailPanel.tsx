@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { cn } from '@/lib/utils'
 import type { Database, LeadStage } from '@/types/database'
 import { format } from 'date-fns'
+import QuickScheduleTourButton from './tours/QuickScheduleTourButton'
 
 type Lead = Database['public']['Tables']['leads']['Row']
 
@@ -164,6 +165,12 @@ export default function LeadDetailPanel({ lead, onClose, onUpdate, onDelete }: L
             <p>Created: {format(new Date(lead.created_at), 'MMM d, yyyy h:mm a')}</p>
             <p>Updated: {format(new Date(lead.updated_at), 'MMM d, yyyy h:mm a')}</p>
           </div>
+        </div>
+
+        {/* Phase 8C — quick-schedule-tour action. Self-hides for
+            stages where a tour doesn't make sense (lost/booked/new_inquiry). */}
+        <div className="px-6 pt-4">
+          <QuickScheduleTourButton leadId={lead.id} stage={lead.stage} />
         </div>
 
         <div className="px-6 py-4 border-t border-[#F1F5F9] flex gap-2">
