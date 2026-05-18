@@ -5,6 +5,8 @@ import { emailConfigured } from '@/lib/integrations/email'
 import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
+import pkg from '../../../package.json'
 
 /**
  * Health endpoint for uptime monitors.
@@ -20,12 +22,14 @@ type Status = 'ok' | 'configured' | 'missing' | 'down' | 'console-fallback'
 
 interface HealthBody {
   ok: boolean
+  version: string
   supabase: Status
   anthropic: Status
   email: Status
   resend_webhook: 'configured' | 'missing'
   jobs: 'inngest' | 'local-fallback'
   upstash: RateLimitStatus
+  sentry: 'configured' | 'missing'
   uptime_ms: number
   ts: string
 }
@@ -41,11 +45,13 @@ async function checkSupabase(): Promise<Status> {
       .limit(1)
     if (error) {
       log.error({ route: '/api/health', errorMessage: error.message }, 'health.supabase.down')
+      captureApiError(error, { route: '/api/health' })
       return 'down'
     }
     return 'ok'
   } catch (err) {
     log.error({ route: '/api/health', err }, 'health.supabase.threw')
+    captureApiError(err, { route: '/api/health' })
     return 'down'
   }
 }
@@ -75,15 +81,19 @@ export async function GET(request: Request) {
   const resend_webhook: 'configured' | 'missing' = process.env.RESEND_WEBHOOK_SECRET
     ? 'configured'
     : 'missing'
+  // Sentry health: env-presence only. We never send a test event here.
+  const sentry: 'configured' | 'missing' = process.env.SENTRY_DSN ? 'configured' : 'missing'
 
   const body: HealthBody = {
     ok: supabase !== 'down',
+    version: (pkg as { version: string }).version,
     supabase,
     anthropic,
     email,
     resend_webhook,
     jobs,
     upstash,
+    sentry,
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }

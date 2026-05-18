@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const CreateTourSchema = z.object({
@@ -36,7 +37,10 @@ export async function GET(request: NextRequest) {
   if (to) query = query.lte('scheduled_at', to)
 
   const { data, error } = await query
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/tours', userId: user.id, venueId })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
   return respond(NextResponse.json(data))
 }
 
@@ -62,7 +66,12 @@ export async function POST(request: NextRequest) {
     .select()
     .single()
 
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, {
+      requestId, route: '/api/tours', userId: user.id, venueId, leadId: parsed.data.lead_id,
+    })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
 
   // Update lead stage
   await supabase.from('leads').update({ stage: 'tour_scheduled' }).eq('id', parsed.data.lead_id)

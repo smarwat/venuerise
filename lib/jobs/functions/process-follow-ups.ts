@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { generateFollowUpMessage } from '@/lib/agents/followup'
 import { sendEmail, emailConfigured } from '@/lib/integrations/email'
 import { log } from '@/lib/log'
+import { captureJobError } from '@/lib/observability/sentry'
 
 /**
  * Scheduled follow-up processor.
@@ -57,6 +58,7 @@ export async function runProcessSingleFollowUp(
 
   if (fuErr) {
     jobLog.error({ followUpId, errorMessage: fuErr.message }, 'jobs.followup.fetch_failed')
+    captureJobError('process-follow-ups', fuErr, { requestId, followUpId })
     return 'failed'
   }
   if (!fuRow) {
@@ -142,6 +144,7 @@ export async function runProcessSingleFollowUp(
   } catch (err) {
     const errMessage = err instanceof Error ? err.message : String(err)
     jobLog.error({ followUpId, errorMessage: errMessage }, 'jobs.followup.generation_failed')
+    captureJobError('process-follow-ups', err, { requestId, followUpId })
     await supabase
       .from('follow_up_schedules')
       .update({ status: 'failed', delivery_error: `generation:${errMessage}`.slice(0, 500) })
@@ -292,6 +295,9 @@ export async function runProcessSingleFollowUp(
     { followUpId, provider: sendResult.provider, errorMessage: sendResult.error },
     'jobs.followup.failed'
   )
+  captureJobError('process-follow-ups', new Error(`send_failed:${sendResult.error ?? 'unknown'}`), {
+    requestId, followUpId,
+  })
   return 'failed'
 }
 
@@ -310,6 +316,7 @@ async function runScheduledBatch(): Promise<ProcessResult> {
 
   if (error) {
     log.error({ errorMessage: error.message }, 'jobs.followup.batch_query_failed')
+    captureJobError('process-follow-ups-cron', error, {})
     throw new Error(`Follow-up batch query failed: ${error.message}`)
   }
 
@@ -325,6 +332,7 @@ async function runScheduledBatch(): Promise<ProcessResult> {
       else result.failed++
     } catch (err) {
       log.error({ err, followUpId: row.id }, 'jobs.followup.batch_row_threw')
+      captureJobError('process-follow-ups-cron', err, { followUpId: row.id })
       result.failed++
     }
   }

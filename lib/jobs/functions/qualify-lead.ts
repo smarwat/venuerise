@@ -4,6 +4,7 @@ import { JOB_EVENTS, type LeadCreatedPayload } from '../events'
 import { createServiceClient } from '@/lib/supabase/service'
 import { handleNewLead } from '@/lib/agents/orchestrator'
 import { log } from '@/lib/log'
+import { captureJobError } from '@/lib/observability/sentry'
 
 /**
  * Core handler — pure function the Inngest binding AND the local fallback call.
@@ -31,6 +32,7 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
 
   if (leadErr) {
     jobLog.error({ leadId: lead_id, errorMessage: leadErr.message }, 'jobs.lead_created.lead_lookup_failed')
+    captureJobError('qualify-lead', leadErr, { requestId: request_id, leadId: lead_id })
     throw new Error(`Lead lookup failed: ${leadErr.message}`)
   }
   if (!leadRow) {
@@ -51,6 +53,9 @@ export async function runQualifyLead(payload: LeadCreatedPayload): Promise<{
       { leadId: lead_id, venueId: lead.venue_id, errorMessage: venueErr.message },
       'jobs.lead_created.venue_lookup_failed'
     )
+    captureJobError('qualify-lead', venueErr, {
+      requestId: request_id, leadId: lead_id, venueId: lead.venue_id,
+    })
     throw new Error(`Venue lookup failed: ${venueErr.message}`)
   }
   if (!venueRow) {
@@ -90,6 +95,17 @@ export const qualifyLeadFn = inngest.createFunction(
     triggers: [{ event: JOB_EVENTS.LEAD_CREATED }],
   },
   async ({ event }) => {
-    return runQualifyLead(event.data as LeadCreatedPayload)
+    const data = event.data as LeadCreatedPayload
+    try {
+      return await runQualifyLead(data)
+    } catch (err) {
+      // Inngest also reports the throw — but Sentry gets the structured ctx.
+      captureJobError('qualify-lead', err, {
+        requestId: data.request_id,
+        leadId: data.lead_id,
+        conversationId: data.conversation_id ?? undefined,
+      })
+      throw err
+    }
   }
 )

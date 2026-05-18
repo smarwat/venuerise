@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const UpdateLeadSchema = z.object({
@@ -69,7 +70,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .select()
     .single()
 
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/leads/[id]', leadId: id, userId: user.id, venueId })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
   return respond(NextResponse.json(data))
 }
 
@@ -91,6 +95,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     .eq('id', id)
     .eq('venue_id', venueId)
 
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/leads/[id]', leadId: id, userId: user.id, venueId })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
   return respond(NextResponse.json({ success: true }))
 }

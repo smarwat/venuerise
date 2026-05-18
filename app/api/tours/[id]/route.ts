@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const UpdateTourSchema = z.object({
@@ -38,7 +39,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .select()
     .single()
 
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/tours/[id]', tourId: id, userId: user.id, venueId })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
 
   // If completed, update lead stage
   if (parsed.data.status === 'completed') {

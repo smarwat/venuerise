@@ -3,6 +3,7 @@ import { verifyInternalRequest } from '@/lib/auth/internal-hmac'
 import { addSuppression } from '@/lib/integrations/suppression'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 
 /**
  * Unsubscribe handler.
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
     valid = verifyInternalRequest({ email, ts }, sig)
   } catch (err) {
     reqLog.error({ err }, 'unsubscribe.verify.threw')
+    captureApiError(err, { requestId, route: '/api/unsubscribe' })
     return respondHtml(
       htmlPage(
         'Configuration error',

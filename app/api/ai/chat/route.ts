@@ -5,6 +5,7 @@ import { assertOwnsConversation, OwnershipError } from '@/lib/auth/assert-owners
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const PostSchema = z.object({
@@ -52,6 +53,10 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI chat failed'
     reqLog.error({ err, conversationId: parsed.data.conversation_id }, 'ai.chat.failed')
+    captureApiError(err, {
+      requestId, route: '/api/ai/chat',
+      conversationId: parsed.data.conversation_id, userId: user.id,
+    })
     return respond(NextResponse.json({ error: message }, { status: 500 }))
   }
 }
@@ -101,6 +106,9 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     reqLog.error({ errorMessage: error.message, conversationId }, 'ai.chat.fetch_failed')
+    captureApiError(error, {
+      requestId, route: '/api/ai/chat', conversationId, userId: user.id,
+    })
     return respond(NextResponse.json({ error: error.message }, { status: 500 }))
   }
   return respond(NextResponse.json(data))

@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { generateTourReminder } from '@/lib/agents/tour-scheduler'
 import { sendEmail, emailConfigured } from '@/lib/integrations/email'
 import { log } from '@/lib/log'
+import { captureJobError } from '@/lib/observability/sentry'
 
 /**
  * Scheduled tour-reminder generator + sender.
@@ -87,6 +88,7 @@ async function processReminderBatch(
 
   if (error) {
     log.error({ hoursUntil, errorMessage: error.message }, 'jobs.tour_reminders.query_failed')
+    captureJobError('tour-reminders', error, {})
     throw new Error(`Tour reminders ${hoursUntil}h query failed: ${error.message}`)
   }
 
@@ -128,6 +130,9 @@ async function processReminderBatch(
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err)
       log.error({ err, hoursUntil, tourId: tour.id }, 'jobs.tour_reminders.generation_failed')
+      captureJobError('tour-reminders', err, {
+        tourId: tour.id, leadId: tour.lead_id, venueId: tour.venue_id,
+      })
       await logTourAction(supabase, {
         venue_id: tour.venue_id,
         lead_id: tour.lead_id,
@@ -247,6 +252,9 @@ async function processReminderBatch(
       { hoursUntil, tourId: tour.id, errorMessage: sendResult.error },
       'jobs.tour_reminders.send_failed'
     )
+    captureJobError('tour-reminders', new Error(`send_failed:${sendResult.error ?? 'unknown'}`), {
+      tourId: tour.id, leadId: tour.lead_id, venueId: tour.venue_id,
+    })
     failed++
   }
 

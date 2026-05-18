@@ -7,6 +7,7 @@ import { assertOwnsLead, OwnershipError } from '@/lib/auth/assert-ownership'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
         { mode: 'internal', leadId: lead_id, errorMessage: leadErr.message },
         'ai.qualify.lead_lookup_failed'
       )
+      captureApiError(leadErr, { requestId, route: '/api/ai/qualify', leadId: lead_id })
       return respond(NextResponse.json(devError('Lead lookup failed', leadErr.message), { status: 500 }))
     }
     if (!leadRow) {
@@ -112,6 +114,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI qualification failed'
     reqLog.error({ err, leadId: lead_id, venueId }, 'ai.qualify.failed')
+    captureApiError(err, { requestId, route: '/api/ai/qualify', leadId: lead_id, venueId })
     return respond(NextResponse.json(devError(message), { status: 500 }))
   }
 }

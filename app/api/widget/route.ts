@@ -4,6 +4,7 @@ import { enqueueLeadCreated } from '@/lib/jobs/queue'
 import { rateLimitWidget, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -94,6 +95,7 @@ export async function POST(request: NextRequest) {
       { venueId: venue_id, errorMessage: venueErr.message },
       'widget.venue_lookup.failed'
     )
+    captureApiError(venueErr, { requestId, route: '/api/widget', venueId: venue_id })
     return respond(NextResponse.json(
       devError('Database error while looking up venue', venueErr.message),
       { status: 500 }
@@ -150,6 +152,9 @@ export async function POST(request: NextRequest) {
       { venueId: venue_id, errorMessage: leadErr?.message },
       'widget.lead.insert_failed'
     )
+    captureApiError(leadErr ?? new Error('lead insert returned no row'), {
+      requestId, route: '/api/widget', venueId: venue_id,
+    })
     return respond(NextResponse.json(devError('Failed to save lead', leadErr?.message), { status: 500 }))
   }
 
@@ -198,6 +203,9 @@ export async function POST(request: NextRequest) {
     // Even if enqueue fails, the lead is in the DB — the visitor sees success.
     // A monitor on ai_actions / Inngest dashboard will catch the gap.
     reqLog.error({ err, leadId: leadData.id }, 'widget.job.enqueue_failed')
+    captureApiError(err, {
+      requestId, route: '/api/widget', venueId: venue_id, leadId: leadData.id,
+    })
   }
 
   return respond(NextResponse.json(

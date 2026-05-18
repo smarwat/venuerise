@@ -5,6 +5,7 @@ import { assertOwnsFollowUp, OwnershipError } from '@/lib/auth/assert-ownership'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const Schema = z.object({
@@ -51,6 +52,10 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Follow-up processing failed'
     reqLog.error({ err, followUpId: parsed.data.follow_up_id }, 'ai.followup.failed')
+    captureApiError(err, {
+      requestId, route: '/api/ai/followup',
+      followUpId: parsed.data.follow_up_id, userId: user.id,
+    })
     return respond(NextResponse.json({ error: message }, { status: 500 }))
   }
 }

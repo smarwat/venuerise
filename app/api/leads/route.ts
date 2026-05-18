@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const CreateLeadSchema = z.object({
@@ -42,7 +43,10 @@ export async function GET(request: NextRequest) {
   if (stage) query = query.eq('stage', stage)
 
   const { data, error } = await query
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.id })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
 
   return respond(NextResponse.json(data))
 }
@@ -78,7 +82,10 @@ export async function POST(request: NextRequest) {
     .select()
     .single()
 
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.id })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
 
   return respond(NextResponse.json(data, { status: 201 }))
 }

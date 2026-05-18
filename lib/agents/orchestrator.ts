@@ -3,6 +3,7 @@ import { qualifyLead } from './lead-qualifier'
 import { generateConversationReply } from './conversation'
 import { generateFollowUpMessage, getFollowUpScheduledAt, FOLLOW_UP_DELAYS_MINUTES } from './followup'
 import { log } from '@/lib/log'
+import { captureAiError } from '@/lib/observability/sentry'
 
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
@@ -242,6 +243,7 @@ export async function handleNewLead(
       error_message: message,
       latency_ms: Date.now() - start,
     })
+    captureAiError('orchestrator.handle_new_lead', err, { leadId, venueId })
     throw err
   }
 }

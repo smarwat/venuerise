@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
 
 const UpdateVenueSchema = z.object({
@@ -59,6 +60,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .select()
     .single()
 
-  if (error) return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  if (error) {
+    captureApiError(error, { requestId, route: '/api/venues/[id]', venueId: id, userId: user.id })
+    return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
   return respond(NextResponse.json(data))
 }

@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { addSuppression } from '@/lib/integrations/suppression'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
+import { captureWebhookError } from '@/lib/observability/sentry'
 
 /**
  * Resend webhook handler.
@@ -276,6 +277,7 @@ export async function POST(request: NextRequest) {
     }
   } catch (err) {
     reqLog.error({ err, type: event.type }, 'resend.webhook.failed')
+    captureWebhookError('resend', err, { requestId, route: '/api/resend/webhook' })
     // Still 200 — Resend will retry on non-2xx; our partial state is OK.
   }
 
