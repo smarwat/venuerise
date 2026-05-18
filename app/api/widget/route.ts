@@ -189,6 +189,21 @@ export async function POST(request: NextRequest) {
   }
 
   // 4. Create lead
+  //
+  // PHASE 7D — INTENTIONALLY NOT BILLING-GATED.
+  //
+  // Public widget submissions are intentionally not subscription-gated.
+  // The visitor experience should never fail because the venue has billing
+  // issues — they're a prospect, not a customer of ours. We accept the
+  // lead, persist it, and let the orchestrator do its work. Downstream
+  // AI/follow-up cost is bounded by Inngest concurrency + Anthropic retry
+  // limits, so a billing-lapsed venue can't run up an unbounded bill.
+  //
+  // If we ever need to soft-gate the widget (e.g. show a "venue closed"
+  // landing instead of accepting the lead), do it via `venues.is_active`
+  // — which already drives a 403 path above — not via the subscription
+  // table. Subscription state belongs to the OWNER's relationship with us,
+  // not to the visitor's relationship with the venue.
   const { data: lead, error: leadErr } = await supabase
     .from('leads')
     .insert({

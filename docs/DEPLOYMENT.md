@@ -75,6 +75,14 @@ The `.env.example` file is the canonical machine-readable list; this doc is the 
 | `UPSTASH_REDIS_REST_URL` | **Yes** in prod | Server-only | https://console.upstash.com → Redis → REST URL | Rate limiting becomes a no-op; readiness fails |
 | `UPSTASH_REDIS_REST_TOKEN` | **Yes** in prod | Server-only | Same panel → REST token | Same as above |
 
+### 1.8a Billing gate (Phase 7D)
+
+| Var | Required in prod? | Public? | Source | Breaks if missing |
+|---|---|---|---|---|
+| `BILLING_GATE_ENABLED` | No (default disabled) | Server-only | Hand-set `1` to enforce, anything else (unset, empty, `true`, `yes`) leaves it disabled | Without `=1`, write routes still respond 2xx regardless of subscription state. With `=1`, gated routes return HTTP 402 `subscription_required` for venues whose subscription isn't `active` or `trialing` |
+
+The dashboard banner + `/dashboard/settings/billing` page render the same regardless of this flag — only the API enforcement changes. This lets us ship the UX first and flip the gate later.
+
 ### 1.8 Stripe (Phase 7C)
 
 | Var | Required in prod? | Public? | Source | Breaks if missing |

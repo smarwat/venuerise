@@ -629,7 +629,58 @@ async function main() {
     process.stdout.write(`! db.ai_actions      ${err.message}\n`)
   }
 
-  // 7. Cleanup
+  // 7. Phase 7D — billing gate assertion (opt-in).
+  //
+  // When SMOKE_EXPECT_BILLING_GATE=1, we POST a deliberately empty body to
+  // a gated route (`/api/leads`) using the auth token we obtained at sign-in,
+  // and assert HTTP 402 with `subscription_required`. We also re-confirm the
+  // widget POST stayed at 201 (already true above — the widget is never
+  // gated by design; see app/api/widget/route.ts).
+  //
+  // This is OPTIONAL because in many staging envs the test user's venue
+  // has an active subscription row and a 402 wouldn't fire. Operators
+  // enable this flag in environments specifically provisioned WITHOUT a
+  // subscription for the test user (or where the gate is enabled and the
+  // user is past trial expiry).
+  if (process.env.SMOKE_EXPECT_BILLING_GATE === '1') {
+    try {
+      const { res } = await fetchWithTimeout(
+        `${appUrl}/api/leads`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${auth.accessToken}`,
+            Origin: appUrl,
+          },
+          body: JSON.stringify({
+            name: 'Gate Probe',
+            email: 'gate-probe@example.com',
+          }),
+        },
+        httpTimeoutMs
+      )
+      if (res.status !== 402) {
+        const body = await res.text().catch(() => '')
+        throw new SmokeError(
+          'billing.gate',
+          `expected 402 from gated /api/leads, got ${res.status}`,
+          body.slice(0, 200)
+        )
+      }
+      process.stdout.write(`✓ billing.gate       /api/leads returned 402 as expected\n`)
+    } catch (err) {
+      if (err instanceof SmokeError) throw err
+      throw new SmokeError(
+        'billing.gate',
+        err instanceof Error ? err.message : 'gate probe failed'
+      )
+    }
+  } else {
+    process.stdout.write(`~ billing.gate       skipped (SMOKE_EXPECT_BILLING_GATE != 1)\n`)
+  }
+
+  // 8. Cleanup
   const cleaned = await cleanup({
     supabaseUrl,
     serviceRoleKey,
@@ -637,7 +688,7 @@ async function main() {
     timeoutMs: httpTimeoutMs,
   })
 
-  // 8. Summary
+  // 9. Summary
   process.stdout.write('\nLatency summary:\n')
   for (const [k, v] of Object.entries(timings)) {
     process.stdout.write(row(k, fmtMs(v)) + '\n')

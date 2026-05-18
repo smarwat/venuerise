@@ -189,6 +189,35 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10c. Subscription gate (Phase 7D)
+
+The billing gate sits between role-checked write routes and their handlers. When `BILLING_GATE_ENABLED=1`, `requireActiveSubscription(venueId)` reads `public.subscriptions` (latest row, service-role read for tenant-isolated tables) and throws `SubscriptionRequiredError` (HTTP 402) unless the kind is `active` or `trialing`.
+
+**Routes gated** (all 9 require auth + role first; gate runs AFTER auth/role):
+- `POST /api/leads`, `PATCH /api/leads/[id]`, `DELETE /api/leads/[id]`
+- `POST /api/tours`, `PATCH /api/tours/[id]`
+- `POST /api/ai/chat`, `POST /api/ai/qualify` (user-session mode only), `POST /api/ai/followup`
+- `POST /api/team/invitations`
+
+**Routes NEVER gated** — intentional:
+- All GET routes (reads).
+- Dashboard server-component loads.
+- `POST /api/billing/checkout` + `POST /api/billing/portal` — gating these would lock users out of fixing their billing.
+- `POST /api/team/invitations/accept` — invited member shouldn't be blocked by the inviter's billing state.
+- `POST /api/onboarding/create-workspace` — workspace setup is pre-billing.
+- `POST /api/widget` — public lead intake. The widget is the visitor's experience, not the customer's. Documented in-code at `app/api/widget/route.ts`.
+- `POST /api/stripe/webhook`, `POST /api/resend/webhook`, `POST /api/inngest` — provider callbacks.
+- `POST /api/ai/qualify` internal HMAC mode — driven by the job runtime for newly-created widget leads, not user traffic.
+
+**Tenant safety**:
+- The gate reads via service-role (RLS on `subscriptions` is ADMIN_ROLES-only for SELECT, but the gate runs for every authed role; using user-scoped client would silently unlock sales/coordinator/viewer roles).
+- The `venueId` argument is already venue-scoped by the route's auth layer — the gate never accepts a user-supplied venue id.
+- Status read failures re-throw (do NOT silently 402, do NOT silently 200) — flaky DB shouldn't demand a credit card OR unlock the product.
+
+**Onboarding trial**: `createWorkspaceForUser` inserts a synthetic `subscriptions` row with `status='trialing'`, `trial_end = now() + 14 days`, `stripe_subscription_id = null`. Best-effort — failure logs + Sentry-captures but doesn't fail workspace creation.
+
+---
+
 ## 10b. Stripe billing (Phase 7C)
 
 Stripe is the source of truth for subscription state. Local Postgres tables `billing_customers` and `subscriptions` are caches populated exclusively by the webhook handler at `/api/stripe/webhook`.

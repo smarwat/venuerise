@@ -299,8 +299,53 @@ export async function createWorkspaceForUser(
     captureApiError(taErr, { requestId, route: 'onboarding', userId, venueId })
   }
 
+  // 7. Phase 7D — synthetic trial subscription row, best-effort.
+  //
+  // Why a row instead of a "no row = trial" convention?
+  //   - Subscription Status (lib/billing/subscription-status.ts) returns
+  //     `{ kind: 'none' }` when no row exists, which is treated as
+  //     "needs to start a subscription" by the banner and the gate. A
+  //     trial-by-absence would force every code path to special-case
+  //     "is this a brand-new venue?".
+  //
+  // Fields:
+  //   - stripe_subscription_id is NULL — this row exists pre-Stripe and the
+  //     webhook UPSERT later (when the customer completes checkout) will
+  //     write a DIFFERENT row keyed by a non-null stripe_subscription_id.
+  //     `pickPrimaryRow` favors statuses like 'active' over 'trialing' so
+  //     the live row supersedes this one automatically.
+  //   - stripe_customer_id is empty — populated by the first
+  //     `getOrCreateStripeCustomer` call when the user starts checkout.
+  //
+  // If this insert fails, we log + Sentry-capture but do NOT fail
+  // workspace creation: the user is more important than the trial row.
+  const TRIAL_DAYS = 14
+  const now = new Date()
+  const trialEnd = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000)
+  const { error: trialErr } = await svc.from('subscriptions').insert({
+    venue_id: venueId,
+    stripe_customer_id: '',
+    stripe_subscription_id: null,
+    status: 'trialing',
+    trial_start: now.toISOString(),
+    trial_end: trialEnd.toISOString(),
+    metadata: { source: 'onboarding_trial', trial_days: TRIAL_DAYS },
+  })
+  if (trialErr) {
+    reqLog.warn(
+      { err: trialErr, venueId },
+      'onboarding.trial_seed_failed'
+    )
+    captureApiError(trialErr, { requestId, route: 'onboarding', userId, venueId })
+  }
+
   reqLog.info(
-    { venueId, kbCount: kbRows.length, slotCount: slots.length },
+    {
+      venueId,
+      kbCount: kbRows.length,
+      slotCount: slots.length,
+      trialSeeded: !trialErr,
+    },
     'onboarding.created'
   )
   return { venue_id: venueId, already_exists: false }

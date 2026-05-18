@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { handleIncomingMessage } from '@/lib/agents/orchestrator'
 import { assertOwnsConversation, OwnershipError } from '@/lib/auth/assert-ownership'
 import { SALES_ROLES } from '@/lib/auth/roles'
+import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -29,11 +30,26 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
 
   // Ownership + role check — POSTing a reply is a write action, gate to SALES_ROLES.
+  let conversationVenueId: string
   try {
-    await assertOwnsConversation(supabase, user.id, parsed.data.conversation_id, SALES_ROLES)
+    const own = await assertOwnsConversation(supabase, user.id, parsed.data.conversation_id, SALES_ROLES)
+    conversationVenueId = own.venue_id
   } catch (err) {
     if (err instanceof OwnershipError) {
       return respond(NextResponse.json({ error: 'Conversation not found' }, { status: 404 }))
+    }
+    throw err
+  }
+
+  // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
+  try {
+    await requireActiveSubscription(conversationVenueId, { requestId, route: '/api/ai/chat' })
+  } catch (err) {
+    if (err instanceof SubscriptionRequiredError) {
+      return respond(NextResponse.json(
+        { error: err.code, subscription_status: err.subscriptionStatus.kind },
+        { status: err.status }
+      ))
     }
     throw err
   }

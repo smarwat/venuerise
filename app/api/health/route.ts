@@ -40,6 +40,7 @@ interface HealthBody {
   billing: {
     stripe: 'configured' | 'missing'
     webhook: 'configured' | 'missing'
+    gate: 'enabled' | 'disabled'
   }
   uptime_ms: number
   ts: string
@@ -167,10 +168,11 @@ export async function GET(request: Request) {
     onboarding: { api: 'mounted' },
     // Phase 6D + 6E — team API + dashboard surface presence signals.
     team: { invitations: 'mounted', dashboard: 'mounted' },
-    // Phase 7C — billing surface. Env-presence only; never pings Stripe.
+    // Phase 7C + 7D — billing surface. Env-presence only; never pings Stripe.
     billing: {
       stripe: process.env.STRIPE_SECRET_KEY ? 'configured' : 'missing',
       webhook: process.env.STRIPE_WEBHOOK_SECRET ? 'configured' : 'missing',
+      gate: process.env.BILLING_GATE_ENABLED === '1' ? 'enabled' : 'disabled',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

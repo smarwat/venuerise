@@ -50,6 +50,8 @@ interface ReadinessChecks {
   stripe: Check
   stripe_webhook: Check
   stripe_price: Check
+  /** 'enabled' / 'disabled' — informational, never fails readiness. */
+  billing_gate: 'enabled' | 'disabled'
 }
 
 const MIN_INTERNAL_SECRET_LEN = 32
@@ -126,6 +128,10 @@ function checkStripePrice(): Check {
   return process.env.STRIPE_DEFAULT_PRICE_ID ? 'configured' : 'missing'
 }
 
+function checkBillingGate(): 'enabled' | 'disabled' {
+  return process.env.BILLING_GATE_ENABLED === '1' ? 'enabled' : 'disabled'
+}
+
 function isPassing(c: Check): boolean {
   return c === 'ok' || c === 'configured'
 }
@@ -150,6 +156,8 @@ export async function GET(request: Request) {
       stripe: checkStripe(),
       stripe_webhook: checkStripeWebhook(),
       stripe_price: checkStripePrice(),
+      // Phase 7D — informational only; never flips readiness off.
+      billing_gate: checkBillingGate(),
     }
   } catch (err) {
     log.error({ err, route: '/api/readiness' }, 'readiness.unexpected_throw')
@@ -162,8 +170,12 @@ export async function GET(request: Request) {
     )
   }
 
-  const failed = (Object.entries(checks) as Array<[keyof ReadinessChecks, Check]>)
-    .filter(([, v]) => !isPassing(v))
+  // Exclude `billing_gate` from the failure set — it's a string flag, not
+  // a check that needs to pass for prod traffic.
+  const failed = (Object.entries(checks) as Array<[keyof ReadinessChecks, Check | string]>)
+    .filter(([k, v]) =>
+      k !== 'billing_gate' && !isPassing(v as Check)
+    )
     .map(([k]) => k)
 
   const allPassing = failed.length === 0

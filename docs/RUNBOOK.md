@@ -121,6 +121,29 @@ Symptoms: bounces in Resend dashboard aren't reflected in Supabase `outbound_mes
 3. If 200 but no DB update: search Sentry for `route:/api/resend/webhook`. The signature verification helper logs `webhook.resend.signature_mismatch` on token rotation problems.
 4. Rotation procedure: in Resend, generate a new signing secret; deploy with the new value FIRST, then click "Rotate" in Resend to invalidate the old. There's a ~30s gap where both work — coordinate.
 
+### 2.4b Billing gate returning 402 unexpectedly (Phase 7D)
+
+Symptoms: a logged-in admin clicks "Add lead" or runs an AI requalify and gets HTTP 402 `subscription_required`.
+
+1. Hit `$APP/api/health` and check `billing.gate`. If `enabled` and you expected `disabled`, an operator flipped `BILLING_GATE_ENABLED=1` — confirm intent or unset.
+2. If the gate is intentionally enabled, query Supabase for the caller's venue's subscription state:
+   ```sql
+   select status, current_period_end, trial_end, canceled_at, created_at
+   from public.subscriptions where venue_id='<venue id>'
+   order by created_at desc limit 5;
+   ```
+   The helper's priority order is `active > trialing > past_due > incomplete > unpaid > paused > canceled > incomplete_expired` (ties broken by `created_at` desc). Only `active` and `trialing` clear the gate.
+3. Common causes:
+   - **Trial expired**: the onboarding trial row has `status='trialing'` and `trial_end < now()`. Stripe doesn't auto-update — the user must check out. If you need to extend a trial manually:
+     ```sql
+     update public.subscriptions
+     set trial_end = now() + interval '14 days'
+     where venue_id='<venue id>' and stripe_subscription_id is null;
+     ```
+   - **Webhook lag**: customer just paid but `subscriptions` hasn't synced yet. Re-deliver the latest `customer.subscription.updated` event from Stripe → Webhooks → Recent attempts.
+   - **Orphan subscription**: the venue has a Stripe customer but no `billing_customers` row (e.g. data was deleted manually). Recreate the mapping, then re-deliver events.
+4. To bypass the gate WHILE diagnosing, temporarily set `BILLING_GATE_ENABLED=0` in Vercel + redeploy. The 402 stops; reads + the widget were never gated.
+
 ### 2.5 Stripe webhook failing or checkout returns 503
 
 Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.

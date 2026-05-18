@@ -4,6 +4,7 @@ import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/r
 import { captureApiError } from '@/lib/observability/sentry'
 import { requireVenueRole, TenantAccessError } from '@/lib/auth/tenant-access'
 import { SALES_ROLES, ADMIN_ROLES } from '@/lib/auth/roles'
+import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { z } from 'zod'
 
 const UpdateLeadSchema = z.object({
@@ -69,6 +70,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     throw err
   }
 
+  // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
+  try {
+    await requireActiveSubscription(venueId, { requestId, route: '/api/leads/[id]' })
+  } catch (err) {
+    if (err instanceof SubscriptionRequiredError) {
+      return respond(NextResponse.json(
+        { error: err.code, subscription_status: err.subscriptionStatus.kind },
+        { status: err.status }
+      ))
+    }
+    throw err
+  }
+
   const body = await request.json()
   const parsed = UpdateLeadSchema.safeParse(body)
   if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
@@ -111,6 +125,19 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   } catch (err) {
     if (err instanceof TenantAccessError) {
       return respond(NextResponse.json({ error: err.code }, { status: err.status }))
+    }
+    throw err
+  }
+
+  // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
+  try {
+    await requireActiveSubscription(venueId, { requestId, route: '/api/leads/[id]' })
+  } catch (err) {
+    if (err instanceof SubscriptionRequiredError) {
+      return respond(NextResponse.json(
+        { error: err.code, subscription_status: err.subscriptionStatus.kind },
+        { status: err.status }
+      ))
     }
     throw err
   }

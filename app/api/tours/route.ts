@@ -4,6 +4,7 @@ import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/r
 import { captureApiError } from '@/lib/observability/sentry'
 import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
 import { SALES_ROLES } from '@/lib/auth/roles'
+import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { z } from 'zod'
 
 const CreateTourSchema = z.object({
@@ -62,6 +63,19 @@ export async function POST(request: NextRequest) {
     return respond(NextResponse.json({ error: 'forbidden' }, { status: 403 }))
   }
   const venueId = venue.venueId
+
+  // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
+  try {
+    await requireActiveSubscription(venueId, { requestId, route: '/api/tours' })
+  } catch (err) {
+    if (err instanceof SubscriptionRequiredError) {
+      return respond(NextResponse.json(
+        { error: err.code, subscription_status: err.subscriptionStatus.kind },
+        { status: err.status }
+      ))
+    }
+    throw err
+  }
 
   const body = await request.json()
   const parsed = CreateTourSchema.safeParse(body)

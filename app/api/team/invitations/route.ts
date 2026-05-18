@@ -10,6 +10,7 @@ import {
   TenantAccessError,
 } from '@/lib/auth/tenant-access'
 import { ADMIN_ROLES } from '@/lib/auth/roles'
+import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { createInvitation, listInvitations, TeamError } from '@/lib/team/team-service'
 import { InviteTeamMemberSchema } from '@/lib/team/team-schema'
 
@@ -41,6 +42,21 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     if (err instanceof TenantAccessError) {
       return respond(NextResponse.json({ error: err.code }, { status: err.status }))
+    }
+    throw err
+  }
+
+  // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
+  // Note: only POST is gated. GET (list invitations) and accept invite
+  // are NOT gated — viewing/joining is read-only / membership-only.
+  try {
+    await requireActiveSubscription(venue.venueId, { requestId, route: '/api/team/invitations' })
+  } catch (err) {
+    if (err instanceof SubscriptionRequiredError) {
+      return respond(NextResponse.json(
+        { error: err.code, subscription_status: err.subscriptionStatus.kind },
+        { status: err.status }
+      ))
     }
     throw err
   }

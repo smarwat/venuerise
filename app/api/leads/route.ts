@@ -6,6 +6,7 @@ import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/r
 import { captureApiError } from '@/lib/observability/sentry'
 import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
 import { SALES_ROLES } from '@/lib/auth/roles'
+import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { z } from 'zod'
 
 const CreateLeadSchema = z.object({
@@ -75,6 +76,19 @@ export async function POST(request: NextRequest) {
   if (!venue) return respond(NextResponse.json({ error: 'Venue not found' }, { status: 404 }))
   if (!(SALES_ROLES as readonly string[]).includes(venue.role)) {
     return respond(NextResponse.json({ error: 'forbidden' }, { status: 403 }))
+  }
+
+  // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
+  try {
+    await requireActiveSubscription(venue.venueId, { requestId, route: '/api/leads' })
+  } catch (err) {
+    if (err instanceof SubscriptionRequiredError) {
+      return respond(NextResponse.json(
+        { error: err.code, subscription_status: err.subscriptionStatus.kind },
+        { status: err.status }
+      ))
+    }
+    throw err
   }
 
   const body = await request.json()

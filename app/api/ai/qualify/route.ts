@@ -5,6 +5,7 @@ import { handleNewLead } from '@/lib/agents/orchestrator'
 import { verifyInternalRequest, INTERNAL_SIGNATURE_HEADER } from '@/lib/auth/internal-hmac'
 import { assertOwnsLead, OwnershipError } from '@/lib/auth/assert-ownership'
 import { SALES_ROLES } from '@/lib/auth/roles'
+import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -100,6 +101,22 @@ export async function POST(request: NextRequest) {
       if (err instanceof OwnershipError) {
         // 404 (not 403) to avoid disclosing existence of leads in other tenants.
         return respond(NextResponse.json({ error: 'Lead not found' }, { status: 404 }))
+      }
+      throw err
+    }
+
+    // Phase 7D — billing gate applies to USER mode only. Internal HMAC mode
+    // skips the gate because the job runtime drives qualification for new
+    // leads regardless of billing state (we don't punish the lead for the
+    // venue's lapsed payment — see widget exception comment below).
+    try {
+      await requireActiveSubscription(venueId, { requestId, route: '/api/ai/qualify' })
+    } catch (err) {
+      if (err instanceof SubscriptionRequiredError) {
+        return respond(NextResponse.json(
+          { error: err.code, subscription_status: err.subscriptionStatus.kind },
+          { status: err.status }
+        ))
       }
       throw err
     }

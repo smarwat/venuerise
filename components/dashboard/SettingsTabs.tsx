@@ -6,7 +6,7 @@ import { Button } from './ui/Button'
 import { Input } from './ui/Input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/Select'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card'
-import { Save, Plus, Trash2, Check, Loader2, Users, ArrowRight } from 'lucide-react'
+import { Save, Plus, Trash2, Check, Loader2, Users, ArrowRight, CreditCard } from 'lucide-react'
 import Link from 'next/link'
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -369,6 +369,7 @@ export default function SettingsTabs({ venue, knowledgeBase, tourAvailability }:
         <TabsTrigger value="kb">Knowledge Base</TabsTrigger>
         <TabsTrigger value="availability">Availability</TabsTrigger>
         <TabsTrigger value="team">Team</TabsTrigger>
+        <TabsTrigger value="billing">Billing</TabsTrigger>
       </TabsList>
 
       <TabsContent value="profile">
@@ -390,7 +391,40 @@ export default function SettingsTabs({ venue, knowledgeBase, tourAvailability }:
       <TabsContent value="team">
         <TeamTabLink />
       </TabsContent>
+
+      <TabsContent value="billing">
+        <BillingTabLink />
+      </TabsContent>
     </Tabs>
+  )
+}
+
+// ---- Billing tab ----
+// Phase 7D — the billing surface lives at /dashboard/settings/billing so
+// the subscription read + Stripe round-trips stay server-side. This tab
+// is a pointer card to keep SettingsTabs.tsx (a client component) free
+// of server-only billing imports.
+function BillingTabLink() {
+  return (
+    <div className="max-w-2xl">
+      <Link
+        href="/dashboard/settings/billing"
+        className="group flex items-center gap-4 rounded-2xl border border-[#E2E8F0] bg-white px-5 py-4 hover:border-[#CBD5E1] hover:bg-[#F8FAFC] transition-colors"
+      >
+        <div className="w-10 h-10 rounded-xl bg-[#ECFDF5] text-[#047857] flex items-center justify-center shrink-0">
+          <CreditCard className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[14px] font-semibold text-[#0F172A]">
+            Subscription & billing
+          </div>
+          <div className="text-[12px] text-[#64748B] mt-0.5">
+            View your plan, manage payment method, download invoices.
+          </div>
+        </div>
+        <ArrowRight className="h-4 w-4 text-[#94A3B8] group-hover:text-[#0F172A] transition-colors" />
+      </Link>
+    </div>
   )
 }
 
