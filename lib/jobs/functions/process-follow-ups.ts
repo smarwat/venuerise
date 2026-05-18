@@ -3,26 +3,24 @@ import { inngest } from '../client'
 import { JOB_EVENTS, type FollowUpDuePayload } from '../events'
 import { createServiceClient } from '@/lib/supabase/service'
 import { generateFollowUpMessage } from '@/lib/agents/followup'
+import { sendEmail, emailConfigured } from '@/lib/integrations/email'
 
 /**
  * Scheduled follow-up processor.
  *
- * ── HONESTY NOTICE ─────────────────────────────────────────────────────────
- * There is NO email/SMS provider wired up yet (no Resend, no Twilio, etc.).
- * This job ONLY generates the follow-up subject/body via the AI agent and
- * persists it to the `follow_up_schedules` row. Nothing is delivered to the
- * lead's inbox. Phase 3 must wire an actual delivery channel.
+ * ── DELIVERY MODEL (Phase 3) ───────────────────────────────────────────────
+ * After Phase 3, status flips actually reflect what happened:
  *
- * The DB schema's `status` column accepts only: `pending | sent | cancelled`
- * (per migration 001). We use:
- *   - `pending`   → not yet processed
- *   - `sent`      → AI text generated AND persisted to subject/body fields.
- *                   *NOT* delivered — interpret strictly as "ready to be sent".
- *   - `cancelled` → lead ineligible (booked/lost/AI-paused) OR generation
- *                   failed irrecoverably after retries.
- * If we ever add a real `failed` or `generated` status, update this comment
- * and the logic below. For now, every status flip below is faithful to
- * what actually happened.
+ *   pending    → not yet processed
+ *   sent       → AI text generated AND Resend accepted the email.
+ *                delivery_provider='resend' and delivery_message_id populated.
+ *   skipped    → eligibility gate: lead booked/lost/AI-paused/missing email,
+ *                OR console-fallback (dev mode w/o RESEND_API_KEY).
+ *                delivery_provider='console' if we generated but did not deliver.
+ *   failed     → Resend rejected the send. delivery_error populated.
+ *                Inngest will retry up to the function's retry policy; if all
+ *                retries exhaust we leave 'failed' so a human can investigate.
+ *   cancelled  → reserved for operator intervention (no automatic flips today)
  * ──────────────────────────────────────────────────────────────────────────
  */
 
@@ -30,27 +28,23 @@ const BATCH_LIMIT = 25
 
 interface ProcessResult {
   processed: number
-  generated: number
+  sent: number
   skipped: number
   failed: number
 }
 
 /**
- * Process a single follow-up row by id. Shared by the scheduled batch
- * function and the per-row `followup.due` event handler (used by local
- * fallback in queue.ts).
- *
- * Returns one of `generated | skipped | failed`. `failed` represents a
- * transient failure — Inngest can retry. Persistent failures should be
- * marked `cancelled` by the caller after exhausting retries.
+ * Process a single follow-up row by id. Returns the outcome label used by
+ * the batch caller for telemetry. Always writes a terminal status to the
+ * row (sent | skipped | failed); never leaves it pending unless a transient
+ * lookup failure happened (in which case caller decides whether to retry).
  */
 export async function runProcessSingleFollowUp(
   followUpId: string
-): Promise<'generated' | 'skipped' | 'failed'> {
+): Promise<'sent' | 'skipped' | 'failed'> {
   const supabase = createServiceClient()
 
-  // 1. Re-fetch row to ensure status is still pending (defensive against
-  //    concurrent processors).
+  // 1. Re-fetch row — defensive against concurrent processors.
   const { data: fuRow, error: fuErr } = await supabase
     .from('follow_up_schedules')
     .select('id, lead_id, venue_id, touch_number, status')
@@ -70,11 +64,11 @@ export async function runProcessSingleFollowUp(
     lead_id: string
     venue_id: string
     touch_number: number
-    status: 'pending' | 'sent' | 'cancelled'
+    status: 'pending' | 'sent' | 'failed' | 'cancelled' | 'skipped'
   }
 
   if (fu.status !== 'pending') {
-    return 'skipped'
+    return 'skipped' // already processed by a concurrent runner
   }
 
   // 2. Pull lead + venue + last 10 messages for tone continuity.
@@ -104,26 +98,30 @@ export async function runProcessSingleFollowUp(
     return 'skipped'
   }
 
-  // 3. Eligibility gates.
+  // 3. Eligibility gates (each writes a terminal status so we don't reprocess).
   const leadStage = lead.stage as string
   const aiActive = lead.ai_active as boolean
-  if (leadStage === 'booked' || leadStage === 'lost' || !aiActive) {
-    console.log('[job:follow-up] lead ineligible, cancelling', {
-      followUpId,
-      stage: leadStage,
-      aiActive,
-    })
-    await supabase.from('follow_up_schedules').update({ status: 'cancelled' }).eq('id', followUpId)
+  const leadEmail = lead.email as string | null
+
+  if (leadStage === 'booked' || leadStage === 'lost' || !aiActive || !leadEmail) {
+    const reason = !leadEmail ? 'missing_email' : !aiActive ? 'ai_paused' : 'stage_terminal'
+    console.log('[job:follow-up] ineligible, skipping', { followUpId, stage: leadStage, reason })
+    await supabase
+      .from('follow_up_schedules')
+      .update({ status: 'skipped', delivery_error: `eligibility:${reason}` })
+      .eq('id', followUpId)
+      .eq('status', 'pending')
     return 'skipped'
   }
 
-  // 4. Generate message text.
+  // 4. Generate AI message text.
+  let message: { subject: string; body: string }
   try {
-    const message = await generateFollowUpMessage(
+    message = await generateFollowUpMessage(
       {
         id: lead.id as string,
         name: lead.name as string,
-        email: lead.email as string,
+        email: leadEmail,
         event_date: lead.event_date as string | null,
         guest_count: lead.guest_count as number | null,
         budget: lead.budget as number | null,
@@ -137,43 +135,118 @@ export async function runProcessSingleFollowUp(
       fu.touch_number,
       history
     )
+  } catch (err) {
+    const errMessage = err instanceof Error ? err.message : String(err)
+    console.error('[job:follow-up] generation failed', { followUpId, error: errMessage })
+    await supabase
+      .from('follow_up_schedules')
+      .update({ status: 'failed', delivery_error: `generation:${errMessage}`.slice(0, 500) })
+      .eq('id', followUpId)
+      .eq('status', 'pending')
+    return 'failed'
+  }
 
-    // 5. Persist generated text + flip to `sent`. NOTE: "sent" here means
-    //    "AI text generated and stored" — NOT delivered. See top comment.
+  // 5. Send the email (or console-fallback in dev). The function NEVER lies:
+  //    delivered=true only if Resend accepted; console-fallback returns false.
+  const sendResult = await sendEmail({
+    to: leadEmail,
+    subject: message.subject,
+    text: message.body,
+    metadata: {
+      lead_id: fu.lead_id,
+      follow_up_id: fu.id,
+      touch: String(fu.touch_number),
+      venue_id: fu.venue_id,
+    },
+  })
+
+  // 6. Persist generated text + outcome.
+  const base: Record<string, unknown> = {
+    subject: message.subject,
+    body: message.body,
+    delivery_provider: sendResult.provider,
+  }
+
+  if (sendResult.delivered) {
+    // Real delivery — flip to 'sent'.
     const { error: updateErr } = await supabase
       .from('follow_up_schedules')
       .update({
+        ...base,
         status: 'sent',
         sent_at: new Date().toISOString(),
-        subject: message.subject,
-        body: message.body,
+        delivered_at: new Date().toISOString(),
+        delivery_message_id: sendResult.messageId ?? null,
+        delivery_error: null,
       })
       .eq('id', followUpId)
-      .eq('status', 'pending') // optimistic concurrency guard
+      .eq('status', 'pending')
 
     if (updateErr) {
-      console.error('[job:follow-up] persist failed', { followUpId, error: updateErr.message })
+      console.error('[job:follow-up] persist after delivery failed', { followUpId, error: updateErr.message })
       return 'failed'
     }
 
-    console.log('[job:follow-up] generated (NOT delivered — no email provider yet)', {
+    console.log('[job:follow-up] delivered via Resend', {
       followUpId,
       touch: fu.touch_number,
-      lead: lead.name,
-      subject: message.subject,
+      to: leadEmail,
+      messageId: sendResult.messageId,
     })
-    return 'generated'
-  } catch (err) {
-    console.error('[job:follow-up] generation failed', { followUpId, error: err })
-    return 'failed' // caller (Inngest retry policy) decides whether to cancel.
+    return 'sent'
   }
+
+  // 7. Not delivered — distinguish console-fallback (dev) from real provider error.
+  if (sendResult.provider === 'console' && !emailConfigured()) {
+    // Dev mode, no Resend key. Persist generated text + mark 'skipped' so we
+    // do not falsely claim delivery. The text is preserved so the dashboard
+    // can still show what would have been sent.
+    const { error: updateErr } = await supabase
+      .from('follow_up_schedules')
+      .update({
+        ...base,
+        status: 'skipped',
+        delivery_error: 'console-fallback: RESEND_API_KEY not set (no real delivery in dev)',
+      })
+      .eq('id', followUpId)
+      .eq('status', 'pending')
+
+    if (updateErr) {
+      console.error('[job:follow-up] persist after console fallback failed', { followUpId, error: updateErr.message })
+      return 'failed'
+    }
+    console.warn('[job:follow-up] console-fallback — NOT delivered to inbox', {
+      followUpId,
+      to: leadEmail,
+      reason: 'no_resend_key',
+    })
+    return 'skipped'
+  }
+
+  // 8. Real provider error — Resend was configured but rejected.
+  const { error: updateErr } = await supabase
+    .from('follow_up_schedules')
+    .update({
+      ...base,
+      status: 'failed',
+      delivery_error: (sendResult.error ?? 'unknown send error').slice(0, 500),
+    })
+    .eq('id', followUpId)
+    .eq('status', 'pending')
+
+  if (updateErr) {
+    console.error('[job:follow-up] persist after send failure failed', { followUpId, error: updateErr.message })
+  }
+  console.error('[job:follow-up] send failed', {
+    followUpId,
+    to: leadEmail,
+    provider: sendResult.provider,
+    error: sendResult.error,
+  })
+  return 'failed'
 }
 
-/**
- * Batch scheduler — runs every 5 minutes via Inngest cron.
- * Local dev: this never fires unless you point your Inngest Dev Server
- * at /api/inngest. Document this loudly in the handoff.
- */
+/** Batch scheduler — runs every 5 minutes via Inngest cron. */
 async function runScheduledBatch(): Promise<ProcessResult> {
   const supabase = createServiceClient()
   const now = new Date().toISOString()
@@ -192,13 +265,13 @@ async function runScheduledBatch(): Promise<ProcessResult> {
   }
 
   const rows = (data ?? []) as { id: string }[]
-  const result: ProcessResult = { processed: 0, generated: 0, skipped: 0, failed: 0 }
+  const result: ProcessResult = { processed: 0, sent: 0, skipped: 0, failed: 0 }
 
   for (const row of rows) {
     result.processed++
     try {
       const outcome = await runProcessSingleFollowUp(row.id)
-      if (outcome === 'generated') result.generated++
+      if (outcome === 'sent') result.sent++
       else if (outcome === 'skipped') result.skipped++
       else result.failed++
     } catch (err) {
@@ -213,7 +286,6 @@ async function runScheduledBatch(): Promise<ProcessResult> {
 
 // ---- Inngest bindings -------------------------------------------------------
 
-/** Cron — every 5 minutes. */
 export const processFollowUpsCronFn = inngest.createFunction(
   {
     id: 'process-follow-ups-cron',
@@ -224,7 +296,6 @@ export const processFollowUpsCronFn = inngest.createFunction(
   async () => runScheduledBatch()
 )
 
-/** Per-row event — used by the local fallback path in queue.ts. */
 export const processSingleFollowUpFn = inngest.createFunction(
   {
     id: 'process-single-follow-up',
