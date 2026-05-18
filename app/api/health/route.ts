@@ -35,6 +35,7 @@ interface HealthBody {
     venue_members: 'ok' | 'missing'
     rls_membership: 'ok' | 'missing'
   }
+  onboarding: { api: 'mounted' }
   uptime_ms: number
   ts: string
 }
@@ -156,6 +157,9 @@ export async function GET(request: Request) {
     sentry,
     admin: { mounted: true, endpoints: ADMIN_ENDPOINT_COUNT },
     tenant_access: { venue_members: venueMembers, rls_membership: rlsMembership },
+    // Phase 6C — bumped manually if the onboarding API surface changes.
+    // Compile-time presence is the signal; we don't probe by HTTP-ing ourselves.
+    onboarding: { api: 'mounted' },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }
