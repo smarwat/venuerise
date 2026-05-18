@@ -115,7 +115,13 @@ export async function GET(request: NextRequest) {
     .select(
       'id, stripe_event_id, event_type, venue_id, stripe_customer_id, ' +
         'stripe_subscription_id, handled, handled_at, handler_error, ' +
-        'duplicate_count, received_at'
+        'duplicate_count, received_at, ' +
+        // Phase 7J — `replay_count` + `replayed_at` so the list can show
+        // an at-a-glance "this row has been replayed N times" without a
+        // detail fetch. We deliberately omit `replayed_by` to keep the
+        // list payload slim (and to avoid leaking operator user ids into
+        // wider tooling); detail endpoint surfaces it for forensics.
+        'replay_count, replayed_at'
     )
     .eq('venue_id', targetVenueId)
     .order('received_at', { ascending: false })

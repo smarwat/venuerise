@@ -358,6 +358,47 @@ async function main() {
     process.exit(1)
   }
 
+  // Phase 7K — optional dunning verification.
+  //
+  // Sending a real dunning email from this script would require driving
+  // the venue into `past_due` (the seed script can do that), generating
+  // a Stripe portal URL (requires a live Stripe customer), and then
+  // manually triggering the Inngest cron. That's a multi-tool dance
+  // that's brittle to script. Instead, BILLING_MATRIX_DUNNING=1 does
+  // the lightweight check: assert /api/readiness reports
+  // `billing_dunning: mounted` (proves the function is registered) and
+  // print the manual-verification procedure for the operator.
+  if (boolEnv('BILLING_MATRIX_DUNNING', false)) {
+    process.stdout.write('\n▶ Dunning verification (BILLING_MATRIX_DUNNING=1)\n')
+    let res
+    try {
+      res = await fetchJson(`${appUrl}/api/readiness`, { headers: {} })
+    } catch (err) {
+      process.stderr.write(`✗ readiness fetch failed: ${err?.message ?? err}\n`)
+      process.exit(1)
+    }
+    const dunning =
+      res.body && typeof res.body === 'object' && 'checks' in res.body
+        ? res.body.checks?.billing_dunning
+        : null
+    if (dunning !== 'mounted') {
+      process.stderr.write(
+        `✗ readiness.checks.billing_dunning expected "mounted", got ${JSON.stringify(dunning)}\n`
+      )
+      process.exit(1)
+    }
+    process.stdout.write(`  ✓ /api/readiness reports billing_dunning: "mounted"\n`)
+    process.stdout.write(
+      `  ~ end-to-end dunning verification requires Inngest + a real\n` +
+        `    past_due subscription. Procedure:\n` +
+        `       1. npm run billing:seed SEED_SUBSCRIPTION_STATUS=past_due\n` +
+        `       2. Open Inngest dashboard → Functions → billing-dunning → Invoke\n` +
+        `       3. Confirm an entry in subscriptions.metadata.dunning_sent\n` +
+        `       4. npm run billing:seed SEED_SUBSCRIPTION_STATUS=none (cleanup)\n` +
+        `    See docs/RUNBOOK.md §2.4g and docs/BILLING-QA.md §7e.\n`
+    )
+  }
+
   // Run probes serially — keeps the output table readable + avoids
   // hammering the rate limiter.
   const probes = buildProbes({ appUrl, accessToken, venueId })

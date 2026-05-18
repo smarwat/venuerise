@@ -82,7 +82,9 @@ export async function GET(
     .select(
       'id, stripe_event_id, event_type, venue_id, stripe_customer_id, ' +
         'stripe_subscription_id, handled, handled_at, handler_error, ' +
-        'duplicate_count, payload, received_at'
+        'duplicate_count, payload, received_at, ' +
+        // Phase 7J replay audit columns.
+        'replayed_at, replayed_by, replay_count'
     )
     .eq('id', parsed.data.id)
     .maybeSingle()
@@ -119,6 +121,12 @@ export async function GET(
     duplicate_count: number
     payload: Record<string, unknown>
     received_at: string
+    // Phase 7J replay audit columns. Older rows (created before migration
+    // 009) will have NULLs for replayed_at + replayed_by and 0 for
+    // replay_count thanks to the column default.
+    replayed_at: string | null
+    replayed_by: string | null
+    replay_count: number
   }
 
   // 5. Tenant binding. Collapse all denials to 404 (don't leak existence).

@@ -56,6 +56,8 @@ interface ReadinessChecks {
   billing_events_log: Check
   /** Phase 7H — compile-time mounted flag for the trial reminder cron. */
   billing_trial_reminder: 'mounted'
+  /** Phase 7K — compile-time mounted flag for the dunning cron. */
+  billing_dunning: 'mounted'
 }
 
 const MIN_INTERNAL_SECRET_LEN = 32
@@ -189,6 +191,8 @@ export async function GET(request: Request) {
       // Phase 7H — informational; the Inngest function exists at build time
       // and its production health is observable in the Inngest dashboard.
       billing_trial_reminder: 'mounted',
+      // Phase 7K — informational; mirrors trial reminder posture.
+      billing_dunning: 'mounted',
     }
   } catch (err) {
     log.error({ err, route: '/api/readiness' }, 'readiness.unexpected_throw')
@@ -201,11 +205,12 @@ export async function GET(request: Request) {
     )
   }
 
-  // Exclude `billing_gate` + `billing_trial_reminder` from the failure set —
-  // they're informational string flags, not checks that need to pass.
+  // Exclude informational string flags from the failure set —
+  // they're not checks that need to pass for prod traffic.
   const INFO_KEYS = new Set<keyof ReadinessChecks>([
     'billing_gate',
     'billing_trial_reminder',
+    'billing_dunning',
   ])
   const failed = (Object.entries(checks) as Array<[keyof ReadinessChecks, Check | string]>)
     .filter(([k, v]) =>

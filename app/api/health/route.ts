@@ -44,6 +44,7 @@ interface HealthBody {
     events_log: 'mounted'
     trial_reminder: 'mounted'
     replay: 'mounted'
+    dunning: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -192,6 +193,10 @@ export async function GET(request: Request) {
       // is compile-time mounted; runtime availability requires Stripe
       // configuration (see `stripe`/`webhook` flags above).
       replay: 'mounted',
+      // 7K — past-due dunning Inngest cron `billing-dunning` is
+      // registered in allJobFunctions; runtime delivery requires Resend
+      // + Stripe portal configuration. Operators verify in Inngest UI.
+      dunning: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

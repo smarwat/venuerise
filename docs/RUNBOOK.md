@@ -337,6 +337,80 @@ where id = '<id>';
 - Replay re-runs the full handler against the freshest event payload. For `customer.subscription.updated`, it overwrites `subscriptions` with current Stripe state. For `invoice.payment_*`, it re-pulls + syncs the subscription. Don't spam replay if the event is already healthy — the response body will tell you (`handler_error: null` + `handled: true`).
 - Replay does NOT trigger downstream emails or in-app notifications. It's a state-sync operation only.
 
+**Phase 7J — replay attribution** (`replayed_at` / `replayed_by` / `replay_count` on `billing_events_log`).
+
+Every successful replay records who triggered it. The atomic increment is done by the `public.record_billing_event_replay(p_event_id, p_user_id)` SECURITY DEFINER function so concurrent replays can't race the counter. Only the service role can EXECUTE it; the replay endpoint is the only caller.
+
+Find recently replayed events (the partial index makes this cheap):
+```sql
+select id, stripe_event_id, event_type, handled, handler_error,
+       replay_count, replayed_at, replayed_by
+from public.billing_events_log
+where replay_count > 0
+order by replayed_at desc
+limit 50;
+```
+
+Who replayed what for a venue:
+```sql
+select e.id, e.stripe_event_id, e.event_type,
+       e.replay_count, e.replayed_at, e.replayed_by,
+       u.email as replayed_by_email
+from public.billing_events_log e
+left join auth.users u on u.id = e.replayed_by
+where e.venue_id='<venue id>' and e.replay_count > 0
+order by e.replayed_at desc;
+```
+
+A handler-failed replay still counts: `replay_count` increments any time dispatch FINISHES (success or failure). Only Stripe-retrieve failures (502 from the replay route) skip the counter — those aborts happen before dispatch.
+
+### 2.4g Dunning didn't fire (Phase 7K)
+
+The dunning workflow is an Inngest cron (`billing-dunning`) on schedule `0 16 * * *` (daily 4pm UTC). For every `past_due` subscription, it sends the venue owner a "update your payment method" email with a Stripe Customer Portal link. Caps at 3 attempts per `current_period_end`; 48h spacing between attempts.
+
+**Symptom**: a customer in `past_due` reports they haven't received any payment-update emails.
+
+1. **Is the function registered?**
+   - `curl $APP/api/health | jq .billing.dunning` → must be `"mounted"`.
+   - Inngest dashboard → Apps → your app → Functions → confirm `billing-dunning` with schedule `0 16 * * *`.
+2. **Did today's run fire?**
+   - Inngest dashboard → Functions → `billing-dunning` → Runs. Most recent successful run today at 16:00 UTC.
+   - If no run: check `INNGEST_SIGNING_KEY` / app sync (§2.6).
+3. **Is the venue actually `past_due`?**
+   ```sql
+   select id, venue_id, status, current_period_end, metadata->'dunning_sent' as dunning_sent
+   from public.subscriptions
+   where venue_id='<venue id>'
+   order by created_at desc limit 5;
+   ```
+   - Status flipped back to `active`? Webhook arrived → no email needed.
+   - `current_period_end` null? Cron filters it out — wait for Stripe to populate or replay the latest `customer.subscription.updated` event (see §2.4e).
+4. **Already at 3 attempts?**
+   - The cron logs `jobs.billing_dunning.escalation_needed` + Sentry-captures with severity warning when a venue hits the cap.
+   - Human intervention: reach out to the customer directly, OR clear out the attempts for this period to re-arm (rare; only do this after confirming the original emails didn't actually arrive):
+     ```sql
+     -- Remove this period's attempts only. Other periods' entries preserved.
+     update public.subscriptions
+     set metadata = jsonb_set(
+       metadata,
+       '{dunning_sent}',
+       (select coalesce(jsonb_agg(e), '[]'::jsonb)
+          from jsonb_array_elements(metadata->'dunning_sent') as e
+         where not (e->>'key' like 'dunning:<venue_id>:<current_period_end YYYY-MM-DD>:%'))
+     )
+     where id='<subscription id>';
+     ```
+5. **Latest attempt < 48h ago?**
+   - The 48h spacing rule blocks rapid retries even when a manual operator invokes the cron. `jobs.billing_dunning.skip_too_recent` log line names the hours since the last send.
+6. **Owner has an email?**
+   - Same SQL as Phase 7H §2.4d step 5. `jobs.billing_dunning.skip_no_owner_email` log line.
+7. **Stripe portal session creatable?**
+   - The cron calls `createBillingPortalSession`. Fails with `billing_customer_not_found` if no `billing_customers` row exists for the venue — happens when a sub was created out-of-band. Backfill `billing_customers` mapping, then re-run.
+   - Other Stripe failures log `jobs.billing_dunning.portal_failed` + Sentry-capture.
+8. **Resend configured?**
+   - `/api/health` → `email: "configured"` in prod. If `"console-fallback"`, the cron logs the email + does NOT consume an attempt slot. Once Resend is wired, the NEXT cron run will send.
+9. **Manually retrigger** from Inngest UI: Functions → `billing-dunning` → "Invoke". The function will scan again, respecting the 48h + 3-attempt guards.
+
 ### 2.5 Stripe webhook failing or checkout returns 503
 
 Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.

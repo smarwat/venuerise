@@ -189,6 +189,23 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10f. Replay attribution (Phase 7J)
+
+Migration 009 added three columns to `billing_events_log` — `replayed_at`, `replayed_by`, `replay_count` — and one SECURITY DEFINER function — `public.record_billing_event_replay(p_event_id uuid, p_user_id uuid) returns integer`.
+
+**Why a function?** PostgREST can't express atomic `replay_count = replay_count + 1` increments without a function. The alternative (read row → write `replay_count + 1`) loses updates under concurrent replays. The function does the increment in one statement and returns the new count so the route doesn't re-query.
+
+**SECURITY DEFINER hardening**:
+- `set search_path = public` so a future schema injection can't redirect the table reference.
+- `revoke all from public` + `grant execute to service_role` — anon + authenticated roles can't call it. The only caller is the replay route (which uses the service-role client).
+- The function only updates `billing_events_log`. It cannot escalate to other tables.
+
+**RLS interaction**: `billing_events_log` SELECT is ADMIN_ROLES via `has_venue_role`. The new audit columns inherit that — admins of the row's venue see `replayed_at`/`replayed_by`/`replay_count`; everyone else sees nothing. `replayed_by` is a `uuid` (the operator's user id), not an email — operator emails stay in `auth.users` which is service-role-only.
+
+**`replayed_by` lifecycle**: `ON DELETE SET NULL` on the FK to `auth.users(id)`. If we ever hard-delete an operator account (Phase 6E doesn't have that path yet, but a future GDPR request might), `replayed_by` becomes NULL — the rows survive with their replay history intact, just unattributed.
+
+---
+
 ## 10e. Stripe event audit log (Phase 7F)
 
 `public.billing_events_log` durably records every Stripe webhook event after signature verification. Three properties make it safe under fire:

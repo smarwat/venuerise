@@ -169,8 +169,9 @@ export async function POST(
     source: 'admin_replay',
   })
 
-  // 8. Update the SAME audit row. Preserve the existing venue_id when
-  // dispatch couldn't resolve a fresh one (avoid stomping good data).
+  // 8. Update the SAME audit row's handled state. Preserve the existing
+  // venue_id when dispatch couldn't resolve a fresh one (avoid stomping
+  // good data).
   await markStripeEventHandled({
     stripeEventId: event.id,
     handled: result.handled,
@@ -179,6 +180,47 @@ export async function POST(
     requestId,
   })
 
+  // 9. Phase 7J — record the replay attempt atomically. The RPC bumps
+  // replay_count, stamps replayed_at + replayed_by, and returns the new
+  // count in one round-trip so we can surface it in the response.
+  //
+  // We only reach this point if Stripe retrieval succeeded AND dispatch
+  // finished (success OR handler failure). A 502 from `stripe.events.retrieve`
+  // above short-circuits the route before this counter increments — that
+  // matches the spec: "If Stripe retrieval fails before dispatch, do not
+  // increment replay_count."
+  let newReplayCount: number | null = null
+  try {
+    const { data: countData, error: rpcErr } = await svc.rpc(
+      'record_billing_event_replay',
+      { p_event_id: row.id, p_user_id: user.id }
+    )
+    if (rpcErr) {
+      reqLog.error(
+        { err: rpcErr, billingEventId: row.id },
+        'billing.replay.audit_rpc_failed'
+      )
+      captureApiError(rpcErr, {
+        requestId,
+        route: '/api/admin/billing-events/[id]/replay',
+        userId: user.id,
+        venueId: row.venue_id,
+      })
+    } else if (typeof countData === 'number') {
+      newReplayCount = countData
+    }
+  } catch (err) {
+    // Audit update failure must not unwind the replay — the dispatcher
+    // already ran and `markStripeEventHandled` already wrote handled state.
+    reqLog.error({ err, billingEventId: row.id }, 'billing.replay.audit_threw')
+    captureApiError(err, {
+      requestId,
+      route: '/api/admin/billing-events/[id]/replay',
+      userId: user.id,
+      venueId: row.venue_id,
+    })
+  }
+
   reqLog.info(
     {
       stripeEventId: event.id,
@@ -186,6 +228,7 @@ export async function POST(
       handled: result.handled,
       ignored: result.ignored,
       hadPreviousError: row.handler_error !== null,
+      replayCount: newReplayCount,
     },
     'billing.replay.completed'
   )
@@ -196,6 +239,7 @@ export async function POST(
       handled: result.handled,
       ignored: result.ignored,
       handler_error: result.handlerError ?? null,
+      replay_count: newReplayCount,
     })
   )
 }

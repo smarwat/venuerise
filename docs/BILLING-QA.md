@@ -343,6 +343,166 @@ curl -H "Cookie: sb-...-auth-token=..." \
 - Rate-limited per caller (`admin:billing-event-replay:{userId}`); accidental click-loops can't blow up the table.
 - Replay does NOT trigger downstream emails or in-app notifications.
 
+### Replay attribution (Phase 7J)
+
+After a successful replay the route calls `public.record_billing_event_replay(p_event_id, p_user_id)` — a SECURITY DEFINER function that atomically increments `replay_count` and stamps `replayed_at` + `replayed_by` in one SQL round-trip. The function returns the new `replay_count` so the response includes it without a second query.
+
+Response now includes `replay_count`:
+```json
+{
+  "replayed": true,
+  "handled": true,
+  "ignored": false,
+  "handler_error": null,
+  "replay_count": 3
+}
+```
+
+Counter increments AFTER Stripe retrieval succeeded and dispatch finished — regardless of whether the handler itself succeeded or failed. So a row whose handler keeps failing AND that an operator replays five times shows `replay_count: 5` with `handled: false`. That's the desired signal: "we know we keep trying."
+
+Counter does NOT increment when Stripe `events.retrieve` returns 502 (event purged, Stripe API down, etc.) — those aborts happen before dispatch even starts.
+
+The list endpoint surfaces `replay_count` + `replayed_at`; the detail endpoint additionally surfaces `replayed_by` (the operator's user id). We deliberately keep `replayed_by` out of the list to keep responses slim and to avoid spreading operator ids into wider tooling. SQL access via service role:
+```sql
+select id, stripe_event_id, handled, replay_count, replayed_at, replayed_by
+from public.billing_events_log
+where replay_count > 0
+order by replayed_at desc;
+```
+
+## 7e. Dunning workflow (Phase 7K)
+
+Daily Inngest cron `billing-dunning`, schedule `0 16 * * *` (4pm UTC ≈ noon ET / 9am PT depending on DST). Mirrors the Phase 7H trial-reminder shape — idempotency lives on `subscriptions.metadata`, never sends unless `sendEmail.delivered === true`, console-fallback doesn't consume an attempt slot.
+
+### Policy
+
+- **Eligibility**: `status='past_due' AND current_period_end IS NOT NULL`. No dunning for `trialing` / `active` / `canceled` / `incomplete` / `none`.
+- **Stop after 3 attempts** per `current_period_end` date. Attempt 4 logs `jobs.billing_dunning.escalation_needed` + Sentry-captures (warning severity) and skips. When the period rolls over OR Stripe flips the sub back to active, the counter naturally resets because the date-in-key changes.
+- **48-hour spacing** between attempts within the same period. Manual operator triggers still respect this guard.
+- **Owner-only**: earliest `venue_members` row with `role='owner'`. Co-owners don't get the email (avoids noise; one dunning per venue per period).
+- **Stripe Customer Portal URL** is created on-demand per email (Stripe expires portal URLs after ~1h; the email is sent now, so the link is fresh when received).
+
+### Idempotency key
+
+```
+dunning:<venue_id>:<current_period_end YYYY-MM-DD>:attempt-<N>
+```
+
+The period date is part of the key so:
+- A new period generates new keys (counter resets).
+- A second cron same-day finds the key already present and skips.
+- The 48h guard layered on top blocks back-to-back attempts within the same period.
+
+### Example metadata after 3 attempts
+
+```json
+{
+  "dunning_sent": [
+    {
+      "kind": "past_due",
+      "key": "dunning:VENUE_ID:2026-06-01:attempt-1",
+      "attempt": 1,
+      "sent_at": "2026-05-20T16:00:00.000Z",
+      "provider": "resend",
+      "message_id": "abc123"
+    },
+    {
+      "kind": "past_due",
+      "key": "dunning:VENUE_ID:2026-06-01:attempt-2",
+      "attempt": 2,
+      "sent_at": "2026-05-22T16:00:00.000Z",
+      "provider": "resend",
+      "message_id": "def456"
+    },
+    {
+      "kind": "past_due",
+      "key": "dunning:VENUE_ID:2026-06-01:attempt-3",
+      "attempt": 3,
+      "sent_at": "2026-05-24T16:00:00.000Z",
+      "provider": "resend",
+      "message_id": "ghi789"
+    }
+  ]
+}
+```
+
+### Candidate query
+
+```sql
+select id, venue_id, status, current_period_end, metadata
+from public.subscriptions
+where status = 'past_due'
+  and current_period_end is not null;
+```
+
+### History query
+
+```sql
+select id, venue_id, metadata->'dunning_sent' as dunning_sent
+from public.subscriptions
+where metadata ? 'dunning_sent';
+```
+
+### Manual trigger (Inngest)
+
+Local dev:
+```bash
+INNGEST_DEV=1 npm run dev
+# in a second shell:
+npx inngest-cli@latest dev
+# then open the Inngest dev UI (default http://localhost:8288) →
+# Functions → billing-dunning → Invoke.
+```
+
+Production:
+Inngest dashboard → Apps → your app → Functions → `billing-dunning` → "Invoke".
+
+Return shape: `{ scanned, sent, skipped, failed, escalation_needed }`. Healthy steady-state: most days return `{ scanned: 0 }` because `past_due` is rare.
+
+### Combined with the seed script (staging)
+
+```bash
+# 1. Move a test venue into past_due.
+SEED_SUBSCRIPTION_SUPABASE_URL=$STAGING_SUPABASE_URL \
+  SEED_SUBSCRIPTION_SERVICE_ROLE_KEY=$STAGING_SERVICE_KEY \
+  SEED_SUBSCRIPTION_VENUE_ID=$STAGING_TEST_VENUE \
+  SEED_SUBSCRIPTION_STATUS=past_due \
+  npm run billing:seed
+
+# 2. Confirm the function is registered.
+BILLING_MATRIX_APP_URL=$STAGING_URL \
+  BILLING_MATRIX_SUPABASE_URL=$STAGING_SUPABASE_URL \
+  BILLING_MATRIX_SUPABASE_ANON_KEY=$STAGING_ANON \
+  BILLING_MATRIX_SUPABASE_SERVICE_ROLE_KEY=$STAGING_SERVICE_KEY \
+  BILLING_MATRIX_TEST_USER_EMAIL=$STAGING_USER \
+  BILLING_MATRIX_TEST_USER_PASSWORD=$STAGING_PASS \
+  BILLING_MATRIX_VENUE_ID=$STAGING_TEST_VENUE \
+  BILLING_MATRIX_DUNNING=1 \
+  npm run billing:matrix
+
+# 3. Invoke the cron from Inngest UI. Watch for an email to the test owner.
+# 4. Verify the metadata row appeared:
+#       select metadata->'dunning_sent' from public.subscriptions where id='...';
+# 5. Restore.
+SEED_SUBSCRIPTION_SUPABASE_URL=$STAGING_SUPABASE_URL \
+  SEED_SUBSCRIPTION_SERVICE_ROLE_KEY=$STAGING_SERVICE_KEY \
+  SEED_SUBSCRIPTION_VENUE_ID=$STAGING_TEST_VENUE \
+  SEED_SUBSCRIPTION_STATUS=none \
+  npm run billing:seed
+```
+
+### Diagnostic checklist
+
+Full no-send playbook: [RUNBOOK.md §2.4g](./RUNBOOK.md). Short version:
+1. `/api/health` → `billing.dunning: "mounted"`.
+2. Inngest dashboard → run was green at 16:00 UTC today.
+3. Candidate SQL returns the venue (status + current_period_end checks).
+4. `metadata.dunning_sent` doesn't already have 3 entries for this period.
+5. Latest entry is > 48h old.
+6. Owner email exists.
+7. Stripe portal can be created (`billing_customers` row exists).
+8. Resend is `configured` in production.
+
 ## 7c. Trial reminder cron (Phase 7H)
 
 Daily Inngest function `billing-trial-reminder`, cron `0 14 * * *` (2pm UTC ≈ 9am ET / 8am CT depending on DST). For every `subscriptions` row whose `trial_end` lands on (now + 3 days, UTC) and hasn't been reminded yet, the owner gets a "Your VenueRise trial ends in 3 days" email.
