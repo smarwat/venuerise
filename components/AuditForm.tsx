@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase/client'
 
 const volumes = [
   'Under 25 inquiries / month',
@@ -51,6 +51,7 @@ export default function AuditForm() {
 
     setStatus('submitting')
 
+    const supabase = createClient()
     const { error } = await supabase.from('audit_leads').insert({
       name,
       venue_name: venue,

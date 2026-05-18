@@ -50,7 +50,7 @@ export default function Navbar() {
         className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
           scrolled
             ? 'bg-white/95 backdrop-blur-xl border-b border-black/[0.06] shadow-sm'
-            : 'bg-transparent'
+            : 'bg-[#070B1A]/20 backdrop-blur-md border-b border-white/[0.08]'
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -58,7 +58,11 @@ export default function Navbar() {
             {/* Logo */}
             <a href="#hero" onClick={(e) => handleScroll(e, '#hero')} className="flex items-center gap-2.5 group">
               <VenueLogo />
-              <span className="font-display font-bold text-lg text-[#0A0A1A] tracking-tight group-hover:text-[#1A6FFF] transition-colors">
+              <span
+                className={`font-display font-bold text-lg tracking-tight group-hover:text-[#4D90FF] transition-colors ${
+                  scrolled ? 'text-[#0A0A1A]' : 'text-white'
+                }`}
+              >
                 VenueRise
               </span>
             </a>
@@ -70,7 +74,11 @@ export default function Navbar() {
                   key={link.href}
                   href={link.href}
                   onClick={(e) => handleScroll(e, link.href)}
-                  className="px-4 py-2 text-sm text-[#4A5568] hover:text-[#0A0A1A] transition-colors rounded-lg hover:bg-[#1A6FFF]/[0.05]"
+                  className={`px-4 py-2 text-sm transition-colors rounded-lg ${
+                    scrolled
+                      ? 'text-[#4A5568] hover:text-[#0A0A1A] hover:bg-[#1A6FFF]/[0.05]'
+                      : 'text-white/80 hover:text-white hover:bg-white/[0.08]'
+                  }`}
                 >
                   {link.label}
                 </a>
@@ -82,7 +90,7 @@ export default function Navbar() {
               <a
                 href="#audit"
                 onClick={(e) => handleScroll(e, '#audit')}
-                className="flex items-center gap-2 px-5 py-2.5 bg-[#1A6FFF] text-white text-sm font-semibold rounded-xl hover:bg-[#1058D6] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(26,111,255,0.35)]"
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#1A6FFF] text-white text-sm font-semibold rounded-xl hover:bg-[#1058D6] transition-all duration-200 hover:shadow-[0_6px_24px_rgba(26,111,255,0.45)]"
               >
                 Book Free Audit
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -91,7 +99,9 @@ export default function Navbar() {
 
             {/* Mobile menu button */}
             <button
-              className="lg:hidden p-2 text-[#4A5568] hover:text-[#0A0A1A] transition-colors"
+              className={`lg:hidden p-2 transition-colors ${
+                scrolled ? 'text-[#4A5568] hover:text-[#0A0A1A]' : 'text-white/85 hover:text-white'
+              }`}
               onClick={() => setMobileOpen(!mobileOpen)}
               aria-label="Toggle menu"
             >
