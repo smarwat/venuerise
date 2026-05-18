@@ -36,6 +36,7 @@ interface HealthBody {
     rls_membership: 'ok' | 'missing'
   }
   onboarding: { api: 'mounted' }
+  team: { invitations: 'mounted' }
   uptime_ms: number
   ts: string
 }
@@ -160,6 +161,8 @@ export async function GET(request: Request) {
     // Phase 6C — bumped manually if the onboarding API surface changes.
     // Compile-time presence is the signal; we don't probe by HTTP-ing ourselves.
     onboarding: { api: 'mounted' },
+    // Phase 6D — team invitation surface presence signal.
+    team: { invitations: 'mounted' },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
   }
