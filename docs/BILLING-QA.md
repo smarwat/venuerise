@@ -207,6 +207,40 @@ After 30+ minutes of stable behavior in staging, the gate is safe to enable in p
 
 ---
 
+## 7a. Audit log inspection (Phase 7F)
+
+Every Stripe webhook event is recorded in `public.billing_events_log` before dispatch — see [SECURITY.md §10e](./SECURITY.md) for the safety posture. The most useful operator queries:
+
+```sql
+-- recent failures across all tenants (service-role read)
+select stripe_event_id, event_type, handler_error, venue_id, received_at
+from public.billing_events_log
+where handled = false and handler_error is not null
+  and received_at > now() - interval '24 hours'
+order by received_at desc limit 50;
+
+-- Stripe retried us — anything > 0 means our previous response was 5xx
+-- or Stripe network-flaked.
+select stripe_event_id, event_type, duplicate_count, received_at
+from public.billing_events_log
+where duplicate_count > 0
+order by duplicate_count desc, received_at desc limit 20;
+
+-- timeline for one venue
+select stripe_event_id, event_type, handled, handler_error,
+       duplicate_count, received_at
+from public.billing_events_log
+where venue_id='<venue id>'
+order by received_at desc limit 30;
+```
+
+To **replay an event** from the Stripe dashboard:
+Stripe → Developers → Webhooks → your endpoint → click an event → "Resend".
+
+Our webhook handler treats a redelivery as: insert hits the UNIQUE on `stripe_event_id` → helper bumps `duplicate_count` and returns `duplicate: true` → handler short-circuits with HTTP 200 `{ received: true, duplicate: true }`. Subscription state is NOT re-synced (it doesn't need to be — Stripe already replayed the same payload).
+
+If you need to **force a re-sync**, change something Stripe-side (e.g. add metadata, toggle cancel-at-period-end) so Stripe emits a fresh `customer.subscription.updated` event with a NEW `stripe_event_id`. That will land as a new audit row and run the handler.
+
 ## 7. Adding a new write route
 
 When you add a new mutation endpoint, you MUST:

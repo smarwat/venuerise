@@ -189,6 +189,27 @@ Suppressions (bounces + complaints) are written to `public.suppressions` and con
 
 ---
 
+## 10e. Stripe event audit log (Phase 7F)
+
+`public.billing_events_log` durably records every Stripe webhook event after signature verification. Three properties make it safe under fire:
+
+1. **Insert-before-dispatch.** Recording happens before the subscription sync runs, so a handler crash doesn't lose the event-receipt evidence.
+2. **UNIQUE on `stripe_event_id`.** Stripe redeliveries hit the constraint, we bump `duplicate_count`, and the handler short-circuits — no double-fire on side effects (current sync is idempotent on `stripe_subscription_id`, but future side effects like emails benefit from the guard).
+3. **Failure-tolerant.** If the audit log write itself throws (DB outage, RLS misconfig), the helper logs + Sentry-captures internally and returns `{ logId: null }`. The webhook keeps moving and stays responsive to Stripe — a 5xx back would just trigger Stripe's retry machine, which is worse than missing audit rows.
+
+**RLS posture**:
+- SELECT for ADMIN_ROLES (`owner` / `admin`) of the row's venue. Rows with `venue_id IS NULL` (events we couldn't resolve to a tenant) are invisible to authenticated users — operators inspect via service role.
+- No INSERT/UPDATE/DELETE policy for `authenticated` → service-role-only writes from the webhook handler.
+
+**PII / payload posture**:
+- The full Stripe event payload is stored verbatim in `payload jsonb`. Stripe payloads include customer email, partial card details (last4, brand), and billing addresses.
+- The table is never exposed via product APIs — only forensic / admin surfaces. Treat payload fields as ADMIN-eyes-only and do NOT echo them into customer-facing logs or emails.
+- Retention: indefinite for now. A future migration may add a partition-drop policy for rows older than 12 months once we see real volume.
+
+**No env vars required** — the table is enabled by migration 008 and used unconditionally by `/api/stripe/webhook`.
+
+---
+
 ## 10d. Billing QA scripts (Phase 7E)
 
 Two scripts verify the gate without touching Stripe:

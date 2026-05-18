@@ -52,6 +52,8 @@ interface ReadinessChecks {
   stripe_price: Check
   /** 'enabled' / 'disabled' — informational, never fails readiness. */
   billing_gate: 'enabled' | 'disabled'
+  /** Phase 7F — does the audit table exist + accept reads? */
+  billing_events_log: Check
 }
 
 const MIN_INTERNAL_SECRET_LEN = 32
@@ -132,6 +134,28 @@ function checkBillingGate(): 'enabled' | 'disabled' {
   return process.env.BILLING_GATE_ENABLED === '1' ? 'enabled' : 'disabled'
 }
 
+/**
+ * Phase 7F — does the billing_events_log table exist + accept reads?
+ *
+ * Uses a HEAD-style count so no row data is fetched (and no count is
+ * exposed in the response). If the table is missing (migration 008 not
+ * applied), Postgres returns a 42P01 error which surfaces here as
+ * 'missing' — production readiness flips to 503.
+ */
+async function checkBillingEventsLog(): Promise<Check> {
+  try {
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from('billing_events_log')
+      .select('id', { count: 'exact', head: true })
+      .limit(1)
+    if (error) return 'missing'
+    return 'ok'
+  } catch {
+    return 'missing'
+  }
+}
+
 function isPassing(c: Check): boolean {
   return c === 'ok' || c === 'configured'
 }
@@ -158,6 +182,8 @@ export async function GET(request: Request) {
       stripe_price: checkStripePrice(),
       // Phase 7D — informational only; never flips readiness off.
       billing_gate: checkBillingGate(),
+      // Phase 7F — audit table existence check (required in production).
+      billing_events_log: await checkBillingEventsLog(),
     }
   } catch (err) {
     log.error({ err, route: '/api/readiness' }, 'readiness.unexpected_throw')

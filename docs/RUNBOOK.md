@@ -168,6 +168,60 @@ The canonical entitlement matrix is in [docs/BILLING-QA.md](./BILLING-QA.md). Re
    The seed script ONLY touches rows tagged `metadata.source='billing_gate_test'`. **Never run it in production** — there's no production guardrail beyond operator discipline.
 6. Once the matrix script passes against the desired state, restore production-trial state with `SEED_SUBSCRIPTION_STATUS=trialing` and re-enable the gate.
 
+### 2.4c Stripe billing event audit log (Phase 7F)
+
+Every event Stripe sends us is persisted to `public.billing_events_log` before dispatch. Use it for "what did Stripe tell us, and did we cope?".
+
+**Inspect recent events for a venue**:
+```sql
+select stripe_event_id, event_type, handled, handler_error,
+       duplicate_count, received_at
+from public.billing_events_log
+where venue_id='<venue id>'
+order by received_at desc
+limit 20;
+```
+
+**Find recent failures across all tenants** (operator surface — bypass RLS via service role):
+```sql
+select stripe_event_id, event_type, handler_error, venue_id, received_at
+from public.billing_events_log
+where handled = false
+  and handler_error is not null
+  and received_at > now() - interval '24 hours'
+order by received_at desc
+limit 50;
+```
+
+**Spot Stripe redeliveries** (anything > 0 means Stripe retried us):
+```sql
+select stripe_event_id, event_type, duplicate_count, received_at
+from public.billing_events_log
+where duplicate_count > 0
+order by duplicate_count desc, received_at desc
+limit 20;
+```
+
+**Events for a specific Stripe customer** (when you only have the Stripe id, not the venue):
+```sql
+select stripe_event_id, event_type, handled, venue_id, received_at
+from public.billing_events_log
+where stripe_customer_id='cus_...'
+order by received_at desc limit 20;
+```
+
+**Customer reports billing weirdness, Stripe dashboard shows event delivered**:
+1. Find the event in our log:
+   ```sql
+   select * from public.billing_events_log
+   where stripe_event_id='evt_...';
+   ```
+2. If `handled = false` and `handler_error` is populated → look the error up in Sentry (`webhook.stripe.handler_failed`).
+3. **Replay the event from Stripe**: Dashboard → Developers → Webhooks → your endpoint → click the event → "Resend". Our handler is idempotent on `stripe_subscription_id`; the audit row will bump `duplicate_count` and the subscription sync will replay.
+4. After replay, re-check: `handled` should flip to `true` and `handler_error` should clear (next replay overwrites).
+
+**If the audit log itself is failing** (e.g. table missing, RLS misconfig): hit `/api/readiness` and look for `billing_events_log: "missing"` in `failed[]`. The webhook handler keeps running — losing audit coverage doesn't take down billing — but the operator surface goes dark. Re-apply migration 008.
+
 ### 2.5 Stripe webhook failing or checkout returns 503
 
 Symptoms: clicking "Subscribe" returns 503, OR Stripe → Webhooks → "Recent attempts" shows 401s/5xxs.

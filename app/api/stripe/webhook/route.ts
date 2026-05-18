@@ -9,6 +9,10 @@ import {
   BillingNotConfiguredError,
 } from '@/lib/billing/stripe'
 import { syncSubscriptionFromStripeSubscription } from '@/lib/billing/billing-service'
+import {
+  logStripeEventReceived,
+  markStripeEventHandled,
+} from '@/lib/billing/billing-events-log'
 
 /**
  * POST /api/stripe/webhook
@@ -77,16 +81,51 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 3. Dispatch.
+  // 3. Phase 7F — audit the event BEFORE dispatch.
+  //
+  // If Stripe redelivers the same event (e.g. our previous response was
+  // a 5xx during a brief Supabase blip), we short-circuit so the handler
+  // doesn't run twice. The webhook handlers are idempotent anyway, but
+  // skipping the redelivery keeps invoice-payment-succeeded → email-send
+  // double-fires off the table for any future side effect.
+  //
+  // Audit log failures are intentionally silent — the helper logs +
+  // Sentry-captures internally and returns `{ logId: null, duplicate: false }`
+  // so we keep moving. Losing audit coverage is far less bad than a 5xx
+  // back to Stripe (which would retry and re-trigger downstream effects).
+  const audit = await logStripeEventReceived({ event, requestId })
+
+  if (audit.duplicate) {
+    reqLog.info(
+      { type: event.type, id: event.id },
+      'stripe.webhook.duplicate'
+    )
+    return respond(
+      NextResponse.json({ received: true, duplicate: true, handled: false })
+    )
+  }
+
+  // 4. Dispatch (only for known event types).
   if (!HANDLED_EVENTS.has(event.type)) {
     reqLog.info({ type: event.type, id: event.id }, 'stripe.webhook.ignored')
+    // Intentionally-ignored events are still "handled" from an audit
+    // standpoint — we made a deliberate decision to no-op. This lets the
+    // "what failed?" query (handled=false) stay focused on real failures.
+    await markStripeEventHandled({
+      stripeEventId: event.id,
+      handled: true,
+      error: null,
+      requestId,
+    })
     return respond(NextResponse.json({ received: true, handled: false }))
   }
 
+  let handlerError: Error | null = null
   try {
     await dispatch(event, requestId)
   } catch (err) {
     // Log + capture but don't fail the webhook — re-sync is idempotent.
+    handlerError = err instanceof Error ? err : new Error(String(err))
     reqLog.error(
       { err, type: event.type, id: event.id },
       'stripe.webhook.handler_failed'
@@ -96,9 +135,23 @@ export async function POST(request: NextRequest) {
       route: '/api/stripe/webhook',
     })
     // 200 so Stripe stops retrying; the operator gets paged via Sentry.
+    // Tradeoff documented in lib/billing/billing-events-log.ts: if Stripe
+    // retries we'd handle the same event twice, and `subscriptions` is
+    // idempotent on stripe_subscription_id but other future side-effects
+    // (emails, metrics) might not be.
   }
 
-  return respond(NextResponse.json({ received: true, handled: true }))
+  // 5. Mark handled status in the audit log.
+  await markStripeEventHandled({
+    stripeEventId: event.id,
+    handled: handlerError === null,
+    error: handlerError?.message ?? null,
+    requestId,
+  })
+
+  return respond(
+    NextResponse.json({ received: true, handled: handlerError === null })
+  )
 }
 
 // ---------------------------------------------------------------------------
