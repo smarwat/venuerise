@@ -1454,6 +1454,169 @@ where id = '<subscription_id>';
 
 The next morning's cron run will include the venue again. No re-signup email is sent — the venue owner gets the digest naturally on the next eligible day.
 
+### Digest is off but should be on (Phase 8T)
+
+Customer says they're not getting the daily digest and they didn't unsubscribe:
+
+1. **Inspect cadence + legacy flag** via the admin API:
+   ```bash
+   curl -s "$APP/api/admin/digest/preferences?venue_id=<uuid>" \
+     -b "$COOKIE" | jq .
+   ```
+   - `cadence: "off"` AND `digest_disabled: true` → opt-out is in effect (Phase 8S unsubscribe OR Phase 8T admin POST).
+   - `cadence: "weekly"` AND today isn't Monday UTC → expected skip.
+   - `cadence: "daily"` AND `digest_disabled: false` → cron SHOULD be sending; investigate via the §7 "Operator activity digest did not send" subsection.
+
+2. **Re-enable via admin POST** (atomic, preserves all other metadata):
+   ```bash
+   curl -s -X POST "$APP/api/admin/digest/preferences" \
+     -b "$COOKIE" \
+     -H "Content-Type: application/json" \
+     -d '{"venue_id":"<uuid>","cadence":"daily"}' | jq .
+   ```
+   Confirms with `{"success":true,"venue_id":…,"subscription_id":…,"cadence":"daily"}`.
+
+3. **Verify metadata cleanly flipped**:
+   ```sql
+   select id,
+          metadata->>'digest_cadence' as cadence,
+          metadata->>'digest_disabled' as legacy_flag,
+          metadata->>'digest_disabled_at' as legacy_flipped_at
+   from public.subscriptions
+   where venue_id = '<uuid>'
+   order by created_at desc
+   limit 1;
+   ```
+   Expect `cadence='daily'`, `legacy_flag IS NULL`, `legacy_flipped_at IS NULL`.
+
+4. The next morning's cron will pick the venue back up.
+
+### Digest cadence wrong (Phase 8T)
+
+| Cadence | Sends on | Skip log when not sending |
+|---|---|---|
+| `daily` | every morning 8am UTC | (sends always) |
+| `weekly` | Monday UTC only | `operator_digest.skipped_cadence` |
+| `off` | never | `operator_digest.skipped_disabled` |
+
+If a customer expects weekly but is getting daily (or vice versa):
+
+```sql
+-- raw cadence + legacy flag
+select metadata->>'digest_cadence'     as cadence,
+       metadata->>'digest_disabled'    as legacy_flag,
+       metadata->>'digest_disabled_at' as legacy_flipped_at
+from public.subscriptions
+where venue_id = '<uuid>'
+order by created_at desc
+limit 1;
+```
+
+Remember: `digest_disabled === true` overrides cadence and forces `off`. If you want weekly and the flag is set, POST to `/api/admin/digest/preferences` with `{cadence:"weekly"}` — the writer strips the legacy flag for you.
+
+### Audit search short query not finding metadata (Phase 8T)
+
+If `?q=` returns rows that match scalar columns but DOESN'T find rows whose `metadata` jsonb contains the term:
+
+1. **Check the term length.** Terms shorter than 3 characters skip the metadata RPC and only search scalar columns (`actor_id`, `action`, `previous_status`, `new_status`, `reason`, `source_ip`, `user_agent`). This is intentional — trigram indexes need ≥ 3 chars to outperform a Seq Scan.
+
+2. **Use a longer search term.** `?q=AI` won't find metadata matches; `?q=anthropic_event_id` will.
+
+3. **Verify the log line** says which path served the request:
+   ```bash
+   grep 'admin.tours_status_events.completed' <log source> | grep 'q":"<term>"'
+   ```
+   The `filters.q_mode` value distinguishes:
+   - `none` → no `q` filter applied
+   - `scalar_short` → `q.length < 3`, scalar-only path
+   - `metadata_rpc` → `q.length >= 3`, full RPC path (searches metadata)
+
+### Admin says they stopped receiving digests (Phase 8U)
+
+An admin reports the daily/weekly digest stopped arriving. Walk the layers:
+
+1. **Check the caller's effective preference** via the admin GET (run as the affected user, not as another admin):
+   ```bash
+   curl -s "$APP/api/admin/digest/preferences" -b "$COOKIE" | jq .
+   ```
+   - `cadence: "off"` AND `source: "member"` → the user opted themselves out via the billing card. They can re-enable from the same card.
+   - `cadence: "off"` AND `source: "subscription"` → venue-level cadence was set to off. The user can override with their own preference.
+   - `cadence: "off"` AND `source: "legacy_disabled"` → the Phase 8K unsubscribe link was clicked. Same fix — POST a member-level `daily` preference.
+   - `cadence: "weekly"` → today must be the chosen weekly day (UTC).
+
+2. **Inspect raw member metadata** to confirm:
+   ```sql
+   select user_id,
+          metadata->>'digest_cadence'     as cadence,
+          metadata->>'digest_weekly_day'   as weekly_day,
+          metadata->>'digest_disabled_at' as disabled_at
+   from public.venue_members
+   where venue_id = '<uuid>' and user_id = '<user uuid>';
+   ```
+
+3. **Inspect outbound_messages** for the recipient on a recent UTC date:
+   ```sql
+   select created_at, status, error,
+          metadata->>'tour_digest_cadence'         as cadence,
+          metadata->>'tour_digest_weekly_day'      as weekly_day,
+          metadata->>'tour_digest_recipient_user_id' as user_id
+   from public.outbound_messages
+   where venue_id = '<uuid>'
+     and related_table = 'tour_status_events'
+     and (metadata->>'tour_digest_recipient_user_id')::uuid = '<user uuid>'
+   order by created_at desc
+   limit 5;
+   ```
+   - Rows with `status='queued'` / `'delivered'` → digest IS being sent to that user; their mail client might be filtering.
+   - No rows at all in the last 24h → confirm cadence permits today (daily, or weekly + matching UTC day).
+
+4. **Re-enable via POST** (writes member metadata atomically):
+   ```bash
+   curl -s -X POST "$APP/api/admin/digest/preferences" \
+     -b "$COOKIE" -H "Content-Type: application/json" \
+     -d '{"cadence":"daily"}' | jq .
+   ```
+
+### Weekly digest sent on wrong day (Phase 8U)
+
+If the digest fires on a day other than what the operator expected:
+
+1. **Confirm the chosen day**:
+   ```sql
+   select metadata->>'digest_weekly_day' as day
+   from public.venue_members
+   where venue_id = '<uuid>' and user_id = '<user uuid>';
+   ```
+   Values are 3-letter UTC codes: `sun mon tue wed thu fri sat`.
+
+2. **Confirm the matching day in UTC**:
+   ```sql
+   select to_char((now() at time zone 'UTC')::date, 'dy') as utc_day_3letter;
+   ```
+   Expect lowercase 3-letter codes. `'mon'` matches `digest_weekly_day = 'mon'`.
+
+3. **Remember: weekly day is UTC, not local time.** A venue owner in California expecting a Monday email might see it land Sunday night local time when the cron fires at 8am Monday UTC. Documented in the UI as "(UTC)" on the day picker.
+
+4. If the value is wrong, fix via POST `{cadence:'weekly',weekly_day:'tue'}` or directly:
+   ```sql
+   update public.venue_members
+   set metadata = jsonb_set(
+     metadata,
+     '{digest_weekly_day}',
+     '"wed"'::jsonb,
+     true
+   )
+   where venue_id = '<uuid>' and user_id = '<user uuid>';
+   ```
+
+### Search hint showing unexpectedly (Phase 8U)
+
+If an operator reports the amber "Searching core fields only…" pill appearing for queries they think should include metadata:
+
+- The pill renders whenever `qInput.trim().length` is 1 or 2.
+- It's the UI signal for Phase 8T's `?q=` short-circuit: 1-2 char terms skip the metadata RPC because the trigram index needs ≥ 3 chars to win.
+- **Fix**: type a longer search term. `?q=AI` → pill shown; `?q=anthropic` → pill hidden + metadata searched.
+
 ### Backfilling legacy tours (Phase 8N)
 
 A venue that's been on VenueRise since before Phase 8M will have tours with no audit events at all. The Audit drawer renders an empty state for those, which is technically correct but unhelpful. To seed a synthetic baseline:

@@ -2221,6 +2221,328 @@ where id = '<subscription_id>';
 
 The next morning's cron run will include the venue again.
 
+## 7x. Operator digest cadence + reactivation (Phase 8T)
+
+Phase 8S shipped binary opt-out via `subscriptions.metadata.digest_disabled`. Phase 8T promotes it to a three-value cadence model with an admin UI + read/write endpoints, while keeping the legacy flag fully working.
+
+### Cadence values
+
+```ts
+type DigestCadence = 'daily' | 'weekly' | 'off'
+```
+
+| Value | Send schedule |
+|---|---|
+| `daily`  | Cron sends every morning (8am UTC). |
+| `weekly` | Cron sends only on Monday UTC (`Date.getUTCDay() === 1`). |
+| `off`   | Cron skips entirely. |
+
+### Backward compatibility rules
+
+| Metadata state | Effective cadence |
+|---|---|
+| `digest_disabled === true` (regardless of `digest_cadence`) | `off` |
+| `digest_cadence` is a valid enum value | that value |
+| Missing cadence + no `digest_disabled` | `daily` (default) |
+
+Setting cadence to `off` ALSO writes `digest_disabled = true` + `digest_disabled_at`. Setting cadence to `daily`/`weekly` REMOVES both legacy keys. The Phase 8S unsubscribe route now writes BOTH `digest_disabled = true` AND `digest_cadence = 'off'` so the two signals are always coherent.
+
+### Endpoints
+
+**`GET /api/admin/digest/preferences[?venue_id=<uuid>]`**
+
+Returns the current cadence + legacy flag state:
+
+```json
+{
+  "venue_id": "<uuid>",
+  "subscription_id": "<uuid|null>",
+  "cadence": "daily|weekly|off",
+  "digest_disabled": true | false,
+  "digest_disabled_at": "<iso|null>"
+}
+```
+
+When no subscription exists yet (rare — would be pre-onboarding), returns `cadence: "daily"`, `subscription_id: null`, `digest_disabled: false`.
+
+**`POST /api/admin/digest/preferences`**
+
+```json
+{
+  "venue_id": "<uuid optional>",
+  "cadence": "daily|weekly|off"
+}
+```
+
+Updates the latest subscription row for the target venue. Returns:
+
+```json
+{
+  "success": true,
+  "venue_id": "<uuid>",
+  "subscription_id": "<uuid>",
+  "cadence": "daily|weekly|off"
+}
+```
+
+Failure modes (all `400`/`404`/`500`):
+- `validation_failed` — body shape / enum mismatch.
+- `subscription_not_found` — no subscription row exists for the venue (404).
+- `unexpected_error` — DB read/write failure (500, Sentry-captured).
+
+Both methods enforce `requireAdmin()` + optional cross-tenant `requireVenueRole(ADMIN_ROLES)`. Rate-limited per caller (GET: `admin:digest-preferences:{userId}`, POST: `admin:digest-preferences-update:{userId}`). `X-Request-Id` set on every response.
+
+### Metadata before / after examples
+
+**Before** (legacy Phase 8S unsubscribe):
+
+```jsonc
+{
+  "stripe_subscription_id": "sub_…",
+  "digest_disabled": true,
+  "digest_disabled_at": "2026-05-18T18:00:00.000Z"
+}
+```
+
+**After POST `{ cadence: 'weekly' }`**:
+
+```jsonc
+{
+  "stripe_subscription_id": "sub_…",
+  "digest_cadence": "weekly"
+  // digest_disabled + digest_disabled_at REMOVED
+}
+```
+
+**After POST `{ cadence: 'off' }`**:
+
+```jsonc
+{
+  "stripe_subscription_id": "sub_…",
+  "digest_cadence": "off",
+  "digest_disabled": true,
+  "digest_disabled_at": "2026-05-19T08:00:00.000Z"
+}
+```
+
+### Digest cron behavior (updated)
+
+Per-venue skip paths in priority order:
+1. `cadence === 'off'` → log `operator_digest.skipped_disabled`, increment `skipped`.
+2. `cadence === 'weekly'` AND `now.getUTCDay() !== 1` → log `operator_digest.skipped_cadence`, increment `skipped`.
+3. Existing idempotency probe via `outbound_messages` (already-sent-today).
+4. Existing owner-email lookup / suppression / console-fallback paths.
+
+Neither cadence-skip path is Sentry-captured — they're expected operator preferences.
+
+Email body now includes a one-line cadence footer:
+- `daily` → "You are receiving daily activity summaries."
+- `weekly` → "You are receiving weekly activity summaries."
+
+### Re-enable a venue from SQL (still supported)
+
+```sql
+update public.subscriptions
+set metadata = (metadata - 'digest_disabled' - 'digest_disabled_at')
+            || jsonb_build_object('digest_cadence', 'daily')
+where id = '<subscription_id>';
+```
+
+The admin POST endpoint does the same operation atomically; SQL is the operator-of-last-resort path.
+
+## 7y. Short audit search optimization (Phase 8T)
+
+Trigram indexes (Phase 8S `tour_status_events_metadata_text_trgm_idx`) need ≥ 3 character selectivity to win over a Seq Scan. For 1–2 char `?q=` values the planner would still execute a bitmap probe that returns most of the table — pure overhead.
+
+Phase 8T short-circuits this:
+
+| `q` length | Path | Searches metadata | Log `qMode` |
+|---|---|---|---|
+| absent | PostgREST chain, no `q` filter | n/a | `none` |
+| 1 or 2 chars | PostgREST chain + scalar `.or()` over `actor_id` / `action` / `previous_status` / `new_status` / `reason` / `source_ip` / `user_agent` | **no** | `scalar_short` |
+| ≥ 3 chars | `search_tour_status_events` RPC (Phase 8R/8S, indexed via the trigram GIN) | **yes** | `metadata_rpc` |
+
+Examples:
+
+```bash
+# Short query — scalar columns only, no metadata search, no RPC call
+GET /api/admin/tours/status-events?q=AI
+GET /api/admin/tours/status-events?q=ab
+
+# Long query — full search including metadata::text via the RPC
+GET /api/admin/tours/status-events?q=past_due_7_days
+GET /api/admin/tours/status-events?q=stripe_event
+```
+
+JSON, CSV, and streamed CSV all honor the same short-circuit. Cursor pagination + every other filter combine normally.
+
+The completion log line `admin.tours_status_events.completed` carries `filters.q_mode` so operators can grep for path attribution:
+
+```bash
+# any short-query that DID get a metadata match would be a bug
+grep 'admin.tours_status_events.completed' <log source> | grep 'scalar_short'
+```
+
+## 7z. Per-user digest preferences (Phase 8U)
+
+Phase 8T shipped venue-level digest cadence on `subscriptions.metadata`. Phase 8U promotes it to per-user preferences on `venue_members.metadata` so each admin/owner controls their own digest independently.
+
+### Effective-preference priority
+
+For each (venue, member) pair the cron resolves cadence by walking the chain in order:
+
+1. **Member preference** — `venue_members.metadata.digest_cadence` (per-user, set via the billing-page card).
+2. **Venue fallback** — `subscriptions.metadata.digest_cadence` (set via the Phase 8T admin POST or SQL).
+3. **Legacy disabled flag** — `subscriptions.metadata.digest_disabled === true` → effective `'off'`.
+4. **Default** — `'daily'`.
+
+Weekly day-of-week (when cadence resolves to `'weekly'`) follows the same source chain: member-level `digest_weekly_day` if present, else subscription-level, else `'mon'`.
+
+### Metadata examples
+
+**Member opted into Wednesday weekly:**
+```jsonc
+// venue_members.metadata
+{ "digest_cadence": "weekly", "digest_weekly_day": "wed" }
+```
+
+**Member opted fully out (even if venue fallback says daily):**
+```jsonc
+// venue_members.metadata
+{ "digest_cadence": "off", "digest_disabled_at": "2026-05-19T08:00:00.000Z" }
+```
+
+**Member explicitly opted IN (overrides legacy venue-level disabled flag):**
+```jsonc
+// venue_members.metadata
+{ "digest_cadence": "daily" }
+
+// subscriptions.metadata
+{ "digest_disabled": true, "digest_disabled_at": "2026-05-01T..." }
+```
+→ Member receives daily digests; the legacy venue flag is bypassed because the member set their own preference.
+
+### Endpoints — `/api/admin/digest/preferences`
+
+**`GET ?venue_id=<uuid>`** returns the caller's effective preference + raw fallback info:
+
+```json
+{
+  "venue_id": "<uuid>",
+  "user_id": "<uuid>",
+  "subscription_id": "<uuid|null>",
+  "cadence": "daily|weekly|off",
+  "weekly_day": "sun|mon|tue|wed|thu|fri|sat|null",
+  "source": "member|subscription|legacy_disabled|default",
+  "member_metadata": {
+    "digest_cadence": "weekly",
+    "digest_weekly_day": "wed",
+    "digest_disabled_at": null
+  },
+  "subscription_fallback": {
+    "digest_cadence": "daily",
+    "digest_weekly_day": null,
+    "digest_disabled": false,
+    "digest_disabled_at": null
+  }
+}
+```
+
+**`POST`** with body:
+
+```json
+{ "venue_id": "<uuid optional>", "cadence": "daily|weekly|off", "weekly_day": "sun|mon|tue|wed|thu|fri|sat (optional)" }
+```
+
+Rules:
+- `cadence === 'weekly'` and `weekly_day` absent → defaults to `'mon'`.
+- `cadence` ≠ `'weekly'` → `weekly_day` is ignored / removed.
+- Writes target `venue_members` row for the authenticated user (NOT the subscription row). The venue-level Phase 8T POST is preserved for venue-wide defaults but is now legacy; the UI uses the per-user POST.
+
+Response on success:
+```json
+{ "success": true, "venue_id": "<uuid>", "user_id": "<uuid>", "cadence": "weekly", "weekly_day": "wed" }
+```
+
+Failure modes (HTTP 400 / 404 / 500):
+- `validation_failed` — bad body shape.
+- `member_not_found` (404) — caller isn't a `venue_members` row for the target venue (rare; usually cross-tenant with legacy `owner_user_id`-only access).
+- `unexpected_error` (500, Sentry-captured) — DB error during lookup or update.
+
+Both methods: `requireAdmin()` + optional cross-tenant `requireVenueRole(ADMIN_ROLES)`, rate-limited, `X-Request-Id` on every response.
+
+### Cron fan-out behavior
+
+For each venue with ≥ 1 event in the lookback window:
+
+1. Load the venue's subscription metadata once (the fallback).
+2. Build the venue-level unsubscribe URL once (signed with `DIGEST_UNSUBSCRIBE_SECRET`).
+3. `findDigestRecipients` loads all `venue_members` rows where role ∈ `{owner, admin}`, capped at `MAX_RECIPIENTS_PER_VENUE = 10`, ordered by `created_at` (deterministic). For each, resolve email via `auth.admin.getUserById`; members without an email are dropped silently.
+4. For each recipient:
+   - `resolveEffectiveDigestPreference({memberMetadata, subscriptionMetadata, now})` returns `{cadence, weeklyDay, shouldSend, reason, source}`.
+   - If `shouldSend === false`:
+     - `reason === 'off'` → log `operator_digest.skipped_disabled`, increment `skipped`.
+     - `reason === 'weekly_wrong_day'` → log `operator_digest.skipped_cadence`, increment `skipped`.
+   - Else: per-recipient idempotency probe via `digestAlreadySentToRecipientToday` (keys on `tour_digest_date` + `tour_digest_recipient_user_id`). Already-sent → log `operator_digest.skipped_duplicate`, increment `skipped`.
+   - Else: build body (HTML + plaintext), send via `sendEmail`, log success.
+5. After the per-recipient loop, if no recipient was actually sent (all skipped), log `jobs.operator_activity_digest.venue_all_skipped` (informational, not an error).
+
+Skip log vocabulary:
+
+| Log event | Cause |
+|---|---|
+| `operator_digest.skipped_disabled` | Effective cadence is `off` for the recipient |
+| `operator_digest.skipped_cadence` | Weekly cadence + today isn't the chosen day |
+| `operator_digest.skipped_no_email` | Venue has no owner/admin members with emails (logged at venue level) |
+| `operator_digest.skipped_duplicate` | Same recipient already received today's digest |
+| `jobs.operator_activity_digest.skipped_suppressed` | Resend reported the address as suppressed |
+| `jobs.operator_activity_digest.console_fallback` | No Resend config (dev) |
+
+### Per-recipient idempotency
+
+`outbound_messages` probe now keys on:
+
+```sql
+where venue_id           = $1
+  and related_table      = 'tour_status_events'
+  and metadata->>'tour_digest_date'                = $today_utc
+  and metadata->>'tour_digest_recipient_user_id'   = $userId
+```
+
+The Phase 8R `tour_digest_date` marker still goes on every row; Phase 8U adds the recipient marker so a multi-owner venue's parallel sends are de-duped independently. The Phase 8T venue-wide probe `digestAlreadySentToday` is preserved in the codebase for any future caller but is no longer invoked by the cron.
+
+### Venue-level unsubscribe compatibility
+
+The Phase 8K-style `GET /api/digest/unsubscribe?venue_id=…&token=…` link still works exactly as before — it flips:
+
+```jsonc
+// subscriptions.metadata
+{
+  "digest_cadence":     "off",
+  "digest_disabled":    true,
+  "digest_disabled_at": "<iso>"
+}
+```
+
+Individual admins can still re-enable their own digest from the billing-page card; the per-user `member.metadata.digest_cadence = 'daily'|'weekly'` overrides the venue-level off (effective-preference priority order, item #1 above).
+
+The success page copy now reads:
+
+> This disables venue-level summaries. Individual admins can re-enable their own digest from Billing Settings.
+
+## 7aa. Search coverage hint (Phase 8U)
+
+When operators type a 1- or 2-char search term in the billing-page activity feed (`q.length < 3`), Phase 8T's server-side `?q=` short-circuits to scalar columns only — metadata is not searched. Phase 8U adds a small UI hint so the gap is visible:
+
+> Searching core fields only. Type 3+ characters to include metadata.
+
+The pill renders only while `qInput.trim().length` is 1 or 2; it disappears as soon as the operator reaches the 3-char threshold (which then routes through the `search_tour_status_events` RPC and searches metadata). Pure client-side; no API change.
+
+Examples:
+- `?q=ai` → pill shown, scalar-only search.
+- `?q=ab` → pill shown.
+- `?q=anthropic` → pill hidden, full RPC search.
+
 ## 7. Adding a new write route
 
 When you add a new mutation endpoint, you MUST:

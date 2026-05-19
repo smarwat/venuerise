@@ -7,6 +7,14 @@ import {
   digestUnsubscribeSecretConfigured,
   DigestUnsubscribeTokenError,
 } from '@/lib/integrations/digest-unsubscribe-token'
+import {
+  getDigestCadence,
+  shouldSendDigestForCadence,
+  resolveEffectiveDigestPreference,
+  weeklyDayLabel,
+  type DigestCadence,
+  type DigestWeeklyDay,
+} from '@/lib/billing/operator-digest-preferences'
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
 
@@ -54,6 +62,9 @@ let _missingUnsubSecretWarned = false
 const SCHEDULE = '0 8 * * *' // daily 8am UTC
 const LOOKBACK_HOURS = 24
 const MAX_VENUES_PER_RUN = 200
+// Phase 8U — cap per-venue fan-out so a misconfigured venue with
+// dozens of admin/owner rows doesn't dominate a single cron run.
+const MAX_RECIPIENTS_PER_VENUE = 10
 
 interface RunSummary {
   scannedVenues: number
@@ -156,6 +167,98 @@ async function digestAlreadySentToday(
   return Boolean(data)
 }
 
+// ============================================================================
+// Phase 8U — per-recipient helpers
+// ============================================================================
+
+interface DigestRecipient {
+  userId: string
+  email: string
+  memberMetadata: Record<string, unknown> | null
+}
+
+/**
+ * Phase 8U — fan-out roster. Loads every owner/admin member of the
+ * venue, resolves each user's email via the Supabase Auth admin, and
+ * returns the slice up to `MAX_RECIPIENTS_PER_VENUE`. Members without
+ * a resolvable email are dropped silently.
+ */
+async function findDigestRecipients(
+  supabase: ReturnType<typeof createServiceClient>,
+  venueId: string
+): Promise<DigestRecipient[]> {
+  const { data: rows, error } = await supabase
+    .from('venue_members')
+    .select('user_id, metadata')
+    .eq('venue_id', venueId)
+    .in('role', ['owner', 'admin'])
+    .order('created_at', { ascending: true })
+    .limit(MAX_RECIPIENTS_PER_VENUE)
+
+  if (error || !rows) {
+    log.warn(
+      { err: error, venueId },
+      'jobs.operator_activity_digest.recipients_lookup_failed'
+    )
+    return []
+  }
+
+  const out: DigestRecipient[] = []
+  for (const row of rows as Array<{
+    user_id: string
+    metadata: Record<string, unknown> | null
+  }>) {
+    try {
+      const { data: userRes } = await supabase.auth.admin.getUserById(row.user_id)
+      const email = userRes.user?.email
+      if (!email) continue
+      out.push({
+        userId: row.user_id,
+        email,
+        memberMetadata: row.metadata ?? null,
+      })
+    } catch {
+      // Auth lookup blew up — skip this member, don't abort the venue.
+      continue
+    }
+  }
+  return out
+}
+
+/**
+ * Phase 8U — per-recipient idempotency probe. Looks for an existing
+ * outbound_messages row for THIS venue + THIS user on today's UTC
+ * date. Reuses the Phase 8R `tour_digest_date` marker plus the new
+ * Phase 8U `tour_digest_recipient_user_id` marker so a multi-owner
+ * venue's individual sends are de-duped independently.
+ *
+ * Same "fail open on lookup error" posture as the Phase 8R probe.
+ */
+async function digestAlreadySentToRecipientToday(
+  supabase: ReturnType<typeof createServiceClient>,
+  venueId: string,
+  userId: string,
+  todayUtc: string
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('outbound_messages')
+    .select('id')
+    .eq('venue_id', venueId)
+    .eq('related_table', 'tour_status_events')
+    .filter('metadata->>tour_digest_date', 'eq', todayUtc)
+    .filter('metadata->>tour_digest_recipient_user_id', 'eq', userId)
+    .limit(1)
+    .maybeSingle()
+  if (error) {
+    log.warn(
+      { err: error, venueId, userId, todayUtc },
+      'jobs.operator_activity_digest.per_recipient_idempotency_lookup_failed'
+    )
+    return false
+  }
+  return Boolean(data)
+}
+
 function aggregateEvents(rows: DigestEventRow[]): Map<string, VenueAggregate> {
   const out = new Map<string, VenueAggregate>()
   for (const row of rows) {
@@ -184,6 +287,39 @@ interface DigestBodyArgs {
   appUrl: string
   /** Phase 8S — optional opt-out URL, absent when the secret isn't configured. */
   unsubscribeUrl?: string | null
+  /**
+   * Phase 8T — current cadence for the venue. Surfaced in the email
+   * footer so operators always know which schedule they're on.
+   * Defaults to `'daily'` when omitted for back-compat.
+   */
+  cadence?: DigestCadence
+  /**
+   * Phase 8U — when cadence is `'weekly'`, the day-of-week (UTC) the
+   * recipient is scheduled to receive the digest. Surfaced in the
+   * footer so the operator knows which day they'll see this next.
+   */
+  weeklyDay?: DigestWeeklyDay | null
+}
+
+function cadenceSentence(
+  c: DigestCadence | undefined,
+  weeklyDay: DigestWeeklyDay | null | undefined
+): string {
+  switch (c) {
+    case 'weekly': {
+      const day = weeklyDay ?? 'mon'
+      return `You are receiving weekly activity summaries every ${weeklyDayLabel(day)}.`
+    }
+    case 'off':
+      // Shouldn't reach the body builder when cadence is 'off' (the
+      // cron skips before send), but render a coherent string anyway
+      // for any test/preview caller that constructs this directly.
+      return 'You are not currently subscribed to activity summaries.'
+    case 'daily':
+    case undefined:
+    default:
+      return 'You are receiving daily activity summaries.'
+  }
 }
 
 /**
@@ -205,6 +341,7 @@ function buildOperatorDigestText(args: DigestBodyArgs): string {
     `By actor:\n${formatCountsBlock(args.agg.byActor)}\n\n` +
     `Full audit feed (admins only):\n${settingsUrl}\n` +
     unsubBlock +
+    `\n${cadenceSentence(args.cadence, args.weeklyDay)}` +
     `\nReply to this email if you'd like us to dial the digest cadence or scope.`
   )
 }
@@ -312,6 +449,9 @@ export function buildOperatorDigestHtml(args: DigestBodyArgs): string {
         </tr>
         <tr>
           <td style="padding:0 28px 24px 28px;">
+            <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#475569;">
+              ${escapeHtml(cadenceSentence(args.cadence, args.weeklyDay))}
+            </p>
             <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#64748B;">
               Reply to this email if you'd like us to dial the digest cadence or scope.
             </p>
@@ -336,18 +476,23 @@ interface SubscriptionRowForDigest {
 }
 
 /**
- * Looks up the most-recent subscription for the venue and decides
- * whether the digest should send. The unsubscribe route writes
- * `metadata.digest_disabled = true` onto this same row.
+ * Phase 8T — cadence-aware send decision.
  *
- * Returns:
- *   - `{ optedOut: true }`  → cron should skip with `skipped_disabled`
- *   - `{ optedOut: false }` → cron proceeds (includes the no-subscription case)
+ * Replaces the Phase 8S `isDigestOptedOut` binary check. Returns the
+ * effective cadence + a `shouldSend` boolean so the cron's per-venue
+ * loop can distinguish:
+ *   - 'off'    → skip, log `operator_digest.skipped_disabled`
+ *   - 'weekly' on non-Monday → skip, log `operator_digest.skipped_cadence`
+ *   - 'weekly' on Monday OR 'daily' → send
+ *
+ * On lookup failure we fall through to `'daily'` so an opted-out venue
+ * gets at most one extra digest while ops debugs the DB read.
  */
-async function isDigestOptedOut(
+async function resolveDigestDecision(
   supabase: ReturnType<typeof createServiceClient>,
-  venueId: string
-): Promise<{ optedOut: boolean }> {
+  venueId: string,
+  now: Date
+): Promise<{ cadence: DigestCadence; shouldSend: boolean }> {
   const { data, error } = await supabase
     .from('subscriptions')
     .select('id, metadata')
@@ -356,18 +501,22 @@ async function isDigestOptedOut(
     .limit(1)
     .maybeSingle()
   if (error) {
-    // On lookup failure, fall through to send. Worst case: an opted-out
-    // venue gets one extra digest while ops debugs the DB read.
     log.warn(
       { err: error, venueId },
-      'jobs.operator_activity_digest.opt_out_lookup_failed'
+      'jobs.operator_activity_digest.cadence_lookup_failed'
     )
-    return { optedOut: false }
+    return { cadence: 'daily', shouldSend: true }
   }
-  if (!data) return { optedOut: false }
+  if (!data) {
+    // No subscription row yet — default cadence is 'daily', so we'd
+    // send. Realistically a venue without a subscription wouldn't have
+    // tour events to digest either, so this branch is mostly
+    // hypothetical.
+    return { cadence: 'daily', shouldSend: true }
+  }
   const row = data as SubscriptionRowForDigest
-  const flag = (row.metadata ?? {})['digest_disabled']
-  return { optedOut: flag === true }
+  const cadence = getDigestCadence(row.metadata)
+  return { cadence, shouldSend: shouldSendDigestForCadence(cadence, now) }
 }
 
 /**
@@ -491,101 +640,167 @@ async function runDigestScan(): Promise<
       op: 'jobs.operator_activity_digest.process',
     })
 
-    // Phase 8S — opt-out check. Runs BEFORE the idempotency probe so
-    // an opted-out venue's skip is attributed clearly. We never Sentry-
-    // capture opt-out skips; they're an expected operator preference.
-    const optOut = await isDigestOptedOut(supabase, venueId)
-    if (optOut.optedOut) {
-      venueLog.info({}, 'operator_digest.skipped_disabled')
-      summary.skipped++
-      continue
+    // Phase 8U — fan out per recipient. Each owner/admin member has
+    // their own digest preference; the cron resolves the effective
+    // cadence per recipient and sends/skips accordingly.
+    //
+    // Pre-fetch the venue's subscription metadata ONCE so every
+    // per-recipient resolver sees the same fallback without a per-
+    // member DB hit. The Phase 8S `tryBuildUnsubscribeUrl` is also a
+    // venue-level call (token signs `venue_id`), so we hoist it out
+    // of the inner loop too.
+    const { data: subRaw, error: subErr } = await supabase
+      .from('subscriptions')
+      .select('id, metadata')
+      .eq('venue_id', venueId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (subErr) {
+      venueLog.warn(
+        { err: subErr },
+        'jobs.operator_activity_digest.subscription_lookup_failed'
+      )
     }
-
-    // Idempotency probe — see comment on `digestAlreadySentToday`.
-    if (await digestAlreadySentToday(supabase, venueId, todayUtc)) {
-      venueLog.info({}, 'jobs.operator_activity_digest.skip_already_sent_today')
-      summary.skipped++
-      continue
-    }
-
-    const owner = await findOwnerEmail(supabase, venueId)
-    if (!owner) {
-      venueLog.warn({}, 'jobs.operator_activity_digest.skip_no_owner_email')
-      summary.skipped++
-      continue
-    }
-
-    // Phase 8S — opt-out URL (null when DIGEST_UNSUBSCRIBE_SECRET is
-    // unset/short — the email still sends, just without a link).
+    const subscriptionMetadata =
+      (subRaw as { metadata?: Record<string, unknown> | null } | null)?.metadata ?? null
     const unsubscribeUrl = tryBuildUnsubscribeUrl(venueId)
-
-    const bodyArgs: DigestBodyArgs = {
-      venueName: venueNameById.get(venueId) ?? null,
-      venueId,
-      agg,
-      appUrl,
-      unsubscribeUrl,
+    const recipients = await findDigestRecipients(supabase, venueId)
+    if (recipients.length === 0) {
+      venueLog.warn({}, 'operator_digest.skipped_no_email')
+      summary.skipped++
+      continue
     }
-    const text = buildOperatorDigestText(bodyArgs)
-    const html = buildOperatorDigestHtml(bodyArgs)
 
-    let result
-    try {
-      result = await sendEmail({
-        to: owner.email,
-        subject: 'VenueRise daily activity summary',
-        text,
-        html,
-        venueId,
-        relatedTable: 'tour_status_events',
-        metadata: {
-          tour_digest_date: todayUtc,
-          tour_digest_total: String(agg.total),
-        },
+    const now = new Date()
+    let anySent = false
+
+    for (const recipient of recipients) {
+      const recipientLog = venueLog.child({
+        userId: recipient.userId,
+        op: 'operator_digest.recipient',
       })
-    } catch (err) {
-      venueLog.error({ err }, 'jobs.operator_activity_digest.send_threw')
-      captureJobError('operator-activity-digest', err, { venueId })
-      summary.failed++
-      continue
-    }
 
-    if (!result.delivered) {
-      // Suppression / console-fallback / provider error. We don't
-      // mark the digest as sent — next-day's run will retry.
-      if (result.error?.startsWith('suppressed:')) {
-        venueLog.warn(
-          { reason: result.error },
-          'jobs.operator_activity_digest.skipped_suppressed'
-        )
+      const pref = resolveEffectiveDigestPreference({
+        memberMetadata: recipient.memberMetadata,
+        subscriptionMetadata,
+        now,
+      })
+
+      if (!pref.shouldSend) {
+        if (pref.reason === 'off') {
+          recipientLog.info(
+            { cadence: pref.cadence, source: pref.source },
+            'operator_digest.skipped_disabled'
+          )
+        } else {
+          recipientLog.info(
+            {
+              cadence: pref.cadence,
+              weeklyDay: pref.weeklyDay,
+              source: pref.source,
+            },
+            'operator_digest.skipped_cadence'
+          )
+        }
         summary.skipped++
-      } else if (!result.error) {
-        // Console fallback — dev environment with no Resend config.
-        venueLog.warn(
-          { provider: result.provider },
-          'jobs.operator_activity_digest.console_fallback'
-        )
-        summary.skipped++
-      } else {
-        venueLog.error(
-          { provider: result.provider, errorMessage: result.error },
-          'jobs.operator_activity_digest.send_failed'
-        )
-        captureJobError(
-          'operator-activity-digest',
-          new Error(result.error),
-          { venueId }
-        )
-        summary.failed++
+        continue
       }
-      continue
+
+      // Per-recipient idempotency probe (Phase 8U). The Phase 8R
+      // probe was venue-wide; now that we fan out to many members we
+      // narrow by recipient so a partial-batch retry doesn't double-
+      // send to anyone who already received today's digest.
+      if (await digestAlreadySentToRecipientToday(supabase, venueId, recipient.userId, todayUtc)) {
+        recipientLog.info({}, 'operator_digest.skipped_duplicate')
+        summary.skipped++
+        continue
+      }
+
+      const bodyArgs: DigestBodyArgs = {
+        venueName: venueNameById.get(venueId) ?? null,
+        venueId,
+        agg,
+        appUrl,
+        unsubscribeUrl,
+        cadence: pref.cadence,
+        weeklyDay: pref.weeklyDay,
+      }
+      const text = buildOperatorDigestText(bodyArgs)
+      const html = buildOperatorDigestHtml(bodyArgs)
+
+      let result
+      try {
+        result = await sendEmail({
+          to: recipient.email,
+          subject: 'VenueRise daily activity summary',
+          text,
+          html,
+          venueId,
+          relatedTable: 'tour_status_events',
+          metadata: {
+            tour_digest_date: todayUtc,
+            tour_digest_total: String(agg.total),
+            // Phase 8U — per-recipient markers. The idempotency probe
+            // above keys off these on subsequent runs.
+            tour_digest_recipient_user_id: recipient.userId,
+            tour_digest_cadence: pref.cadence,
+            tour_digest_weekly_day: pref.weeklyDay ?? '',
+          },
+        })
+      } catch (err) {
+        recipientLog.error({ err }, 'jobs.operator_activity_digest.send_threw')
+        captureJobError('operator-activity-digest', err, { venueId })
+        summary.failed++
+        continue
+      }
+
+      if (!result.delivered) {
+        if (result.error?.startsWith('suppressed:')) {
+          recipientLog.warn(
+            { reason: result.error },
+            'jobs.operator_activity_digest.skipped_suppressed'
+          )
+          summary.skipped++
+        } else if (!result.error) {
+          // Console fallback — dev environment with no Resend config.
+          recipientLog.warn(
+            { provider: result.provider },
+            'jobs.operator_activity_digest.console_fallback'
+          )
+          summary.skipped++
+        } else {
+          recipientLog.error(
+            { provider: result.provider, errorMessage: result.error },
+            'jobs.operator_activity_digest.send_failed'
+          )
+          captureJobError(
+            'operator-activity-digest',
+            new Error(result.error),
+            { venueId }
+          )
+          summary.failed++
+        }
+        continue
+      }
+
+      recipientLog.info(
+        { provider: result.provider, messageId: result.messageId },
+        'jobs.operator_activity_digest.sent'
+      )
+      summary.sent++
+      anySent = true
     }
 
-    venueLog.info(
-      { provider: result.provider, messageId: result.messageId },
-      'jobs.operator_activity_digest.sent'
-    )
-    summary.sent++
+    // Telemetry — if a venue had recipients but every single one
+    // skipped (off / wrong day / duplicate / no email), surface that
+    // cleanly. Doesn't count as a venue-level failure, just an info.
+    if (!anySent) {
+      venueLog.info(
+        { recipientCount: recipients.length },
+        'jobs.operator_activity_digest.venue_all_skipped'
+      )
+    }
   }
 
   log.info(summary, 'jobs.operator_activity_digest.scan_complete')

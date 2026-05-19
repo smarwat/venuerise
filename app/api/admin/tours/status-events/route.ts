@@ -248,9 +248,11 @@ export async function GET(request: NextRequest) {
 
   const svc = createServiceClient()
 
-  // Phase 8Q — shared query builder for the NON-`q` path. The PostgREST
-  // chain handles every filter except `q`; for `q`, we hand off to the
-  // Phase 8R RPC which can search `metadata::text` server-side.
+  // Phase 8Q — shared query builder for the standard (non-RPC) path.
+  // The PostgREST chain handles every filter; `q` is applied here ONLY
+  // when it's short (< 3 chars). For 3+ char `q` values, callers route
+  // through `fetchEventsPage()` below which hands off to the Phase 8R
+  // RPC (metadata-aware).
   //
   // Return type is left to inference because the PostgREST builder
   // chain re-narrows on every `.eq()` and pinning it explicitly would
@@ -268,17 +270,31 @@ export async function GET(request: NextRequest) {
     if (leadId) q2 = q2.eq('lead_id', leadId)
     if (actorKind && actorKind !== 'all') q2 = q2.eq('actor_kind', actorKind)
     if (action) q2 = q2.eq('action', action)
-    // NOTE: `q` is NOT applied here. When `q` is present, callers must
-    // route through `fetchEventsPage()` below, which dispatches to the
-    // search_tour_status_events RPC.
+    // Phase 8T — when `q` is short (1–2 chars), apply the scalar
+    // `.or()` arm right here so the standard path still narrows.
+    // Metadata text is intentionally excluded — trigram indexes don't
+    // help at this length and a Seq Scan on metadata would dominate.
+    if (qShort && q) q2 = q2.or(buildSearchOrClause(q))
     return q2
   }
 
-  // Phase 8R — `q_mode` discriminator for logging. 'rpc_metadata' means
-  // we delegated to the SECURITY DEFINER RPC (and therefore searched
-  // `metadata::text`); 'standard' means the PostgREST chain (which
-  // doesn't search metadata).
-  const qMode: 'rpc_metadata' | 'standard' = q ? 'rpc_metadata' : 'standard'
+  // Phase 8R/8T — `q_mode` discriminator for logging. Trigram indexes
+  // need ≥ 3 character selectivity to win over a Seq Scan — for 1–2
+  // char terms we deliberately skip the RPC (and therefore skip the
+  // metadata::text search arm) and fall back to the scalar `.or()`
+  // path inside `buildBaseQuery`, which now also applies the q filter.
+  //
+  //   no q                → 'none'
+  //   q length < 3        → 'scalar_short'  (no metadata search)
+  //   q length >= 3       → 'metadata_rpc'  (full search via the
+  //                                          search_tour_status_events RPC)
+  const qLength = q ? q.length : 0
+  const qShort = qLength > 0 && qLength < 3
+  const qMode: 'none' | 'scalar_short' | 'metadata_rpc' = !q
+    ? 'none'
+    : qShort
+      ? 'scalar_short'
+      : 'metadata_rpc'
 
   /**
    * Phase 8R — unified per-page fetcher.
@@ -295,8 +311,10 @@ export async function GET(request: NextRequest) {
     cursor: string | null,
     pageLimit: number
   ): Promise<{ data: EventRow[]; error: unknown }> {
-    if (q) {
-      // RPC path — metadata-aware search.
+    // Phase 8T — only delegate to the RPC when `q` is "long enough" for
+    // the trigram index to win. Short queries fall through to the
+    // PostgREST scalar `.or()` path inside `buildBaseQuery`.
+    if (q && qMode === 'metadata_rpc') {
       const { data, error } = await svc.rpc('search_tour_status_events', {
         p_venue_id: targetVenueId,
         p_tour_id: tourId ?? null,
@@ -312,7 +330,9 @@ export async function GET(request: NextRequest) {
         error,
       }
     }
-    // Standard path — PostgREST chain, identical to Phase 8Q.
+    // Standard path — PostgREST chain. Applies `q` via scalar .or()
+    // inside buildBaseQuery when qMode === 'scalar_short'; when
+    // qMode === 'none' the chain runs without any q filter.
     let pageQuery = buildBaseQuery().limit(pageLimit)
     if (cursor) pageQuery = pageQuery.lt('occurred_at', cursor)
     const { data, error } = await pageQuery

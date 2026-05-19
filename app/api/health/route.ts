@@ -82,6 +82,12 @@ interface HealthBody {
     tour_status_metadata_search_index: 'mounted'
     operator_digest_html: 'mounted'
     operator_digest_unsubscribe: 'mounted'
+    operator_digest_preferences: 'mounted'
+    operator_digest_cadence: 'mounted'
+    tour_status_short_search: 'mounted'
+    operator_digest_per_user: 'mounted'
+    operator_digest_weekly_day: 'mounted'
+    tour_status_search_hint: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -107,8 +113,9 @@ interface HealthBody {
  *   - Phase 8K: 18 (added tours/recent-token-actions)
  *   - Phase 8M: 19 (added tours/status-events; recent-token-actions
  *     stays mounted with Deprecation headers for one release cycle)
+ *   - Phase 8T: 20 (added digest/preferences; GET + POST share the route)
  */
-const ADMIN_ENDPOINT_COUNT = 19
+const ADMIN_ENDPOINT_COUNT = 20
 
 const startedAt = Date.now()
 
@@ -398,6 +405,38 @@ export async function GET(request: Request) {
       // The cron checks this flag before sending. Without the secret,
       // emails ship without the link + a once-per-process warn fires.
       operator_digest_unsubscribe: 'mounted',
+      // 8T — admin GET/POST /api/admin/digest/preferences for reading
+      // and writing the per-venue digest cadence
+      // (`subscriptions.metadata.digest_cadence` ∈ daily | weekly | off).
+      // Surfaced as a card on /dashboard/settings/billing. Writer
+      // keeps the legacy `digest_disabled` flag in sync.
+      operator_digest_preferences: 'mounted',
+      // 8T — digest cron now honors cadence. 'off' → skip
+      // (operator_digest.skipped_disabled). 'weekly' on non-Monday →
+      // skip (operator_digest.skipped_cadence). 'daily' always sends.
+      operator_digest_cadence: 'mounted',
+      // 8T — `?q=` short-query optimization on status-events: terms
+      // shorter than 3 chars skip the metadata RPC and use a scalar
+      // PostgREST .or() chain instead (avoiding a wasted trigram
+      // bitmap probe). `qMode` log values: none | scalar_short |
+      // metadata_rpc.
+      tour_status_short_search: 'mounted',
+      // 8U — migration 016 adds `venue_members.metadata` jsonb so each
+      // admin/owner controls their own digest cadence + weekly day.
+      // The Phase 8R cron fans out per recipient with per-recipient
+      // idempotency. Member preference wins over venue subscription
+      // fallback wins over the legacy `digest_disabled` flag wins
+      // over the global default ('daily').
+      operator_digest_per_user: 'mounted',
+      // 8U — `weekly` cadence now supports a per-user day-of-week
+      // (sun..sat, defaults to mon UTC). The digest body footer names
+      // the recipient's chosen day.
+      operator_digest_weekly_day: 'mounted',
+      // 8U — billing-page activity feed surfaces a small amber pill
+      // when the operator types a 1-2 char search term, explaining
+      // that metadata isn't included until the term reaches 3 chars
+      // (the Phase 8T short-circuit threshold).
+      tour_status_search_hint: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

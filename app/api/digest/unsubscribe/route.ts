@@ -185,10 +185,17 @@ export async function GET(request: NextRequest): Promise<Response> {
   const baseMetadata = (sub.metadata ?? {}) as Record<string, unknown>
   // Idempotent: re-flipping an already-disabled venue updates the
   // timestamp but doesn't add noise. The flag is the truth signal.
+  //
+  // Phase 8T — also write `digest_cadence = 'off'` so the new cadence
+  // model and the legacy `digest_disabled` flag stay in sync. The cron
+  // reads either signal as "skip"; the admin preferences card displays
+  // the cadence value; the legacy flag stays present for any older
+  // dashboard / external consumer.
   const nextMetadata: Record<string, unknown> = {
     ...baseMetadata,
     digest_disabled: true,
     digest_disabled_at: new Date().toISOString(),
+    digest_cadence: 'off',
   }
   const { error: updateErr } = await svc
     .from('subscriptions')
@@ -285,7 +292,10 @@ function outcomeCopy(
         title: "You're unsubscribed.",
         body:
           `<p>You'll no longer receive VenueRise daily activity summaries for this venue.</p>` +
-          `<p>You can re-enable them anytime from <a href="${escapeHtml(billingUrl)}">your billing settings</a>.</p>`,
+          // Phase 8U — be explicit that this is the VENUE-level opt-out.
+          // Individual admins can still re-enable their own per-user
+          // digest from the billing settings card.
+          `<p>This disables venue-level summaries. Individual admins can re-enable their own digest from <a href="${escapeHtml(billingUrl)}">Billing Settings</a>.</p>`,
         badgeClass: 'ok',
       }
     case 'invalid':

@@ -388,6 +388,20 @@ export default function TourStatusActivityFeedClient({
           )}
         </div>
 
+        {/* Phase 8U — search coverage hint. When the operator types 1-2
+            chars, the server-side `?q=` short-circuits to scalar
+            columns only (Phase 8T) and metadata is NOT searched. This
+            pill explains that gap so the operator doesn't think the
+            feed is silently missing metadata matches. */}
+        {qInput.trim().length > 0 && qInput.trim().length < 3 && (
+          <div
+            role="note"
+            className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-[#FFFBEB] border border-[#FDE68A] text-[#92400E] text-[11px] px-3 py-1.5"
+          >
+            Searching core fields only. Type 3+ characters to include metadata.
+          </div>
+        )}
+
         {events.length === 0 ? (
           <p className="text-[12px] text-[#64748B] px-1 py-3">
             No tour status events recorded yet.

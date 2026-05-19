@@ -11,6 +11,7 @@ import PauseHistoryTable, {
   type PauseHistoryItem,
 } from '@/components/dashboard/settings/PauseHistoryTable'
 import TourStatusActivityFeed from '@/components/dashboard/settings/TourStatusActivityFeed'
+import DigestPreferencesCard from '@/components/dashboard/settings/DigestPreferencesCard'
 import RealtimeTourStatusLayer from '@/components/dashboard/tours/RealtimeTourStatusLayer'
 import type {
   TourStatusActorKind,
@@ -180,6 +181,9 @@ export default async function BillingSettingsPage() {
           <PauseHistoryTable current={pauseCurrent} items={pauseItems} />
         )}
         {isAdmin && <TourStatusActivityFeed events={tourStatusEvents} />}
+        {/* Phase 8T — daily/weekly/off cadence picker (admins/owners
+            only — the route + the card itself both enforce the gate). */}
+        {isAdmin && <DigestPreferencesCard />}
       </div>
       {/* Phase 8O — realtime audit subscription. Admins/owners only — the
           layer's only side-effects are a toast + router.refresh(), which
