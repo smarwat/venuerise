@@ -14,7 +14,7 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import KanbanColumn from './KanbanColumn'
 import KanbanCard from './KanbanCard'
-import LeadDetailPanel from './LeadDetailPanel'
+import LeadDetailDrawer from './leads/LeadDetailDrawer'
 import AddLeadModal from './AddLeadModal'
 import { Button } from './ui/Button'
 import { Plus, Search } from 'lucide-react'
@@ -149,14 +149,16 @@ export default function KanbanBoard({ initialLeads }: KanbanBoardProps) {
         </DndContext>
       </div>
 
-      {selectedLead && (
-        <LeadDetailPanel
-          lead={selectedLead}
-          onClose={() => setSelectedLead(null)}
-          onUpdate={handleUpdate}
-          onDelete={handleDelete}
-        />
-      )}
+      {/* Phase 8AH — premium right-side drawer replaces the legacy
+          LeadDetailPanel. Same callback contract; visual upgrade
+          plus conversation/AI-draft surface. */}
+      <LeadDetailDrawer
+        lead={selectedLead}
+        onClose={() => setSelectedLead(null)}
+        onUpdate={handleUpdate}
+        onDelete={handleDelete}
+      />
+
 
       <AddLeadModal
         open={addOpen}

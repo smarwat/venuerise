@@ -12,6 +12,11 @@ import PauseHistoryTable, {
 } from '@/components/dashboard/settings/PauseHistoryTable'
 import TourStatusActivityFeed from '@/components/dashboard/settings/TourStatusActivityFeed'
 import DigestPreferencesCard from '@/components/dashboard/settings/DigestPreferencesCard'
+import DigestAuditFeed from '@/components/dashboard/settings/DigestAuditFeed'
+import DigestAuditLogCard from '@/components/dashboard/settings/DigestAuditLogCard'
+import DigestSuppressionsCallout from '@/components/dashboard/settings/DigestSuppressionsCallout'
+import DigestCronHealthCard from '@/components/dashboard/settings/DigestCronHealthCard'
+import RealtimeDigestSendsLayer from '@/components/dashboard/settings/RealtimeDigestSendsLayer'
 import RealtimeTourStatusLayer from '@/components/dashboard/tours/RealtimeTourStatusLayer'
 import type {
   TourStatusActorKind,
@@ -184,7 +189,33 @@ export default async function BillingSettingsPage() {
         {/* Phase 8T — daily/weekly/off cadence picker (admins/owners
             only — the route + the card itself both enforce the gate). */}
         {isAdmin && <DigestPreferencesCard />}
+        {/* Phase 8AB — cron health indicator. Sits next to the
+            preferences card so an operator who just changed their
+            cadence preference can sanity-check that the cron
+            actually fired recently. Heuristic — explains itself
+            inline; see RUNBOOK if the dot turns amber/red. */}
+        {isAdmin && <DigestCronHealthCard />}
+        {/* Phase 8Z — suppression triage callout. Sits between the
+            preferences card and the audit feed so operators see
+            "1 admin email is suppressed" BEFORE they wonder why
+            the feed shows status='suppressed' rows. Renders nothing
+            when no admin emails are suppressed. */}
+        {isAdmin && <DigestSuppressionsCallout />}
+        {/* Phase 8Y — digest send audit feed. Reads /api/admin/digest/sends
+            with a kind filter chip set + CSV export link. Admin/owner
+            only; the endpoint also returns 401/403 for non-admins. */}
+        {isAdmin && <DigestAuditFeed />}
+        {/* Phase 8AC — operator + cron audit log over digest_audit_events.
+            Distinct from DigestAuditFeed: that shows digest SENDS;
+            this shows ACTIONS (suppression removes, retention runs). */}
+        {isAdmin && <DigestAuditLogCard />}
       </div>
+      {/* Phase 8Z — realtime layer for digest send inserts. Toasts on
+          every new outbound digest row + debounces router.refresh() by
+          1000ms so a cron burst coalesces into a single page rebuild.
+          Requires outbound_messages in supabase_realtime publication;
+          see RUNBOOK "Digest audit feed not updating live". */}
+      {isAdmin && <RealtimeDigestSendsLayer venueId={venue.venueId} />}
       {/* Phase 8O — realtime audit subscription. Admins/owners only — the
           layer's only side-effects are a toast + router.refresh(), which
           rebuilds the server-fetched events slice above and surfaces

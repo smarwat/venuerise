@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { sendEmail } from '@/lib/integrations/email'
 import {
   createDigestUnsubscribeUrl,
+  createDigestResubscribeUrl,
   digestUnsubscribeSecretConfigured,
   DigestUnsubscribeTokenError,
 } from '@/lib/integrations/digest-unsubscribe-token'
@@ -17,6 +18,7 @@ import {
 } from '@/lib/billing/operator-digest-preferences'
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
+import { recordDigestAuditEvent } from '@/lib/billing/digest-audit-events'
 
 // Phase 8S — once-per-process guard for the "DIGEST_UNSUBSCRIBE_SECRET
 // missing" warn. Same pattern as the Phase 8K tour-action secret check
@@ -92,6 +94,25 @@ interface OwnerInfo {
 
 function digestEnabled(): boolean {
   return process.env.OPERATOR_DIGEST_ENABLED === '1'
+}
+
+/**
+ * Phase 8AD — optional `digest_send_cron` audit-event writes. Default
+ * off because a busy multi-venue deployment can produce a high audit-
+ * row volume (one row per recipient per day). Operators who need
+ * forensic "who got the digest at 8:03am UTC on Tuesday?" coverage
+ * flip this on per environment.
+ */
+function cronAuditEnabled(): boolean {
+  return process.env.DIGEST_AUDIT_LOG_CRON_SENDS === '1'
+}
+
+/** Email-mask helper matching the Phase 8Y format. */
+function maskEmail(addr: string | null | undefined): string | null {
+  if (!addr || typeof addr !== 'string') return null
+  const at = addr.indexOf('@')
+  if (at < 1) return null
+  return `${addr.slice(0, 1)}***${addr.slice(at)}`
 }
 
 function isoDateUtc(d: Date): string {
@@ -182,10 +203,26 @@ interface DigestRecipient {
  * venue, resolves each user's email via the Supabase Auth admin, and
  * returns the slice up to `MAX_RECIPIENTS_PER_VENUE`. Members without
  * a resolvable email are dropped silently.
+ *
+ * Phase 8V — switched from serial to bounded-concurrency (5) auth
+ * lookups via Promise.allSettled. Supabase's `auth.admin.getUserById`
+ * is one HTTP round-trip per call; a true batched endpoint
+ * (`auth.admin.listUsers` with an id filter) DOES exist but the
+ * filter expression syntax (`email.in.(…)`) doesn't accept user-id
+ * arrays in the version we're pinned to, and switching to
+ * `listUsers({ perPage: 1000 })` + client-side filter would tour
+ * every auth user in the tenant on every cron tick — strictly worse
+ * for tenants with > a few hundred users. Bounded concurrency is the
+ * safe middle ground: a 10-recipient venue now finishes in roughly
+ * the same wall-clock time as 2 serial calls, with per-failure
+ * isolation.
  */
+const RECIPIENT_LOOKUP_CONCURRENCY = 5
+
 async function findDigestRecipients(
   supabase: ReturnType<typeof createServiceClient>,
-  venueId: string
+  venueId: string,
+  requestId?: string
 ): Promise<DigestRecipient[]> {
   const { data: rows, error } = await supabase
     .from('venue_members')
@@ -197,40 +234,73 @@ async function findDigestRecipients(
 
   if (error || !rows) {
     log.warn(
-      { err: error, venueId },
+      { err: error, venueId, requestId },
       'jobs.operator_activity_digest.recipients_lookup_failed'
     )
     return []
   }
 
-  const out: DigestRecipient[] = []
-  for (const row of rows as Array<{
-    user_id: string
-    metadata: Record<string, unknown> | null
-  }>) {
-    try {
-      const { data: userRes } = await supabase.auth.admin.getUserById(row.user_id)
-      const email = userRes.user?.email
-      if (!email) continue
-      out.push({
-        userId: row.user_id,
-        email,
-        memberMetadata: row.metadata ?? null,
-      })
-    } catch {
-      // Auth lookup blew up — skip this member, don't abort the venue.
-      continue
+  type MemberRow = { user_id: string; metadata: Record<string, unknown> | null }
+  const memberRows = rows as MemberRow[]
+
+  // Phase 8V — bounded-concurrency worker pool. Mirrors the
+  // `runWithConcurrency` shape in `lib/integrations/tour-notifications.ts`
+  // but kept local since the digest cron is the only caller; a third
+  // call site would justify extraction.
+  const out: DigestRecipient[] = new Array(memberRows.length)
+  let cursor = 0
+  async function worker(): Promise<void> {
+    while (true) {
+      const idx = cursor++
+      if (idx >= memberRows.length) return
+      const row = memberRows[idx]
+      try {
+        const { data: userRes } = await supabase.auth.admin.getUserById(row.user_id)
+        const email = userRes.user?.email
+        if (!email) continue
+        out[idx] = {
+          userId: row.user_id,
+          email,
+          memberMetadata: row.metadata ?? null,
+        }
+      } catch (err) {
+        // Per-member lookup failure logs with userId + requestId (no
+        // raw email, no PII) and skips that slot. The roster shrinks
+        // by one but the venue's other recipients still get the
+        // digest.
+        log.warn(
+          { err, userId: row.user_id, venueId, requestId },
+          'operator_digest.recipient_lookup_failed'
+        )
+      }
     }
   }
-  return out
+  const workers = Array.from(
+    { length: Math.min(RECIPIENT_LOOKUP_CONCURRENCY, memberRows.length) },
+    () => worker()
+  )
+  await Promise.allSettled(workers)
+
+  // Compact the sparse array — workers may have skipped slots due to
+  // no-email or per-member failures.
+  return out.filter((r): r is DigestRecipient => r !== undefined)
 }
 
 /**
- * Phase 8U — per-recipient idempotency probe. Looks for an existing
- * outbound_messages row for THIS venue + THIS user on today's UTC
- * date. Reuses the Phase 8R `tour_digest_date` marker plus the new
- * Phase 8U `tour_digest_recipient_user_id` marker so a multi-owner
- * venue's individual sends are de-duped independently.
+ * Phase 8U → 8W — per-recipient idempotency probe. Looks for an
+ * existing outbound_messages row for THIS venue + THIS user on today's
+ * UTC date that was sent BY THE CRON (not by the Phase 8V preview or
+ * any future manual operator send).
+ *
+ * Probe keys (Phase 8W):
+ *   metadata->>'tour_digest_date'                = <today>
+ *   metadata->>'tour_digest_recipient_user_id'   = <userId>
+ *   metadata->>'tour_digest_send_kind'           = 'cron'
+ *
+ * The `send_kind` filter is the Phase 8W discriminator. Previews
+ * deliberately write `send_kind='preview'` so this probe ignores them
+ * — the cron should still send the day's real digest even if an
+ * operator clicked "Send sample" earlier today.
  *
  * Same "fail open on lookup error" posture as the Phase 8R probe.
  */
@@ -247,6 +317,7 @@ async function digestAlreadySentToRecipientToday(
     .eq('related_table', 'tour_status_events')
     .filter('metadata->>tour_digest_date', 'eq', todayUtc)
     .filter('metadata->>tour_digest_recipient_user_id', 'eq', userId)
+    .filter('metadata->>tour_digest_send_kind', 'eq', 'cron')
     .limit(1)
     .maybeSingle()
   if (error) {
@@ -280,6 +351,20 @@ function formatCountsBlock(counts: Record<string, number>): string {
   return entries.map(([k, v]) => `  - ${k}: ${v}`).join('\n')
 }
 
+/**
+ * Phase 8X — send-kind discriminator. Mirrors the
+ * `metadata.tour_digest_send_kind` value on the outbound row. Used by
+ * the footer builder to decide which preference links to surface:
+ *
+ *   - 'cron'    — no resubscribe link (recipient cadence is never 'off'
+ *                 on a successful cron send); unsubscribe link present.
+ *   - 'preview' — both unsubscribe and resubscribe links present so the
+ *                 operator can QA the full preference loop in one click.
+ *   - 'manual'  — both links present; manual sends are operator-driven
+ *                 and the recipient may need either action.
+ */
+export type DigestSendKind = 'cron' | 'preview' | 'manual'
+
 interface DigestBodyArgs {
   venueName: string | null
   venueId: string
@@ -287,6 +372,12 @@ interface DigestBodyArgs {
   appUrl: string
   /** Phase 8S — optional opt-out URL, absent when the secret isn't configured. */
   unsubscribeUrl?: string | null
+  /**
+   * Phase 8X — optional per-user resubscribe URL. Always omitted on
+   * cron sends (recipient is by definition opted-in when cron sends).
+   * Always present on preview / manual when the secret is configured.
+   */
+  resubscribeUrl?: string | null
   /**
    * Phase 8T — current cadence for the venue. Surfaced in the email
    * footer so operators always know which schedule they're on.
@@ -299,6 +390,12 @@ interface DigestBodyArgs {
    * footer so the operator knows which day they'll see this next.
    */
   weeklyDay?: DigestWeeklyDay | null
+  /**
+   * Phase 8X — discriminator. Defaults to `'cron'` for back-compat
+   * with the Phase 8R/8S call sites that constructed body args before
+   * this field existed.
+   */
+  sendKind?: DigestSendKind
 }
 
 function cadenceSentence(
@@ -323,15 +420,30 @@ function cadenceSentence(
 }
 
 /**
- * Phase 8R + 8S — plain-text digest body. Stays the canonical
+ * Phase 8R + 8S + 8X — plain-text digest body. Stays the canonical
  * fallback for clients that strip HTML.
+ *
+ * Phase 8X — footer now always includes a "Manage your digest
+ * preferences" pointer at `${appUrl}/dashboard/settings/billing`, and
+ * conditionally includes:
+ *   - Unsubscribe link (any sendKind, when secret configured)
+ *   - Re-enable daily digest link (preview / manual only, when secret
+ *     configured) — cron is skipped because cadence is never 'off' on
+ *     a successful cron send, so the link would just add clutter.
  */
 function buildOperatorDigestText(args: DigestBodyArgs): string {
   const venueLabel = args.venueName?.trim() || `Venue ${args.venueId.slice(0, 8)}`
   const settingsUrl = `${args.appUrl}/dashboard/settings/billing`
+  const sendKind: DigestSendKind = args.sendKind ?? 'cron'
+  const includeResubscribe = sendKind !== 'cron' && Boolean(args.resubscribeUrl)
+
   const unsubBlock = args.unsubscribeUrl
     ? `\nNo longer want these summaries? Unsubscribe:\n${args.unsubscribeUrl}\n`
     : ''
+  const resubBlock = includeResubscribe
+    ? `\nRe-enable daily digest:\n${args.resubscribeUrl}\n`
+    : ''
+
   return (
     `Hi there,\n\n` +
     `Here's your VenueRise tour activity for the last 24 hours.\n\n` +
@@ -340,7 +452,9 @@ function buildOperatorDigestText(args: DigestBodyArgs): string {
     `By action:\n${formatCountsBlock(args.agg.byAction)}\n\n` +
     `By actor:\n${formatCountsBlock(args.agg.byActor)}\n\n` +
     `Full audit feed (admins only):\n${settingsUrl}\n` +
+    `\nManage your digest preferences from Billing Settings:\n${settingsUrl}\n` +
     unsubBlock +
+    resubBlock +
     `\n${cadenceSentence(args.cadence, args.weeklyDay)}` +
     `\nReply to this email if you'd like us to dial the digest cadence or scope.`
   )
@@ -394,10 +508,25 @@ export function buildOperatorDigestHtml(args: DigestBodyArgs): string {
   const venueLabel = args.venueName?.trim() || `Venue ${args.venueId.slice(0, 8)}`
   const settingsUrl = `${args.appUrl}/dashboard/settings/billing`
   const dateStr = new Date().toUTCString().replace(/ \d{2}:\d{2}:\d{2} GMT$/, ' UTC')
+  const sendKind: DigestSendKind = args.sendKind ?? 'cron'
+  const includeResubscribe = sendKind !== 'cron' && Boolean(args.resubscribeUrl)
+
+  // Phase 8X — explicit "Manage your digest preferences" pointer in the
+  // footer. Mirrors the plaintext block; same href as the "View full
+  // audit" CTA but framed as the preference surface, so operators who
+  // received the email instead of opening the app know where to go.
+  const settingsLine = `<p style="margin:0 0 6px 0;font-size:11px;line-height:1.55;color:#94A3B8;">
+         <a href="${escapeHtml(settingsUrl)}" style="color:#1D4ED8;text-decoration:underline;">Manage your digest preferences</a> from Billing Settings.
+       </p>`
 
   const unsubLine = args.unsubscribeUrl
-    ? `<p style="margin:0;font-size:11px;line-height:1.55;color:#94A3B8;">
+    ? `<p style="margin:0 0 6px 0;font-size:11px;line-height:1.55;color:#94A3B8;">
          Don't want these summaries? <a href="${escapeHtml(args.unsubscribeUrl)}" style="color:#64748B;text-decoration:underline;">Unsubscribe</a>.
+       </p>`
+    : ''
+  const resubLine = includeResubscribe
+    ? `<p style="margin:0;font-size:11px;line-height:1.55;color:#94A3B8;">
+         <a href="${escapeHtml(args.resubscribeUrl as string)}" style="color:#1D4ED8;text-decoration:underline;">Re-enable daily digest</a> for your account.
        </p>`
     : ''
 
@@ -455,7 +584,9 @@ export function buildOperatorDigestHtml(args: DigestBodyArgs): string {
             <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#64748B;">
               Reply to this email if you'd like us to dial the digest cadence or scope.
             </p>
+            ${settingsLine}
             ${unsubLine}
+            ${resubLine}
           </td>
         </tr>
       </table>
@@ -524,16 +655,15 @@ async function resolveDigestDecision(
  * warn when the secret is missing. Returns null on any failure so the
  * digest sender can fall through to a link-less email rather than
  * skipping the whole send.
+ *
+ * Phase 8X — exported so the preview + manual-send route handlers
+ * (which also need to embed the unsubscribe link in their digest body)
+ * share the same once-per-process secret-missing warning posture. The
+ * companion `tryBuildResubscribeUrl` below shares the same flag.
  */
-function tryBuildUnsubscribeUrl(venueId: string): string | null {
+export function tryBuildUnsubscribeUrl(venueId: string): string | null {
   if (!digestUnsubscribeSecretConfigured()) {
-    if (!_missingUnsubSecretWarned) {
-      _missingUnsubSecretWarned = true
-      log.warn(
-        { op: 'jobs.operator_activity_digest.no_unsubscribe_secret' },
-        'jobs.operator_activity_digest.no_unsubscribe_secret'
-      )
-    }
+    warnSecretMissingOnce()
     return null
   }
   try {
@@ -552,6 +682,49 @@ function tryBuildUnsubscribeUrl(venueId: string): string | null {
     }
     return null
   }
+}
+
+/**
+ * Phase 8X — per-user resubscribe URL builder. Same once-per-process
+ * warn + null-on-failure posture as `tryBuildUnsubscribeUrl`.
+ *
+ * The cron does NOT call this (recipient cadence is never 'off' on a
+ * successful cron send). The preview + manual-send route handlers DO
+ * call this so the email footer can offer one-click re-enable.
+ */
+export function tryBuildResubscribeUrl(
+  venueId: string,
+  userId: string
+): string | null {
+  if (!digestUnsubscribeSecretConfigured()) {
+    warnSecretMissingOnce()
+    return null
+  }
+  try {
+    return createDigestResubscribeUrl({ venueId, userId })
+  } catch (err) {
+    if (err instanceof DigestUnsubscribeTokenError) {
+      log.warn(
+        { code: err.code, venueId, userId },
+        'jobs.operator_activity_digest.resubscribe_url_build_failed'
+      )
+    } else {
+      log.warn(
+        { err, venueId, userId },
+        'jobs.operator_activity_digest.resubscribe_url_build_failed'
+      )
+    }
+    return null
+  }
+}
+
+function warnSecretMissingOnce(): void {
+  if (_missingUnsubSecretWarned) return
+  _missingUnsubSecretWarned = true
+  log.warn(
+    { op: 'jobs.operator_activity_digest.no_unsubscribe_secret' },
+    'jobs.operator_activity_digest.no_unsubscribe_secret'
+  )
 }
 
 async function runDigestScan(): Promise<
@@ -723,8 +896,14 @@ async function runDigestScan(): Promise<
         agg,
         appUrl,
         unsubscribeUrl,
+        // Phase 8X — cron deliberately omits the resubscribe URL. A
+        // recipient who reaches this branch has effective cadence
+        // 'daily' or 'weekly' (off would have been skipped upstream),
+        // so the re-enable link would just add clutter.
+        resubscribeUrl: null,
         cadence: pref.cadence,
         weeklyDay: pref.weeklyDay,
+        sendKind: 'cron',
       }
       const text = buildOperatorDigestText(bodyArgs)
       const html = buildOperatorDigestHtml(bodyArgs)
@@ -746,6 +925,12 @@ async function runDigestScan(): Promise<
             tour_digest_recipient_user_id: recipient.userId,
             tour_digest_cadence: pref.cadence,
             tour_digest_weekly_day: pref.weeklyDay ?? '',
+            // Phase 8W — explicit send-kind discriminator. The
+            // per-recipient probe filters on `send_kind='cron'` so
+            // earlier-today previews ('preview') don't block today's
+            // real digest. Future-proofs against manual operator
+            // sends ('manual'), which the cron should likewise ignore.
+            tour_digest_send_kind: 'cron',
           },
         })
       } catch (err) {
@@ -790,6 +975,31 @@ async function runDigestScan(): Promise<
       )
       summary.sent++
       anySent = true
+
+      // Phase 8AD — optional per-recipient cron-send audit write.
+      // Gated by DIGEST_AUDIT_LOG_CRON_SENDS=1 because every
+      // successful send produces one audit row; a busy multi-venue
+      // deployment can otherwise quickly accumulate noise. Helper
+      // is best-effort and never throws, so a failure here can't
+      // hide a successful send from the operator.
+      if (cronAuditEnabled()) {
+        await recordDigestAuditEvent({
+          venueId,
+          actorKind: 'cron',
+          actorUserId: null,
+          action: 'digest_send_cron',
+          targetUserId: recipient.userId,
+          targetEmailMasked: maskEmail(recipient.email),
+          metadata: {
+            venue_id: venueId,
+            event_count: agg.total,
+            cadence: pref.cadence,
+            weekly_day: pref.weeklyDay ?? null,
+            outbound_message_id: result.outboundMessageId ?? null,
+            send_kind: 'cron',
+          },
+        })
+      }
     }
 
     // Telemetry — if a venue had recipients but every single one
@@ -825,6 +1035,7 @@ export const operatorActivityDigestFn = inngest.createFunction(
 export {
   runDigestScan,
   digestEnabled,
+  cronAuditEnabled,
   aggregateEvents,
   buildDigestBody,
   buildOperatorDigestText,

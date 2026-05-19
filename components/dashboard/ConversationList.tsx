@@ -33,13 +33,13 @@ interface Props {
 
 export default function ConversationList({ conversations, activeLeadId }: Props) {
   return (
-    <aside className="w-[320px] shrink-0 bg-white border-l border-[#E2E8F0] flex flex-col">
+    <aside className="w-[320px] shrink-0 bg-white border-l border-[#E6E8EF] flex flex-col">
       <div className="px-4 py-3.5 border-b border-[#F1F5F9]">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[14px] font-semibold text-[#0F172A]">All messages</h2>
           <button className="text-[11px] font-medium text-[#1D4ED8] hover:underline">All Platforms ▾</button>
         </div>
-        <div className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-full pl-3 pr-2 h-9">
+        <div className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E6E8EF] rounded-full pl-3 pr-2 h-9">
           <Search className="w-3.5 h-3.5 text-[#94A3B8]" />
           <input
             placeholder="Search conversations…"

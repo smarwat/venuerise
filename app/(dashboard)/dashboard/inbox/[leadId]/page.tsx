@@ -87,9 +87,9 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
     : []
 
   return (
-    <div className="flex h-[calc(100vh-72px)] min-h-[640px] animate-fade-in">
-      <div className="flex-1 flex flex-col bg-white">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[#F1F5F9]">
+    <div className="flex h-[calc(100vh-60px)] min-h-[640px] animate-fade-in bg-[#F4F7FB]">
+      <div className="flex-1 flex flex-col bg-white border-r border-[#E6E8EF]">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-[#E6E8EF]">
           <div className="relative shrink-0">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#1E293B] to-[#0F172A] flex items-center justify-center text-white text-[13px] font-bold">
               {(lead.name as string).charAt(0)}

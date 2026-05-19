@@ -7,6 +7,8 @@ import { billingDunningFn } from './billing-dunning'
 import { billingTourAutoPauseFn } from './billing-tour-auto-pause'
 import { seedTourStatusEventsFn } from './seed-tour-status-events'
 import { operatorActivityDigestFn } from './operator-activity-digest'
+import { seedMemberDigestPreferencesFn } from './seed-member-digest-preferences'
+import { digestAuditRetentionFn } from './digest-audit-retention'
 
 /** Every Inngest function the app exposes. Single source of truth. */
 export const allJobFunctions = [
@@ -19,4 +21,6 @@ export const allJobFunctions = [
   billingTourAutoPauseFn,
   seedTourStatusEventsFn,
   operatorActivityDigestFn,
+  seedMemberDigestPreferencesFn,
+  digestAuditRetentionFn,
 ]

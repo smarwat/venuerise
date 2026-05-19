@@ -83,11 +83,21 @@ export default async function AnalyticsPage() {
         actions={<Button variant="outline" size="sm" className="rounded-full">Last 30 days</Button>}
       />
 
+      {/* Phase 8AI — editorial KPI tiles: uppercase eyebrow above
+          tabular number, soft border, no icon clutter. Matches the
+          Overview metric strip's rhythm. */}
       <div className="grid grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
         {kpis.map((kpi) => (
-          <div key={kpi.label} className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-card">
-            <div className="text-[20px] font-semibold text-[#0F172A] tracking-[-0.01em] leading-none">{kpi.value}</div>
-            <div className="text-[11px] text-[#94A3B8] mt-1.5">{kpi.label}</div>
+          <div
+            key={kpi.label}
+            className="bg-white border border-[#E6E8EF] rounded-2xl p-4 shadow-card"
+          >
+            <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#64748B] font-semibold">
+              {kpi.label}
+            </div>
+            <div className="text-[22px] sm:text-[24px] font-semibold text-[#0F172A] tracking-[-0.02em] leading-none tabular-nums mt-2">
+              {kpi.value}
+            </div>
           </div>
         ))}
       </div>
@@ -144,7 +154,7 @@ export default async function AnalyticsPage() {
       <Card>
         <CardContent className="pt-5">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-navy-blue flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(15,23,42,0.20)]">
+            <div className="w-10 h-10 rounded-2xl bg-[#0F172A] flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(15,23,42,0.20)]">
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1">

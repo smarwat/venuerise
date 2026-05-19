@@ -186,14 +186,26 @@ export default async function ToursPage({
         <TourPausedBanner pausedAt={toursPausedAt} pausedCount={toursPausedCount} />
       )}
 
-      {/* Stats */}
+      {/* Stats — Phase 8AI editorial cards: uppercase eyebrow + big
+          tabular number + status badge below. Matches the Overview
+          metric tiles' rhythm without bringing in the sparkline. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {(['scheduled', 'confirmed', 'completed', 'no_show'] as TourStatus[]).map((s) => {
           const cfg = STATUS_CONFIG[s]
           return (
-            <div key={s} className="bg-white border border-[#E2E8F0] rounded-[20px] p-5 shadow-card">
-              <div className="text-[28px] font-semibold text-[#0F172A] tracking-[-0.02em] leading-none mb-2">{countByStatus(s)}</div>
-              <Badge variant={cfg.variant}>{cfg.label}</Badge>
+            <div
+              key={s}
+              className="bg-white border border-[#E6E8EF] rounded-[18px] p-5 shadow-card flex flex-col gap-3"
+            >
+              <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#64748B] font-semibold">
+                {cfg.label}
+              </div>
+              <div className="text-[32px] sm:text-[36px] font-semibold text-[#0F172A] tracking-[-0.025em] leading-none tabular-nums">
+                {countByStatus(s)}
+              </div>
+              <div>
+                <Badge variant={cfg.variant}>{cfg.label}</Badge>
+              </div>
             </div>
           )
         })}
@@ -227,26 +239,43 @@ export default async function ToursPage({
                     key={day.toISOString()}
                     className={`aspect-square p-1.5 rounded-xl border text-xs flex flex-col gap-0.5 ${
                       isToday
-                        ? 'border-[#1D4ED8] bg-[#EFF6FF]'
+                        ? 'border-[#0F172A] bg-[#0F172A] text-white'
                         : dayTours.length > 0
-                          ? 'border-[#E2E8F0] bg-white'
-                          : 'border-[#F1F5F9] bg-[#F8FAFC]'
+                          ? 'border-[#E6E8EF] bg-white'
+                          : 'border-[#EEF2F7] bg-[#F8FAFC]'
                     }`}
                   >
-                    <span className={`text-[11px] font-semibold ${isToday ? 'text-[#1D4ED8]' : 'text-[#475569]'}`}>
+                    <span
+                      className={`text-[11px] font-semibold ${
+                        isToday ? 'text-white' : 'text-[#475569]'
+                      }`}
+                    >
                       {format(day, 'd')}
                     </span>
                     {dayTours.slice(0, 2).map((tour) => {
                       const t = tour as Record<string, unknown>
                       const cfg = STATUS_CONFIG[t.status as TourStatus]
                       return (
-                        <div key={t.id as string} className={`rounded-md px-1.5 py-0.5 text-[9px] font-medium truncate ${cfg.chip}`}>
+                        <div
+                          key={t.id as string}
+                          className={`rounded-md px-1.5 py-0.5 text-[9px] font-medium truncate ${
+                            isToday
+                              ? 'bg-white/[0.10] text-white border border-white/[0.10]'
+                              : cfg.chip
+                          }`}
+                        >
                           {format(new Date(t.scheduled_at as string), 'h:mma')}
                         </div>
                       )
                     })}
                     {dayTours.length > 2 && (
-                      <span className="text-[9px] text-[#94A3B8]">+{dayTours.length - 2}</span>
+                      <span
+                        className={`text-[9px] ${
+                          isToday ? 'text-white/75' : 'text-[#94A3B8]'
+                        }`}
+                      >
+                        +{dayTours.length - 2}
+                      </span>
                     )}
                   </div>
                 )

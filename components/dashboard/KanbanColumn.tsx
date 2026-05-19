@@ -30,12 +30,17 @@ export default function KanbanColumn({ stage, leads, onCardClick }: KanbanColumn
 
   return (
     <div className="flex flex-col w-[285px] shrink-0">
-      <div className="flex items-center justify-between px-3.5 py-3 rounded-t-[18px] bg-white border border-b-0 border-[#E2E8F0]">
+      {/* Phase 8AI — editorial column header: uppercase stage
+          eyebrow + small dot + count pill, on a soft slate surface
+          that matches the new dashboard card vocabulary. */}
+      <div className="flex items-center justify-between px-3.5 py-2.5 rounded-t-[16px] bg-[#F8FAFC] border border-b-0 border-[#E6E8EF]">
         <div className="flex items-center gap-2">
-          <div className={cn('w-2 h-2 rounded-full', cfg.dot)} />
-          <span className="text-[13px] font-semibold text-[#0F172A]">{cfg.label}</span>
+          <span className={cn('w-1.5 h-1.5 rounded-full', cfg.dot)} />
+          <span className="text-[10.5px] uppercase tracking-[0.14em] text-[#475569] font-semibold">
+            {cfg.label}
+          </span>
         </div>
-        <span className="text-[11px] font-semibold text-[#475569] rounded-full px-2 py-0.5 bg-[#F1F5F9] border border-[#E2E8F0]">
+        <span className="text-[10.5px] font-semibold text-[#475569] rounded-full px-2 py-0.5 bg-white border border-[#E6E8EF] tabular-nums">
           {leads.length}
         </span>
       </div>
@@ -43,8 +48,8 @@ export default function KanbanColumn({ stage, leads, onCardClick }: KanbanColumn
       <div
         ref={setNodeRef}
         className={cn(
-          'flex-1 min-h-[140px] rounded-b-[18px] border border-t-0 border-[#E2E8F0] p-2 space-y-2 transition-colors duration-150',
-          isOver ? 'bg-[#F1F5F9]' : 'bg-[#F8FAFC]'
+          'flex-1 min-h-[140px] rounded-b-[16px] border border-t-0 border-[#E6E8EF] p-2 space-y-2 transition-colors duration-150',
+          isOver ? 'bg-[#EFF4FF]' : 'bg-[#F4F7FB]'
         )}
       >
         <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
@@ -54,7 +59,7 @@ export default function KanbanColumn({ stage, leads, onCardClick }: KanbanColumn
         </SortableContext>
 
         {leads.length === 0 && (
-          <div className="flex items-center justify-center h-20 text-[11px] text-[#94A3B8] border border-dashed border-[#E2E8F0] rounded-xl">
+          <div className="flex items-center justify-center h-20 text-[11px] text-[#94A3B8] border border-dashed border-[#E2E8F0] rounded-xl bg-white/50">
             Drop here
           </div>
         )}

@@ -2543,6 +2543,1453 @@ Examples:
 - `?q=ab` → pill shown.
 - `?q=anthropic` → pill hidden, full RPC search.
 
+## 7ab. Digest preview (Phase 8V)
+
+Operators previously had to wait until the next 8am UTC cron tick to verify a cadence change produced the right email. Phase 8V adds a sync preview surface.
+
+### Endpoint
+
+```
+POST /api/admin/digest/preview
+```
+
+Body (all fields optional):
+
+```json
+{ "venue_id": "<uuid optional>" }
+```
+
+Behavior:
+1. `requireAdmin()` + optional cross-tenant `requireVenueRole(ADMIN_ROLES)`.
+2. 422 `no_email_on_account` when the caller's `auth.users.email` is null.
+3. 429 rate-limited per caller via `admin:digest-preview:{userId}`.
+4. Aggregates the last 24h of `tour_status_events` for the target venue (zero-event venues still get a sample with empty-state copy).
+5. Resolves the caller's effective preference (Phase 8U resolver — member > subscription > legacy > default).
+6. Sends the same HTML + plaintext body the cron would produce.
+7. Outbound metadata tagged so the cron ignores it on the next tick:
+   ```jsonc
+   {
+     "tour_digest_preview": "true",
+     "tour_digest_preview_user_id": "<user uuid>",
+     "tour_digest_cadence": "daily|weekly|off",
+     "tour_digest_weekly_day": "sun..sat|<empty>",
+     "tour_digest_total": "<int as string>"
+   }
+   ```
+   Crucially, the preview does NOT write `tour_digest_recipient_user_id` — the cron's idempotency probe keys on that field. So tomorrow's 8am UTC run still sends the real digest to the same user.
+
+### Response
+
+```json
+{
+  "success": true,
+  "venue_id": "<uuid>",
+  "sent_to": "operator@example.com",
+  "event_count": 12,
+  "cadence": "daily",
+  "weekly_day": null
+}
+```
+
+Console fallback (no Resend config in dev) returns 200 with:
+```json
+{ "success": false, "reason": "console_fallback", … }
+```
+
+Failure modes:
+- `409 suppressed` — recipient address is on the `email_suppressions` list.
+- `500 email_failed` — Resend provider error (Sentry-captured).
+
+### Manual verification SQL
+
+After clicking Send sample:
+
+```sql
+select created_at, status, provider, error,
+       metadata->>'tour_digest_preview'         as is_preview,
+       metadata->>'tour_digest_preview_user_id' as preview_user,
+       metadata->>'tour_digest_cadence'         as cadence
+from public.outbound_messages
+where venue_id = '<uuid>'
+  and related_table = 'tour_status_events'
+  and metadata->>'tour_digest_preview' = 'true'
+order by created_at desc
+limit 5;
+```
+
+Expect a row with `is_preview = 'true'`, `provider = 'resend'`, `status = 'queued'` (or `'delivered'` after the Resend webhook lands).
+
+## 7ac. Member digest preference backfill (Phase 8V)
+
+Long-time owner/admin members predate Phase 8U's per-user preference column — their `venue_members.metadata = '{}'` and the effective-preference resolver falls through to `'default'`. The billing card then shows a "Using default" source badge that surprises operators who'd expected to see their own preference reflected.
+
+The optional Phase 8V backfill writes explicit `digest_cadence='daily'` onto every owner/admin row that lacks one, flipping those badges to "Using your preference" and creating a clean per-member audit trail for future opt-outs.
+
+### Triggering
+
+```ts
+// Inngest dashboard → send event:
+{ name: 'admin/member-digest-preferences.backfill' }
+```
+
+Env gate:
+
+```env
+SEED_MEMBER_DIGEST=1
+```
+
+Without the flag, the function short-circuits with `{ skipped: true, reason: 'disabled' }`. No cron schedule — manual trigger only.
+
+### Idempotency rule
+
+Candidate query filters via `is.null` on `metadata->>'digest_cadence'`. Re-running is a no-op for already-backfilled rows. The per-row update also defensive-checks the key isn't set, so a race between the candidate fetch + a parallel admin POST mid-batch can't accidentally overwrite a freshly-set preference.
+
+### Expected return
+
+```json
+{
+  "scanned": 850,
+  "updated": 850,
+  "skipped": 0,
+  "failed": 0
+}
+```
+
+Or when disabled:
+
+```json
+{ "skipped": true, "reason": "disabled" }
+```
+
+Per-row failures NEVER abort the batch — they increment `failed` and the loop continues. Cap of 1000 rows per run; deployments with > 1000 candidate members need multiple invocations.
+
+### Validation SQL
+
+Before backfill:
+
+```sql
+select count(*) filter (where metadata->>'digest_cadence' is null) as missing,
+       count(*) filter (where metadata->>'digest_cadence' is not null) as set
+from public.venue_members
+where role in ('owner', 'admin');
+```
+
+After backfill: `missing` should be 0 (or close to it; any remainder are members updated between the candidate fetch and a per-row failure, surfaced via `summary.failed`).
+
+## 7ad. Self-serve digest resubscribe + cron idempotency hardening + preview suppression UX (Phase 8W)
+
+Three additive surfaces, no new env vars, no migrations.
+
+### Public resubscribe route
+
+`GET /api/digest/resubscribe?venue_id=<uuid>&user_id=<uuid>&token=<signed>` is the per-user counterpart to Phase 8S's venue-level `/api/digest/unsubscribe`. On a verified resubscribe-action token + matching URL params, it writes `digest_cadence = 'daily'` onto the `venue_members.metadata` row for the (venue_id, user_id) pair and renders a confirmation HTML page.
+
+Security posture mirrors the Phase 8S unsubscribe route:
+
+- HMAC-signed token via `DIGEST_UNSUBSCRIBE_SECRET` (≥16 chars enforced). Same secret as unsubscribe — a rotation invalidates every token of either kind.
+- Token payload carries `action: 'resubscribe'` (Phase 8W). A leaked Phase 8S unsubscribe token (no `action` field, defaults to `'unsubscribe'`) presented at this route returns the neutral 400 "link not valid" page via `action_mismatch`.
+- URL `venue_id` AND `user_id` must match the signed payload exactly. Defends against an attacker swapping query params to re-enable a different user.
+- Role-gated to `owner` / `admin`. A viewer / coordinator membership returns 404 (same shape as "no membership exists") so the route can't be used to enumerate per-role distribution.
+- Per-IP rate-limit via `digest-resubscribe:<ip>`; scoped separately from `digest-unsubscribe:<ip>` so a noisy resubscribe loop doesn't push the unsubscribe limiter into deny-all.
+- `X-Robots-Tag: noindex, nofollow` on every response.
+- Logs use `redactDigestUnsubscribeToken()`; raw token values never appear in Sentry context.
+
+The route writes ONLY to `venue_members.metadata`; it leaves `subscriptions.metadata.digest_disabled` (the legacy venue-level flag) untouched. This is intentional — per the Phase 8U effective-preference resolver, a member-level `digest_cadence='daily'` wins over the venue-level legacy flag, so an individual admin can re-enable themselves even when the venue is opted-out at the subscription level.
+
+Audit breadcrumb: each successful flip stamps `venue_members.metadata.digest_resubscribed_at = <ISO>` alongside the cadence write — same shape as `digest_disabled_at` on the unsubscribe side.
+
+Generate a resubscribe URL from server code (e.g. when embedding in an ops email):
+
+```ts
+import { createDigestResubscribeUrl } from '@/lib/integrations/digest-unsubscribe-token'
+
+const url = createDigestResubscribeUrl({
+  venueId: '<uuid>',
+  userId: '<uuid>',
+  // ttlMs optional; defaults to 30 days
+})
+```
+
+### Cron idempotency: `tour_digest_send_kind` discriminator
+
+Phase 8W formalizes the implicit "preview-marker-absence" pattern from Phase 8V into an explicit `metadata.tour_digest_send_kind` field on every outbound digest row:
+
+| Source | `send_kind` value |
+|---|---|
+| `operator-activity-digest` cron | `'cron'` |
+| `POST /api/admin/digest/preview` | `'preview'` |
+| (reserved) future operator manual send | `'manual'` |
+
+The cron's per-recipient idempotency probe now filters on `send_kind = 'cron'` so a preview sent earlier today can NEVER block the day's scheduled digest:
+
+```ts
+.filter('metadata->>tour_digest_date', 'eq', todayUtc)
+.filter('metadata->>tour_digest_recipient_user_id', 'eq', userId)
+.filter('metadata->>tour_digest_send_kind', 'eq', 'cron')
+```
+
+The Phase 8V `tour_digest_preview = 'true'` back-compat marker is still written by the preview route for one release cycle so any audit query built between 8V and 8W keeps working. New audit queries should prefer `send_kind`.
+
+Inspect today's rows by kind:
+
+```sql
+select metadata->>'tour_digest_send_kind' as kind, count(*)
+from public.outbound_messages
+where related_table = 'tour_status_events'
+  and metadata->>'tour_digest_date' = to_char(now() at time zone 'utc', 'YYYY-MM-DD')
+group by 1;
+```
+
+Expected after a normal day (cadence='daily' venue, one preview clicked):
+
+```
+kind     | count
+---------+------
+cron     | 1
+preview  | 1
+```
+
+### Preview suppression UX
+
+`POST /api/admin/digest/preview` returns HTTP 409 with `{ error: 'suppressed' }` when Resend has the caller's email on its suppression list (typically from a prior hard bounce or complaint).
+
+Pre-8W: the card rendered `Couldn't send sample: suppressed` — accurate but cryptic.
+
+Phase 8W: the card detects the (status 409, error 'suppressed') tuple and renders the friendlier amber-toned copy:
+
+> This email address is currently suppressed by our email provider, so we can't send a sample digest to it. Contact support to re-enable delivery for this address.
+
+Other non-200 responses (rate_limit, validation_failed, console_fallback, generic `email_failed`) still render the original red-toned `Couldn't send sample: <code>` line — only the suppression branch was specialized.
+
+To verify locally, drop the caller's email into Resend's suppression list via the dashboard and click "Send sample" on `/dashboard/settings/billing` — the friendly amber copy should appear in place of the red error.
+
+## 7ae. Digest footer links + manual sends (Phase 8X)
+
+### Send-kind matrix
+
+Every outbound digest row carries an explicit `metadata.tour_digest_send_kind`:
+
+| Surface | `send_kind` | Idempotency probe match? | Footer unsubscribe | Footer resubscribe |
+|---|---|---|---|---|
+| `operator-activity-digest` cron | `'cron'` | Yes (filters on `send_kind='cron'`) | Yes (venue-level, when secret set) | No (cadence is never 'off' on a cron send) |
+| `POST /api/admin/digest/preview` | `'preview'` | No | Yes | Yes |
+| `POST /api/admin/digest/send` (Phase 8X manual) | `'manual'` | No | Yes | Yes |
+
+The cron probe is strict: legacy rows without `tour_digest_send_kind` do NOT match either. Documented as acceptable in the §7w/§7ad operational notes — a freshly-deployed cron may send once more to a recipient who already received today's digest under a pre-8W row, then resume normal dedup the following day.
+
+### Metadata examples
+
+Cron row:
+
+```json
+{
+  "tour_digest_date": "2026-05-18",
+  "tour_digest_total": "12",
+  "tour_digest_recipient_user_id": "<uuid>",
+  "tour_digest_cadence": "daily",
+  "tour_digest_weekly_day": "",
+  "tour_digest_send_kind": "cron"
+}
+```
+
+Preview row:
+
+```json
+{
+  "tour_digest_preview": "true",
+  "tour_digest_preview_user_id": "<uuid>",
+  "tour_digest_cadence": "weekly",
+  "tour_digest_weekly_day": "tue",
+  "tour_digest_total": "0",
+  "tour_digest_send_kind": "preview"
+}
+```
+
+(Note: preview deliberately omits `tour_digest_recipient_user_id` for belt-and-suspenders coverage of any audit query built before Phase 8W's `send_kind` discriminator. The Phase 8V `tour_digest_preview='true'` back-compat marker stays for one release cycle.)
+
+Manual row:
+
+```json
+{
+  "tour_digest_send_kind": "manual",
+  "tour_digest_recipient_user_id": "<uuid>",
+  "tour_digest_cadence": "daily",
+  "tour_digest_weekly_day": "",
+  "tour_digest_total": "12",
+  "tour_digest_manual_initiator_user_id": "<uuid>"
+}
+```
+
+`tour_digest_manual_initiator_user_id` is the auth.users id of the operator who clicked "Send manual digest" (or POSTed the endpoint). Useful for audit queries — "who keeps sending Sara manual digests at 2am?".
+
+### Manual endpoint contract
+
+`POST /api/admin/digest/send`
+
+Request body (all fields optional):
+
+```json
+{
+  "venue_id": "<uuid>",
+  "user_id": "<uuid>",
+  "respect_cadence": false
+}
+```
+
+- `venue_id` — target venue. Defaults to caller's primary venue. Cross-tenant requires ADMIN_ROLES via `requireVenueRole`; forbidden collapses to 404.
+- `user_id` — target recipient. Defaults to caller. Must be an `owner` or `admin` member of the resolved venue; viewer/coordinator/sales_manager memberships collapse to 404.
+- `respect_cadence` — when `true`, honors the recipient's effective cadence preference (cron-style skip on `'off'` or weekly-wrong-day). When `false` (default), bypasses cadence entirely. Cron idempotency is ALWAYS bypassed.
+
+Success response (`200`):
+
+```json
+{
+  "success": true,
+  "sent": true,
+  "venue_id": "<uuid>",
+  "recipient_user_id": "<uuid>",
+  "sent_to": "operator@example.com",
+  "event_count": 12,
+  "cadence": "daily",
+  "weekly_day": null,
+  "send_kind": "manual"
+}
+```
+
+`sent_to` is only populated when the caller IS the recipient. Cross-user sends return `sent_to: null` to prevent admins from enumerating other admins' email addresses.
+
+Cadence-skip response (`200`, only when `respect_cadence: true`):
+
+```json
+{
+  "success": true,
+  "sent": false,
+  "skipped": true,
+  "reason": "off|cadence_mismatch",
+  "venue_id": "<uuid>",
+  "recipient_user_id": "<uuid>",
+  "event_count": 12,
+  "cadence": "off|weekly",
+  "weekly_day": null,
+  "send_kind": "manual"
+}
+```
+
+Error responses:
+
+| Status | Body | Cause |
+|---|---|---|
+| 400 | `{ "error": "validation_failed", "detail": ... }` | Body failed Zod parse |
+| 400 | `{ "error": "recipient_email_missing" }` | Target user has no auth.users.email |
+| 401 | `{ "error": "unauthorized" }` | No session |
+| 403 | `{ "error": "forbidden" }` | Not an admin/owner anywhere |
+| 404 | `{ "error": "not_found" }` | Cross-tenant denied OR target not an admin/owner member |
+| 409 | `{ "error": "suppressed" }` | Resend has the address on its suppression list |
+| 429 | `{ "error": "rate_limit_exceeded", ... }` | `admin:digest-send:<userId>` budget exhausted |
+| 500 | `{ "error": "email_failed" }` | Provider error (Sentry-captured) |
+| 500 | `{ "error": "unexpected_error" }` | DB or Auth admin lookup failure |
+
+### Footer link behavior
+
+Every digest body (plaintext + HTML) now renders:
+
+1. "Manage your digest preferences from Billing Settings" pointer at `${appUrl}/dashboard/settings/billing` — always present.
+2. Unsubscribe link (`createDigestUnsubscribeUrl`) — present when `DIGEST_UNSUBSCRIBE_SECRET` is set.
+3. Resubscribe link (`createDigestResubscribeUrl`) — present when `DIGEST_UNSUBSCRIBE_SECRET` is set AND `send_kind !== 'cron'`.
+
+The send-kind gating is intentional: cron-driven digests reach a recipient whose effective cadence is `'daily'` or `'weekly'` (off would have been skipped upstream), so the re-enable link would just add clutter. Preview and manual sends always include the resubscribe link because they're operator-initiated and the recipient may need either action.
+
+### Missing-secret behavior
+
+When `DIGEST_UNSUBSCRIBE_SECRET` is unset or shorter than 16 chars:
+
+- All three surfaces (cron / preview / manual) still send the email body.
+- Both unsubscribe and resubscribe footer lines are omitted (plaintext + HTML).
+- A single structured warn `jobs.operator_activity_digest.no_unsubscribe_secret` fires once per process — shared module-level flag across the cron + preview + manual handlers, so a noisy day doesn't produce one warn per recipient.
+
+### Cron idempotency contract (Phase 8X reiteration)
+
+The cron's per-recipient probe must match strictly:
+
+```sql
+metadata->>'tour_digest_send_kind'         = 'cron'
+metadata->>'tour_digest_recipient_user_id' = $userId
+metadata->>'tour_digest_date'              = $today
+```
+
+It must NOT match:
+
+- `send_kind = 'preview'` (Phase 8V/8W)
+- `send_kind = 'manual'` (Phase 8X)
+- Legacy rows without `tour_digest_send_kind` (pre-8W)
+
+Acceptable side effect: a freshly-deployed cron may send one extra digest to a recipient who already received today's digest under a pre-8W row, then resume normal dedup the following day.
+
+## 7af. Digest member picker + send audit feed (Phase 8Y)
+
+Two new admin endpoints + a new card on `/dashboard/settings/billing` make manual digests usable for operators and surface digest delivery history as a first-class audit feed.
+
+### Member endpoint contract
+
+`GET /api/admin/digest/members?venue_id=<optional uuid>`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (collapses to 404 on miss).
+
+Rate-limit: `admin:digest-members:{userId}`.
+
+Response (`200`):
+
+```json
+{
+  "venue_id": "<uuid>",
+  "items": [
+    {
+      "user_id": "<uuid>",
+      "role": "owner",
+      "email": "owner@example.com",
+      "can_receive_digest": true,
+      "is_current_user": true
+    }
+  ]
+}
+```
+
+Members with missing emails are returned with `email: null` and `can_receive_digest: false` rather than omitted — the picker shows them disabled so the operator sees the gap. Hard cap of 10 members per venue (matches the Phase 8U cron fan-out cap); the first 10 owner/admin members by `created_at` are returned. Only roles in `('owner', 'admin')` ever appear — viewer/coordinator/sales_manager are excluded structurally.
+
+### Sends endpoint contract
+
+`GET /api/admin/digest/sends`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (collapses to 404 on miss).
+
+Rate-limit: `admin:digest-sends:{userId}`.
+
+Query params (all optional):
+
+- `venue_id` — defaults to caller's primary venue
+- `send_kind` ∈ `cron | preview | manual | all`, default `all`
+- `recipient_user_id` — filter by recipient
+- `since` — ISO datetime; `created_at >= since`
+- `limit` — 1..200, default 50
+- `format` ∈ `json | csv`, default `json`
+
+Reads `outbound_messages` rows where `related_table = 'tour_status_events'` AND `metadata->>'tour_digest_send_kind' IS NOT NULL`. Legacy pre-8W rows (no `send_kind`) are excluded — they can't be classified accurately as `cron` vs `preview` vs `manual`.
+
+JSON response (`200`):
+
+```json
+{
+  "items": [
+    {
+      "id": "<outbound_messages id>",
+      "venue_id": "<uuid>",
+      "recipient_user_id": "<uuid|null>",
+      "recipient_email": "o***@example.com",
+      "send_kind": "cron",
+      "status": "queued|delivered|bounced|complained|failed|suppressed",
+      "provider": "resend|null",
+      "event_count": 14,
+      "cadence": "daily|weekly|off|null",
+      "weekly_day": "mon|null",
+      "manual_initiator_user_id": "<uuid|null>",
+      "error": "<string|null>",
+      "created_at": "<iso>",
+      "delivered_at": "<iso|null>"
+    }
+  ]
+}
+```
+
+CSV branch (`?format=csv`):
+
+- `Content-Type: text/csv; charset=utf-8`
+- `Content-Disposition: attachment; filename="digest-sends-YYYY-MM-DD.csv"`
+- UTF-8 BOM (Excel auto-detect)
+- Explicit column allowlist:
+  `id, venue_id, send_kind, status, recipient_user_id, recipient_email_masked, provider, event_count, cadence, weekly_day, manual_initiator_user_id, error, created_at, delivered_at`
+- Cells escaped per RFC 4180 (comma / quote / newline → quoted, embedded `"` doubled)
+
+### PII / masking posture
+
+- `recipient_email` is **always masked** in the audit feed: `o***@example.com`. The members endpoint exposes raw emails because the picker needs a human-readable label; the audit feed deliberately doesn't, so a CSV download doesn't scatter raw addresses across an operator's hard drive.
+- The feed never returns `subject`, `body` (text or html), `provider_message_id`, or the full `metadata` jsonb. Only the allow-listed metadata keys above are surfaced.
+- `error` is returned as-is so operators can triage suppressions and provider failures.
+
+### Manual-send `respect_cadence` behavior
+
+`POST /api/admin/digest/send` with `{ respect_cadence: true }`:
+
+- If the recipient's effective cadence is `'off'`:
+  ```json
+  { "success": true, "sent": false, "skipped": true, "reason": "off", ... }
+  ```
+- If the recipient's effective cadence is `'weekly'` and today UTC isn't the scheduled day:
+  ```json
+  { "success": true, "sent": false, "skipped": true, "reason": "weekly_wrong_day", ... }
+  ```
+- Otherwise sends normally with `sent: true`.
+
+The DigestPreferencesCard maps `reason: 'off'` → "Skipped because this recipient's cadence is off." and `reason: 'weekly_wrong_day'` → "Skipped because this recipient's weekly digest is not scheduled today." Other values render the generic red error line.
+
+Cron idempotency is ALWAYS bypassed regardless of `respect_cadence`.
+
+### Audit feed behavior
+
+`DigestAuditFeed` on `/dashboard/settings/billing` (admins/owners only):
+
+- Initial load: last 25 sends.
+- Filter chips: `All / Cron / Preview / Manual` — only one active at a time. Changing the chip refetches.
+- Manual refresh button + CSV export link in the card header.
+- CSV export honors the current chip — operators get a CSV of what they're looking at, not the full unfiltered feed. The endpoint caps at 200 rows; chain with `?since=<ISO>` for wider windows.
+- Status pill colors mirror the existing billing-page activity feed conventions: emerald for delivered, amber for suppressed, red for bounced/complained/failed, slate for in-flight (queued, etc.).
+- Empty state: "No digest sends recorded yet."
+
+### Known limitation — outbound_messages, not Resend webhooks
+
+The feed reads `outbound_messages` rows. The `status` column updates when `/api/resend/webhook` receives a delivery event. So a row may show `status: 'queued'` for a few seconds after the send before the webhook flips it to `delivered`. Triage steps for any send appearing stuck at `queued`:
+
+1. Confirm Resend webhook is configured (`/api/health` → `resend_webhook: 'configured'`).
+2. Inspect the Resend dashboard's delivery log directly for the same `to_address`.
+3. If the webhook confirms delivery but the row is still `queued`, suspect a webhook signature mismatch — see RUNBOOK §4.
+
+## 7ag. Digest audit pagination + realtime + suppression triage (Phase 8Z)
+
+### Sends endpoint pagination contract
+
+`GET /api/admin/digest/sends` now accepts:
+
+```
+?occurred_before=<ISO datetime>
+```
+
+Strict `<` cursor on `created_at`. Preserves all existing filters: `venue_id`, `send_kind`, `recipient_user_id`, `since`, `limit` (cap 200), `format ∈ json | csv`.
+
+JSON response shape (additive — older 8Y clients still parse):
+
+```json
+{
+  "items": [...],
+  "next_cursor": "2026-05-19T08:00:00Z",
+  "has_more": true
+}
+```
+
+- `next_cursor` = `created_at` of the last returned row when `has_more === true`, otherwise `null`.
+- `has_more = rows.length === limit`. A short page implies the operator reached the end.
+
+CSV branch (`?format=csv`):
+
+- All existing columns + headers unchanged.
+- New response headers:
+  ```
+  X-Has-More: true|false
+  X-Next-Cursor: <iso>     // only when has_more=true
+  ```
+- Chain manually by reading `X-Next-Cursor` and re-issuing with `&occurred_before=<value>`.
+
+PII masking is unchanged from Phase 8Y — `recipient_email` is always masked in both JSON and CSV.
+
+### Realtime layer
+
+`RealtimeDigestSendsLayer` (mounted on `/dashboard/settings/billing` for admins/owners only):
+
+- Channel: `digest-sends:venue:${venueId}`
+- Postgres filter: `event=INSERT, schema=public, table=outbound_messages, filter=venue_id=eq.${venueId}`
+- Handler-side narrowing:
+  ```ts
+  if (row.related_table !== 'tour_status_events') return
+  if (!row.metadata?.tour_digest_send_kind) return
+  ```
+- Toast on every qualifying INSERT: "New digest send recorded".
+- `router.refresh()` debounced 1000ms trailing — cron bursts coalesce into one rebuild while every event still produces a visible toast.
+
+PREREQ — `outbound_messages` must be in the `supabase_realtime` publication. Migration 001 publishes only leads / messages / conversations / tours; this table is NOT in by default. Apply out-of-band (not a migration file):
+
+```sql
+alter publication supabase_realtime add table public.outbound_messages;
+```
+
+Without the publication entry, the channel subscribes successfully but receives no events.
+
+### Suppression endpoint contract
+
+`GET /api/admin/digest/suppressions?venue_id=<optional uuid>`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (404 on miss).
+
+Rate-limit: `admin:digest-suppressions:{userId}`.
+
+Behavior:
+
+1. Resolve owner/admin members of the target venue (cap 10, matches cron fan-out + picker).
+2. Resolve each member's `auth.users.email` (bounded concurrency 5).
+3. Intersect against `public.email_suppressions` (the existing migration-003 table; NOT a new `suppressions` table).
+4. Return rows that belong to receivers of THIS venue's digest, with masked emails.
+
+Response:
+
+```json
+{
+  "venue_id": "<uuid>",
+  "items": [
+    {
+      "user_id": "<uuid>",
+      "role": "owner",
+      "email_masked": "o***@example.com",
+      "reason": "bounce|complaint|manual|unknown",
+      "created_at": "<iso|null>"
+    }
+  ]
+}
+```
+
+Reason mapping:
+
+| email_suppressions.reason | response.reason |
+|---|---|
+| `bounce_hard` | `bounce` |
+| `complaint` | `complaint` |
+| `manual` | `manual` |
+| `unsubscribe` | `unknown` (deliberately — see below) |
+| anything else | `unknown` |
+
+The `unsubscribe` reason is intentionally collapsed to `unknown`. A member who unsubscribed via the Phase 8S link flipped a digest-cadence preference, not a delivery suppression. Surfacing `unsubscribe` here would conflate two distinct opt-out paths.
+
+### PII masking posture
+
+- Response NEVER returns raw email — always `o***@example.com`.
+- Logs include user_id, venue_id, count only — no email at any verbosity.
+- Cross-tenant lookups collapse to 404 to prevent venue enumeration.
+- Email-lookup failures are warned by user_id only; the raw email never reaches Sentry context.
+
+### Suppression callout UI
+
+`DigestSuppressionsCallout`:
+
+- Mounted on `/dashboard/settings/billing` between `DigestPreferencesCard` and `DigestAuditFeed`.
+- Fetches `/api/admin/digest/suppressions` lazily on mount.
+- Renders NOTHING in the happy path (empty items / loading / error).
+- Otherwise renders an amber banner with:
+  - Pluralized headline ("1 admin email is currently suppressed." / "3 admin emails are currently suppressed.").
+  - List of masked emails + reasons + dates.
+  - Pointer to "Resolve from your Resend dashboard or the admin suppressions list."
+- No remove action in this phase — direct operators to existing tools.
+
+### Audit feed "Load older"
+
+`DigestAuditFeed` extensions:
+
+- Initial fetch unchanged (last 25 rows; `?limit=25`).
+- Stores `{ items, nextCursor, hasMore, loadingMore, loadMoreError }` in state.
+- "Load older" button appears below the table when `hasMore === true`.
+- Click: fetches `?occurred_before=<nextCursor>&limit=25&send_kind=<filter>` and APPENDS rows. Cursor advances; `hasMore` updates from the response.
+- Filter chip change RESETS the feed to page 1 (the existing useEffect dependency on `filter` rebuilds the initial load).
+- Inline error keeps the table visible if a load-more fetch fails ("Couldn't load older sends: <code>").
+- CSV export link deliberately does NOT carry the cursor — it always exports the current filter at `limit=200` ("export what I'm looking at, plus headroom").
+
+### Per-recipient mini-summary
+
+Above the table, the audit feed renders a one-line top-3-recipients summary over the currently loaded slice:
+
+```
+Last loaded sends: y***@example.com 8 · a***@example.com 3 · unknown 1
+```
+
+Pure derived state — no extra fetch. Helps operators spot a single recipient absorbing all the failures.
+
+### Known limitation — Realtime vs Resend webhook ordering
+
+Realtime INSERTs fire when the `outbound_messages` row is created (typically `status='queued'`). The Resend webhook handler at `/api/resend/webhook` updates the row to `delivered` / `bounced` / etc seconds later. The audit feed will repaint with `status='queued'` first and the final status arrives via the next `router.refresh()` (debounced).
+
+This is acceptable — the Realtime layer's job is "tell the operator a send happened", not "report final delivery state". For forensic confirmation use the Resend dashboard directly.
+
+## 7ah. Digest suppression removal + send search (Phase 8AA)
+
+Three additive surfaces close the operator loop on digest delivery: admins can resolve suppressions inline, search the audit feed, and see suppression banners refresh in real time.
+
+### Suppression remove endpoint contract
+
+`POST /api/admin/digest/suppressions/remove`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (404 on miss).
+
+Rate-limit: `admin:digest-suppressions-remove:{userId}`.
+
+Body:
+
+```json
+{
+  "venue_id": "<optional uuid>",
+  "user_id": "<uuid>",
+  "reason": "<optional string, max 240>"
+}
+```
+
+The body NEVER carries an email. The server re-resolves the target's address from `venue_members` + Supabase Auth admin, then deletes by the resolved address from `public.email_suppressions`. This defends against:
+
+- A malicious client mass-clearing suppressions for unrelated accounts.
+- A stale UI sending a previously-correct email after the user changed it in Auth.
+- A tampered DOM POSTing an email it never displayed.
+
+The optional `reason` is a free-text breadcrumb the operator can pass (e.g. "verified with recipient" / "domain reconfigured"). Capped at 240 chars; logged but never displayed back to the client.
+
+Success response — suppression existed and was removed:
+
+```json
+{
+  "success": true,
+  "removed": true,
+  "venue_id": "<uuid>",
+  "user_id": "<uuid>",
+  "email_masked": "o***@example.com"
+}
+```
+
+Success response — no suppression row matched the resolved email (idempotent, treats "already removed" as success):
+
+```json
+{
+  "success": true,
+  "removed": false,
+  "reason": "not_suppressed",
+  "venue_id": "<uuid>",
+  "user_id": "<uuid>",
+  "email_masked": "o***@example.com"
+}
+```
+
+Error responses:
+
+| Status | Body | Cause |
+|---|---|---|
+| 400 | `{ "error": "validation_failed", "detail": ... }` | Body failed Zod parse (missing user_id, invalid uuid, etc.) |
+| 400 | `{ "error": "recipient_email_missing" }` | Target user has no `auth.users.email` |
+| 401 | `{ "error": "unauthorized" }` | No session |
+| 403 | `{ "error": "forbidden" }` | Not admin/owner anywhere |
+| 404 | `{ "error": "not_found" }` | Cross-tenant denied OR target not owner/admin member of venue |
+| 429 | `{ "error": "rate_limit_exceeded", ... }` | `admin:digest-suppressions-remove:<userId>` budget exhausted |
+| 500 | `{ "error": "unexpected_error" }` | DB or Auth admin lookup failure |
+
+### Audit trail
+
+No new audit table — `billing_events_log` (migration 008) is reserved for Stripe webhook events and overloading it would muddy the existing schema's `provider` / `event_type` semantics. The forensic trail is structured log lines on every outcome:
+
+```
+op=admin.digest_suppression_remove
+event=admin.digest_suppression_remove.completed
+requestId=<uuid>
+venueId=<uuid>
+targetUserId=<uuid>
+removed=true|false
+removedCount=<int>
+operatorReason=<string|null>
+```
+
+A future phase can introduce a dedicated `digest_audit_events` table if frequency justifies it.
+
+### Server-side email resolution rationale
+
+Even though the operator already sees the masked email via the audit feed / callout, the remove endpoint deliberately does NOT accept an email parameter. Rationale:
+
+1. **Defense in depth.** A compromised admin session could otherwise pass any address.
+2. **Source-of-truth coherence.** If the operator changed their email in Auth after the suppression was created (rare but possible), the suppression row still keys on the old address; resolving from current Auth state could miss it. Mitigation: a future phase can add a `resolved_email_history` lookup if this becomes a real problem.
+3. **Audit-log clarity.** Every removal log line ties to a `(venue_id, user_id)` pair — never an email — so log searches respect the same PII boundary as the feed UI.
+
+### Search query contract
+
+`GET /api/admin/digest/sends?q=<string, max 120>`
+
+Search fields by length:
+
+| Term length | Searched fields |
+|---|---|
+| 1-2 chars (short) | `status`, `provider`, `error`, `to_address`, `metadata->>tour_digest_send_kind` |
+| 3+ chars (full) | All short fields, plus `metadata->>tour_digest_cadence`, `metadata->>tour_digest_weekly_day`, `metadata->>tour_digest_recipient_user_id`, `metadata->>tour_digest_manual_initiator_user_id` |
+
+Mirrors the Phase 8U short-query short-circuit on `/api/admin/tours/status-events`. The threshold exists because the broader metadata-key allowlist produces noisy matches under 3 chars (e.g. searching `m` would match `metadata->>tour_digest_cadence='daily'` rows incidentally through the recipient_user_id column).
+
+Internal-only ILIKE on `to_address` is permitted — operators frequently remember the local-part of an admin email. Responses still mask `recipient_email`; the search is server-side only.
+
+Search composes with every other filter (`venue_id`, `send_kind`, `recipient_user_id`, `since`, `occurred_before`, `limit`, `format`). Pagination's strict `<` cursor preserves the active `q` across "Load older" clicks.
+
+### CSV search behavior
+
+`GET /api/admin/digest/sends?q=manual&format=csv` produces the same CSV columns + UTF-8 BOM as the unfiltered export, but only includes matching rows. Headers behave per Phase 8Z:
+
+```
+X-Has-More: true|false
+X-Next-Cursor: <iso>     // only when has_more=true
+```
+
+### Realtime suppression refresh
+
+`RealtimeDigestSendsLayer` already toasts + debounces `router.refresh()` on every digest INSERT (Phase 8Z). Phase 8AA adds one more side effect: when the new row carries `status === 'suppressed'`, dispatch:
+
+```ts
+window.dispatchEvent(
+  new CustomEvent('venuerise:digest-suppression-refresh')
+)
+```
+
+`DigestSuppressionsCallout` listens via `window.addEventListener` and refetches its own data. No shared state store; a single CustomEvent is enough for one consumer.
+
+Cleanup: the listener is removed on unmount. Multiple billing-page tabs each see their own dispatch (events don't cross window contexts).
+
+### PII posture
+
+- Suppression remove endpoint: body never accepts email; response only masked email; logs never include raw email at any verbosity.
+- Sends search: matches `to_address` server-side; responses still mask `recipient_email`. The CSV export columns are unchanged from Phase 8Y (always masked).
+- Realtime CustomEvent: carries no payload — just signals "something happened; please refetch."
+
+## 7ai. Digest audit retention + cron health + bulk suppression removal (Phase 8AB)
+
+### Retention job behavior
+
+`digest-audit-retention` — weekly Inngest cron, schedule `0 9 * * 1` (Monday 9am UTC). Env-gated by `DIGEST_AUDIT_RETENTION_ENABLED=1`. With the flag absent or any other value, the cron short-circuits to `{ skipped: true, reason: 'disabled' }` before any DB read.
+
+Retention window: `DIGEST_AUDIT_RETENTION_DAYS` (default 365). Clamped to `[30, 3650]`.
+
+Behavior:
+1. Select up to 500 `outbound_messages` rows where:
+   - `related_table = 'tour_status_events'`
+   - `metadata->>'tour_digest_send_kind' IS NOT NULL` (digest rows only)
+   - `created_at < now() - retentionDays`
+   - `metadata->>'digest_archived' IS NULL OR != 'true'` (skip already-archived)
+2. For each row, merge into `metadata`:
+   ```json
+   {
+     "digest_archived": true,
+     "digest_archived_at": "<iso>",
+     "digest_archived_reason": "retention_policy",
+     "digest_retention_days": 365
+   }
+   ```
+3. Return `{ scanned, archived, failed, retentionDays }`.
+
+Per-row failures NEVER abort the batch. Soft-archive only — rows are NEVER deleted. Existing metadata keys (`tour_digest_send_kind`, `tour_digest_recipient_user_id`, etc.) are preserved.
+
+### Archived metadata shape
+
+```json
+{
+  "tour_digest_send_kind": "cron",
+  "tour_digest_recipient_user_id": "<uuid>",
+  "tour_digest_total": "12",
+  "tour_digest_cadence": "daily",
+  "tour_digest_weekly_day": "",
+  "tour_digest_date": "2025-05-19",
+  "digest_archived": true,
+  "digest_archived_at": "2026-05-19T09:00:00Z",
+  "digest_archived_reason": "retention_policy",
+  "digest_retention_days": 365
+}
+```
+
+### `?include_archived=true`
+
+`GET /api/admin/digest/sends?include_archived=true|false` (default `false`):
+
+- Default path filters out archived rows via:
+  ```
+  metadata->>'digest_archived' IS NULL OR metadata->>'digest_archived' != 'true'
+  ```
+- Set the flag to `true` to surface archived rows alongside live ones. Useful for forensic queries on incidents older than the retention window.
+
+JSON `items[]` now carry a boolean `archived` field. CSV adds an `archived` column (`true`/`false`).
+
+### Cron health endpoint contract
+
+`GET /api/admin/digest/cron-health?venue_id=<optional uuid>`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (404 on miss).
+Rate-limit: `admin:digest-cron-health:{userId}`.
+
+Reads the most-recent `cron`-tagged outbound digest row inside a 72-hour lookback window. Returns:
+
+```json
+{
+  "venue_id": "<uuid>",
+  "ok": true,
+  "last_run_at": "<iso|null>",
+  "lag_minutes": 830,
+  "status": "ok|stale|no_data",
+  "expected_schedule": "daily 8am UTC",
+  "last_summary": {
+    "status": "delivered|queued|failed|suppressed|bounced|complained|null",
+    "event_count": 12,
+    "recipient_user_id": "<uuid|null>",
+    "cadence": "daily|weekly|off|null",
+    "weekly_day": "mon|null"
+  }
+}
+```
+
+Status logic:
+
+| Last cron row | Status |
+|---|---|
+| None within 72h | `no_data` (`ok: true`) |
+| Created < 30h ago | `ok` (`ok: true`) |
+| Created > 30h ago | `stale` (`ok: false`) |
+
+### Why health is delivery-derived, not Inngest-derived
+
+The endpoint infers cron health from `outbound_messages` rows, NOT by probing Inngest's run history. Trade-offs:
+
+- **Pro:** no Inngest API token required, no new integration; works against any deployment that ships outbound digest rows.
+- **Con:** a venue with NO tour activity in the last 24h won't get a digest (the cron skips zero-event venues), producing `status: 'no_data'`. That's not a cron failure — just a quiet venue. The card UI says so explicitly.
+- For unambiguous cron run telemetry, point operators at the Inngest dashboard. That's the source of truth.
+
+### Bulk remove endpoint contract
+
+`POST /api/admin/digest/suppressions/remove-all`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (404 on miss).
+Rate-limit: `admin:digest-suppressions-remove-all:{userId}`.
+
+Body:
+
+```json
+{
+  "venue_id": "<optional uuid>",
+  "reason": "<optional string, max 240>"
+}
+```
+
+Behavior:
+1. Resolve owner/admin members for the venue (cap 10).
+2. Resolve emails server-side (bounded concurrency 5).
+3. Per-member delete from `email_suppressions` by resolved email.
+
+Response (`200`):
+
+```json
+{
+  "success": true,
+  "venue_id": "<uuid>",
+  "removed_count": 3,
+  "details": [
+    {
+      "user_id": "<uuid>",
+      "email_masked": "o***@example.com",
+      "removed": true
+    },
+    {
+      "user_id": "<uuid>",
+      "email_masked": null,
+      "removed": false,
+      "reason": "email_missing"
+    },
+    {
+      "user_id": "<uuid>",
+      "email_masked": "a***@example.com",
+      "removed": false,
+      "reason": "not_suppressed"
+    }
+  ]
+}
+```
+
+`reason` ∈ `'email_missing' | 'not_suppressed' | 'unexpected_error'`.
+
+`DigestSuppressionsCallout` surfaces a single "Remove all suppressions" button when `items.length >= 3`. Confirms via `window.confirm` before POSTing.
+
+### Search highlight behavior
+
+`DigestAuditFeed` wraps matched substrings in `<mark>` when the active search term is non-empty. Implementation notes:
+
+- Case-insensitive matching via `String.toLowerCase().indexOf(...)`.
+- No `dangerouslySetInnerHTML`; React tree is built piecewise so any `<` in the source becomes plain text. A search for `<script>` matches the literal substring and renders it inside `<mark>` — never executed.
+- Highlighted cells: send kind label, recipient email, status pill, cadence, weekly day. NOT highlighted: timestamps (formatted client-side; not user-facing search data) and event count (numeric).
+- Hidden metadata that isn't rendered visually isn't highlighted — search may match a row via `metadata->>tour_digest_manual_initiator_user_id` server-side but the cell wouldn't reflect that. This is intentional; the existing recipient summary already exposes who manual sends went to.
+
+### PII posture summary
+
+- Retention job: only mutates metadata; never reads `to_address` into the response surface.
+- Cron health: `last_summary.recipient_user_id` is a uuid (no email exposure).
+- Bulk remove: same masked-email contract as Phase 8AA per-row remove; body never carries email; logs never include raw email.
+
+## 7aj. Digest audit events + archived toggle + cron-health realtime (Phase 8AC)
+
+### `digest_audit_events` schema (migration 017)
+
+```sql
+create table public.digest_audit_events (
+  id                  uuid primary key default gen_random_uuid(),
+  venue_id            uuid not null references public.venues(id) on delete cascade,
+  actor_user_id       uuid references auth.users(id) on delete set null,
+  actor_kind          text not null check (actor_kind in ('operator', 'cron', 'system')),
+  action              text not null,
+  target_user_id      uuid references auth.users(id) on delete set null,
+  target_email_masked text,
+  reason              text,
+  metadata            jsonb not null default '{}'::jsonb,
+  occurred_at         timestamptz not null default now()
+);
+```
+
+Indexes: `(venue_id, occurred_at desc)`, `(action, occurred_at desc)`, `(actor_kind, occurred_at desc)`.
+
+RLS: SELECT for owner/admin via `has_venue_role(venue_id, auth.uid(), array['owner','admin'])`. No INSERT/UPDATE/DELETE policies — writes flow exclusively through `recordDigestAuditEvent` (service role).
+
+### Audit write paths
+
+| Caller | `actor_kind` | `action` | Notes |
+|---|---|---|---|
+| `POST /api/admin/digest/suppressions/remove` (Phase 8AA) | `operator` | `suppression_remove` or `suppression_remove_noop` | One row per call. `metadata.route='single'`. |
+| `POST /api/admin/digest/suppressions/remove-all` (Phase 8AB) | `operator` | `suppression_remove_all` (summary) + one `suppression_remove` per actually-removed target | Summary `metadata = { removed_count, attempted_count, route: 'bulk' }`. Per-target rows skipped for `email_missing` / `not_suppressed` outcomes — the summary carries those counts. |
+| `lib/jobs/functions/digest-audit-retention.ts` (Phase 8AB) | `cron` | `digest_retention_archive` | One row per venue represented in the archived batch. `metadata = { archived_count, failed_count, retention_days, batch_limit }`. NOT written in dry-run mode. |
+
+`recordDigestAuditEvent` is best-effort: failures log + Sentry-capture and the caller continues. HTTP responses never depend on audit-write success.
+
+### Audit endpoint contract
+
+`GET /api/admin/digest/audit-events`
+
+Auth: `requireAdmin()` + cross-tenant `requireVenueRole(ADMIN_ROLES)` (404 on miss).
+Rate-limit: `admin:digest-audit-events:{userId}`.
+
+Query params:
+
+```
+venue_id?:           uuid
+action?:             string (max 80, exact match)
+actor_kind?:         operator | cron | system | all   (default all)
+target_user_id?:     uuid
+since?:              ISO datetime
+occurred_before?:    ISO datetime   (descending cursor, strict `<`)
+limit?:              1..200, default 50
+format?:             json | csv
+```
+
+JSON response:
+
+```json
+{
+  "items": [
+    {
+      "id": "<uuid>",
+      "venue_id": "<uuid>",
+      "actor_user_id": "<uuid|null>",
+      "actor_kind": "operator|cron|system",
+      "action": "<string>",
+      "target_user_id": "<uuid|null>",
+      "target_email_masked": "o***@example.com|null",
+      "reason": "<string|null>",
+      "metadata": { ... },
+      "occurred_at": "<iso>"
+    }
+  ],
+  "next_cursor": "<iso|null>",
+  "has_more": false
+}
+```
+
+### CSV format
+
+- `Content-Type: text/csv; charset=utf-8`
+- `Content-Disposition: attachment; filename="digest-audit-events-YYYY-MM-DD.csv"`
+- UTF-8 BOM, CRLF line terminators, RFC-4180-quoted cells
+- Columns:
+  ```
+  id, venue_id, actor_kind, actor_user_id, action, target_user_id,
+  target_email_masked, reason, occurred_at, metadata_json
+  ```
+- `metadata_json` is a compact JSON serialization of the row's metadata jsonb. Quoted when the cell contains `"`, `,`, or newlines.
+- `X-Has-More` + `X-Next-Cursor` response headers mirror the digest-sends route (Phase 8Z).
+
+### Dry-run behavior
+
+`DIGEST_AUDIT_RETENTION_DRY_RUN=1` (alongside `DIGEST_AUDIT_RETENTION_ENABLED=1`) puts the retention cron into preview mode. Returns:
+
+```json
+{
+  "dry_run": true,
+  "candidate_count": 123,
+  "sample_ids": ["<uuid>", "<uuid>", "..."],
+  "retention_days": 365
+}
+```
+
+`sample_ids` is capped at 25 entries so a 500-row batch doesn't dump a half-megabyte of UUIDs into Inngest's run history. Operators wanting the full set can query directly. No `outbound_messages.metadata` is mutated. No `digest_audit_events` row is written.
+
+With `DIGEST_AUDIT_RETENTION_ENABLED` unset / not `'1'`, the dry-run flag is ignored — the cron short-circuits at the enabled gate before the dry-run check.
+
+### `Show archived` behavior
+
+DigestAuditFeed (`/dashboard/settings/billing`):
+
+- Checkbox above the chip strip labeled "Show archived".
+- Default `false`; persisted in `localStorage['venuerise:digest-audit-feed:include-archived:v1']`.
+- When `true`, threads `?include_archived=true` into:
+  - Initial fetch
+  - Load older requests
+  - CSV export URL
+- Archived rows render with an additional slate `Archived` tag beside the Kind badge so operators can tell archived from live at a glance.
+- Toggle change triggers a page-1 refetch (via the existing `useEffect` dependency on `includeArchived`).
+
+### Cron-health realtime behavior
+
+`RealtimeDigestSendsLayer` (Phase 8Z, extended in 8AC):
+
+- On every qualifying INSERT (`related_table='tour_status_events'` AND `metadata.tour_digest_send_kind` present), still:
+  - Toasts "New digest send recorded"
+  - Debounces `router.refresh()` by 1000ms
+  - Dispatches `venuerise:digest-suppression-refresh` if `status === 'suppressed'` (Phase 8AA)
+- NEW: also dispatches `venuerise:digest-cron-fired` when `metadata.tour_digest_send_kind === 'cron'`.
+
+`DigestCronHealthCard` registers a window-level `addEventListener` for `venuerise:digest-cron-fired` on mount, refetches health snapshot on every event, removes listener on unmount.
+
+### Known caveat — audit helper is best-effort
+
+`recordDigestAuditEvent` is intentionally fire-and-forget for the caller. Suppression delete commits; the audit row attempts to write; the HTTP response returns regardless. This means:
+
+- A storage / network blip during the audit insert produces a `digest_audit_events.insert_failed` warn + Sentry capture, but the operator sees a successful UI response.
+- An operator reviewing the audit log later may not see EVERY suppression removal — the structured log `digest_audit_events.recorded` (info-level) is the authoritative ledger. Logs > audit table when they disagree.
+- Bulk remove writes one summary row even if the per-target writes that follow it fail (or vice versa). The summary's `removed_count` is the canonical totals.
+
+If audit fidelity becomes a hard requirement, a future phase can move the helper into the same transaction as the suppression delete using a Postgres function.
+
+## 7ak. Digest audit search, pagination, action families, and cron-send audit events (Phase 8AD)
+
+### Endpoint query contract
+
+`GET /api/admin/digest/audit-events` now accepts:
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `venue_id` | uuid | caller's primary | Cross-tenant requires ADMIN_ROLES; collapse to 404 |
+| `action` | string (max 80) | — | Exact match; wins over `action_family` |
+| `action_family` | `suppression \| retention \| cron \| all` | `all` | Server-side fan-out (see mapping) |
+| `actor_kind` | `operator \| cron \| system \| all` | `all` | Exact match |
+| `target_user_id` | uuid | — | Exact match (indexed) |
+| `since` | ISO datetime | — | `occurred_at >= since` |
+| `occurred_before` | ISO datetime | — | Strict `<` cursor for pagination |
+| `q` | string (max 120) | — | Trimmed; ILIKE across allowlist (see below) |
+| `limit` | int 1..200 | 50 | |
+| `format` | `json \| csv` | `json` | |
+
+JSON response (unchanged from Phase 8AC):
+
+```json
+{
+  "items": [...],
+  "next_cursor": "<iso|null>",
+  "has_more": false
+}
+```
+
+`next_cursor = items[items.length-1].occurred_at` when `has_more === true`, else `null`.
+
+### Action-family mapping
+
+```ts
+suppression  → ['suppression_remove', 'suppression_remove_noop', 'suppression_remove_all']
+retention    → ['digest_retention_archive']
+cron         → ['digest_send_cron']               // populated only when DIGEST_AUDIT_LOG_CRON_SENDS=1
+all          → no family filter
+```
+
+Implementation is a single `IN (...)` clause against `digest_audit_events.action` — the `(action, occurred_at desc)` index from migration 017 handles it natively. `action` exact filter wins when both are supplied.
+
+### `q` search allowlist
+
+Server-side `q` (case-insensitive ILIKE) matches:
+- `action`
+- `reason`
+- `target_email_masked`
+
+`metadata::text` is NOT searched — no trigram index on `digest_audit_events.metadata` (the Phase 8R/8S pg_trgm index is `tour_status_events` only); a full scan would be expensive enough to justify a separate phase. Operators needing deep metadata search should hit the SQL editor directly.
+
+UUID columns (`actor_user_id`, `target_user_id`) are also out of the search allowlist — PostgREST's `.or()` parser can't cast and ILIKE on a uuid column requires `::text`. Use the indexed `?target_user_id=` exact filter instead.
+
+User term escapes `\`, `%`, `_` (defangs ILIKE wildcards inside the literal) and strips `,`, `(`, `)` (prevents `.or()` syntax escape). Mirrors the Phase 8AA pattern on `/api/admin/digest/sends`.
+
+### Cron-send audit env behavior
+
+`DIGEST_AUDIT_LOG_CRON_SENDS=1` enables per-recipient audit writes from the operator-activity-digest cron:
+
+```json
+{
+  "actor_kind": "cron",
+  "action": "digest_send_cron",
+  "target_user_id": "<uuid>",
+  "target_email_masked": "o***@example.com",
+  "metadata": {
+    "venue_id": "<uuid>",
+    "event_count": 12,
+    "cadence": "daily",
+    "weekly_day": null,
+    "outbound_message_id": "<uuid|null>",
+    "send_kind": "cron"
+  }
+}
+```
+
+Defaults off because a busy multi-venue deployment can produce one audit row per recipient per day (≈ MAX_RECIPIENTS_PER_VENUE × venue_count × 365). Operators who need forensic per-send coverage flip on per environment.
+
+Writes happen on the success branch only (after `sendEmail` returns `delivered: true`). Suppressed / failed / console-fallback paths do NOT write audit rows — those branches already surface via structured cron logs.
+
+The audit helper is best-effort: a failure logs + Sentry-captures and never throws. A cron send that succeeded but failed to audit still counts as `summary.sent` and the operator's mailbox still receives it.
+
+### CSV behavior
+
+The CSV branch (`?format=csv`) honors all new filters (`q`, `occurred_before`, `action_family`). Columns are unchanged:
+
+```
+id, venue_id, actor_kind, actor_user_id, action, target_user_id,
+target_email_masked, reason, occurred_at, metadata_json
+```
+
+Response headers `X-Has-More` + `X-Next-Cursor` mirror the Phase 8Z digest-sends pagination.
+
+### Known caveat — metadata search omitted
+
+The `q` search does NOT cover `metadata::text`. An operator searching for `"outbound_message_id":"abc"` won't find the row via `?q=`. Workarounds:
+
+1. **Use the existing `?target_user_id=` or `?actor_user_id=` exact filters** when you know the user uuid.
+2. **Drop to SQL:** `select * from public.digest_audit_events where metadata::text ilike '%abc%' order by occurred_at desc limit 50;`
+3. **Future:** add a generated `metadata_text` column + GIN trigram index (same pattern as migration 015 for `tour_status_events`). Deferred until volume justifies it.
+
+### Example curl calls
+
+```bash
+# Recent suppression removals
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?action_family=suppression&limit=10' \
+  | jq '.items[] | {when: .occurred_at, target: .target_email_masked, action}'
+
+# Find rows mentioning "Sara" (might be a reason breadcrumb or
+# a masked email starting with "S")
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?q=Sara&limit=25' \
+  | jq '.items[] | {action, reason, target_email_masked}'
+
+# Cron-send audit rows from yesterday (only populated when
+# DIGEST_AUDIT_LOG_CRON_SENDS=1 was set when the cron fired)
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?action_family=cron&since=2026-05-18T00:00:00Z&limit=200'
+
+# Paginate: read X-Next-Cursor from the previous page and chain
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?limit=25&occurred_before=2026-05-19T08:00:00.000Z'
+
+# CSV with filter
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?format=csv&action_family=retention&limit=200' \
+  -o digest-retention-events.csv
+```
+
+## 7al. Digest audit URL state, metadata search, and preview audit rows (Phase 8AE)
+
+### URL query param contract
+
+`DigestAuditLogCard` syncs the following params to the billing-page URL (`/dashboard/settings/billing`):
+
+| Param | When set | When cleared |
+|---|---|---|
+| `digest_audit_family` | Chip click (any value except `all`) | Chip click → `all`; Reset |
+| `digest_audit_q` | Debounced 300ms after every keystroke (non-empty) | Empty input; Reset |
+| `digest_audit_cursor` | Load older click → `next_cursor` from the previous response | Chip / search change; Reset |
+
+`router.replace` (not `push`) — the browser back button still exits the billing page on first click rather than walking through filter history.
+
+URL precedence: URL > localStorage > defaults. On page mount the initial render reads `searchParams` synchronously, so the first fetch already targets the right filter (no double-fetch).
+
+### localStorage key
+
+`venuerise:digest-audit-log:family:v1`
+
+Holds the most-recent non-`all` family chip. Read only when the URL has no `digest_audit_family` param. Cleared on Reset.
+
+`q` is **URL-only** — typed search terms aren't persisted across page reloads. A stuck filter survives a tab refresh only when the operator deliberately bookmarked or shared the URL.
+
+### `q_mode` table
+
+| Term length | `q_mode` | Searched fields |
+|---|---|---|
+| 0 (empty after trim) | `none` | — |
+| 1-2 chars | `scalar_short` | `action`, `reason`, `target_email_masked` |
+| 3+ chars | `metadata_indexed` | `action`, `reason`, `target_email_masked`, **`metadata_text`** |
+
+Mirrors the Phase 8T short-query short-circuit on `/api/admin/tours/status-events`. UUID columns (`actor_user_id`, `target_user_id`) remain out of the search allowlist — PostgREST `.or()` can't compose a casted ILIKE expression. Use the indexed `?target_user_id=` / `?actor_user_id=` exact filters when you know the uuid.
+
+Log line includes `qMode` + `qLen` so operators can confirm which path served their query.
+
+### `metadata_text` index explanation
+
+Migration 018:
+
+```sql
+create extension if not exists pg_trgm;
+
+alter table public.digest_audit_events
+add column if not exists metadata_text text
+generated always as (coalesce(metadata::text, '')) stored;
+
+create index if not exists digest_audit_events_metadata_text_trgm_idx
+on public.digest_audit_events
+using gin (metadata_text gin_trgm_ops);
+```
+
+- `metadata_text` is a generated **stored** column (write cost amortized over reads; pgvector-style "compute once, scan many").
+- `coalesce(..., '')` keeps the index entry for rows whose `metadata` is null (rare on this table since the column defaults to `'{}'::jsonb`).
+- The GIN trigram index makes `metadata_text ILIKE '%term%'` planner-eligible at ≥ 3 chars. Below 3 chars Postgres won't use the trigram index, so the route deliberately skips the clause.
+
+Pre-existing rows are backfilled automatically — Postgres re-evaluates the generation expression on the next read after the column is added.
+
+### Action family mapping (including preview)
+
+```ts
+suppression  → ['suppression_remove', 'suppression_remove_noop', 'suppression_remove_all']
+retention    → ['digest_retention_archive']
+cron         → ['digest_send_cron']            // only when DIGEST_AUDIT_LOG_CRON_SENDS=1
+preview      → ['digest_send_preview']         // only when DIGEST_AUDIT_LOG_CRON_SENDS=1 (Phase 8AE)
+all          → no family filter
+```
+
+`action` exact filter still wins over `action_family` when both are supplied. `DigestAuditLogCard` chip strip now reads `All / Suppression / Retention / Cron / Preview`.
+
+### Preview audit row behavior
+
+`POST /api/admin/digest/preview` writes one `digest_audit_events` row after a successful send when `DIGEST_AUDIT_LOG_CRON_SENDS=1`:
+
+```json
+{
+  "actor_kind": "operator",
+  "actor_user_id": "<caller uuid>",
+  "action": "digest_send_preview",
+  "target_user_id": "<caller uuid>",
+  "target_email_masked": "o***@example.com",
+  "metadata": {
+    "venue_id": "<uuid>",
+    "event_count": 12,
+    "cadence": "daily",
+    "weekly_day": null,
+    "outbound_message_id": "<uuid|null>",
+    "send_kind": "preview"
+  }
+}
+```
+
+`target_user_id` equals `actor_user_id` because preview always targets the caller. Best-effort write — failure to audit never turns a successful preview into a 5xx. The audit row only fires on the success path; failure / suppression / console-fallback branches don't write.
+
+### Why the feature is gated behind `DIGEST_AUDIT_LOG_CRON_SENDS`
+
+The Phase 8AE preview audit reuses the Phase 8AD cron-send audit env gate rather than introducing `DIGEST_AUDIT_LOG_PREVIEW_SENDS`. Rationale:
+
+1. Operators flip one knob to enable "every per-recipient digest send is auditable" coverage.
+2. Volume profile stays predictable — both paths log only when the operator opts in.
+3. Operators wanting just preview audits can filter via `?action_family=preview` after the fact; no env-level granularity buys much.
+
+If a future deployment needs to log preview but not cron (or vice versa), introducing a separate flag at that point is straightforward and backward-compatible.
+
+### Example curl calls
+
+```bash
+# Metadata-indexed search (3+ chars: searches metadata_text too)
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?q=retention_policy&limit=10' \
+  | jq '.items[] | {action, reason, metadata}'
+
+# Scalar-short search (1-2 chars: scalar columns only)
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?q=ab&limit=10'
+
+# Preview family
+curl -s -H "Cookie: <session>" \
+  'http://localhost:3000/api/admin/digest/audit-events?action_family=preview&limit=25'
+```
+
+## 7am. Digest audit drawer and URL-synced sends feed (Phase 8AF)
+
+### Audit log URL params
+
+`DigestAuditLogCard` (Phase 8AE/8AF):
+
+| Param | When set | When cleared |
+|---|---|---|
+| `digest_audit_family` | Chip click != `all` | Chip → `all`; Reset; Jump to latest never clears (preserved) |
+| `digest_audit_q` | Debounced 300ms after non-empty input | Empty input; Reset |
+| `digest_audit_cursor` | Load older click | Chip / search / Reset / Jump to latest |
+
+Cursor URL state is now read+written: on initial mount the value is parsed (must be a valid ISO datetime; garbage is silently ignored), threaded into the first fetch as `?occurred_before=`, and surfaces an amber "Viewing an earlier audit page." banner with a Jump to latest button. Jump to latest clears the cursor in memory + URL but preserves family + search.
+
+### Send feed URL params
+
+`DigestAuditFeed` (Phase 8AF):
+
+| Param | When set | When cleared |
+|---|---|---|
+| `digest_send_kind` | Chip click != `all` | Chip → `all`; Reset |
+| `digest_send_recipient` | Recipient-summary click (or external deep-link) | Click again (toggle); Reset |
+| `digest_send_q` | Debounced 300ms; URL-only (never persisted) | Empty input; Reset |
+| `digest_send_cursor` | Load older click | Chip / search / recipient / archived / Reset / Jump to latest |
+| `digest_send_archived` | Show archived toggle on | Toggle off; Reset |
+
+Same cursor-read pattern + earlier-page banner as the audit log.
+
+localStorage keys (Phase 8AF):
+```
+venuerise:digest-send-feed:kind:v1
+venuerise:digest-send-feed:recipient:v1
+venuerise:digest-send-feed:include-archived:v1
+```
+
+Plus the Phase 8AC legacy archived key (`venuerise:digest-audit-feed:include-archived:v1`) is still honored for one release cycle — an operator who enabled Show archived before the rename keeps the preference after upgrade. Reset clears both.
+
+### Cursor-read behavior
+
+Both cards: a hand-edited / non-ISO `?digest_audit_cursor=garbage` or `?digest_send_cursor=garbage` is silently ignored (treated as no cursor). Valid cursors are passed through as `?occurred_before=` on the next fetch.
+
+### Jump to latest behavior
+
+- Clears the in-memory `initialCursor` + the URL param.
+- Refetches page 1 with current family / search / recipient / archived intact.
+- Earlier-page banner disappears.
+
+### Drawer fields
+
+`DigestAuditEventDrawer` renders:
+- Header: action badge, actor label, occurred timestamp
+- Field grid (3-col):
+  - Event ID (with Copy audit ID button)
+  - Venue ID
+  - Actor kind
+  - Actor user ID
+  - Target user ID
+  - Target email (masked)
+  - Reason (full row span)
+- Pretty-printed `metadata` JSON in a scrollable `<pre>` block (Copy metadata JSON button)
+- "View related digest send" affordance — only when `metadata.outbound_message_id` is present
+
+No `dangerouslySetInnerHTML`. Metadata renders as `<pre>{JSON.stringify(...)}</pre>` so any `<script>` payload stays inert text. Copy buttons fall back to a "Copy failed" inline state when `navigator.clipboard` isn't available (insecure context / older browser).
+
+### Related outbound row link behavior
+
+Clicking "View related digest send" in the drawer:
+1. Reads `metadata.outbound_message_id` from the audit row.
+2. Sets `?digest_send_q=<outbound_message_id>` on the billing page URL (via `router.replace` so the back button still exits the page on first click).
+3. Clears any stale `?digest_send_cursor=` to start the search at page 1.
+4. Closes the drawer.
+
+`DigestAuditFeed`'s debounced search settles on the next render and the matching outbound row appears at the top of the table. The audit row's family / q / cursor are preserved — the operator can re-open the drawer for adjacent audit rows without losing the deep-link.
+
+### Optional unique index behavior
+
+Migration 019 adds:
+
+```sql
+create unique index digest_audit_events_cron_send_daily_unique_idx
+  on public.digest_audit_events
+  (venue_id, target_user_id, action, ((occurred_at at time zone 'utc')::date))
+  where action = 'digest_send_cron';
+```
+
+Belt-and-suspenders against duplicate `digest_send_cron` rows from cron retries. The outbound_messages send_kind probe (Phase 8W) already prevents the underlying duplicate delivery; this index hedges against a future audit-write-only retry path.
+
+When the helper hits the index, it returns `{ ok: false, error: 'duplicate' }` and logs `digest_audit_events.duplicate_skipped` at info level. The cron treats this as success and continues. Other action families (`suppression_*`, `digest_retention_archive`, `digest_send_preview`) are NOT covered — those legitimately produce multiple rows per (venue, target, day) under normal operator usage.
+
 ## 7. Adding a new write route
 
 When you add a new mutation endpoint, you MUST:

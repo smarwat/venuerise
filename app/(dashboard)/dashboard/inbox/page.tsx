@@ -87,21 +87,26 @@ export default async function InboxPage() {
     }))
 
   return (
-    <div className="flex h-[calc(100vh-72px)] min-h-[640px] animate-fade-in">
-      <div className="flex-1 flex flex-col items-center justify-center bg-white px-6 gap-6">
+    <div className="flex h-[calc(100vh-60px)] min-h-[640px] animate-fade-in bg-[#F4F7FB]">
+      <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6 py-6 overflow-y-auto">
         {/* Phase 8J — week-at-a-glance panel. Renders ABOVE the empty
             state so the operator's eye lands on actionable tours first
             and the "select a conversation" prompt fills the remaining
             vertical space underneath. */}
         <WeekTourPanel tours={weekTours} />
 
-        <div className="text-center max-w-sm">
-          <div className="w-14 h-14 rounded-2xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-4">
-            <MessageSquare className="w-6 h-6 text-[#0F172A]" />
+        {/* Phase 8AI — empty-state card uses the new white surface +
+            soft border to match the rest of the dashboard. */}
+        <div className="bg-white border border-[#E6E8EF] rounded-2xl shadow-card max-w-md w-full px-6 py-7 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3.5">
+            <MessageSquare className="w-5 h-5 text-[#0F172A]" />
           </div>
-          <h3 className="text-[16px] font-semibold text-[#0F172A] mb-1.5">Select a conversation</h3>
-          <p className="text-[13px] text-[#475569]">
-            Click a lead from the right panel to view their messages and reply with AI or manually.
+          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-1.5">
+            Select a conversation
+          </h3>
+          <p className="text-[12.5px] text-[#475569] leading-relaxed">
+            Click a lead from the right panel to view their messages and reply
+            with AI or manually.
           </p>
         </div>
       </div>

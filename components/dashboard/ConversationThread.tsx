@@ -75,7 +75,7 @@ export default function ConversationThread({ conversationId, initialMessages, le
             if (isSystem) {
               return (
                 <div key={msg.id} className="flex justify-center">
-                  <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-full px-3 py-1 text-[11px] text-[#64748B]">
+                  <div className="bg-[#F8FAFC] border border-[#E6E8EF] rounded-full px-3 py-1 text-[11px] text-[#64748B]">
                     {msg.content}
                   </div>
                 </div>
@@ -86,7 +86,7 @@ export default function ConversationThread({ conversationId, initialMessages, le
               <div key={msg.id} className={cn('flex', isAI && 'justify-end')}>
                 <div className={cn(
                   'max-w-[68%] rounded-[18px] px-4 py-2.5 text-[13px] leading-relaxed',
-                  isLead && 'bg-white border border-[#E2E8F0] text-[#0F172A] rounded-tl-md shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
+                  isLead && 'bg-white border border-[#E6E8EF] text-[#0F172A] rounded-tl-md shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
                   isAI && 'bg-[#0F172A] text-white rounded-tr-md shadow-[0_2px_8px_rgba(15,23,42,0.15)]',
                 )}>
                   {msg.content}
