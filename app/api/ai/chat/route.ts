@@ -4,6 +4,7 @@ import { handleIncomingMessage } from '@/lib/agents/orchestrator'
 import { assertOwnsConversation, OwnershipError } from '@/lib/auth/assert-ownership'
 import { SALES_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
+import { AnthropicNotConfiguredError } from '@/lib/anthropic'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -68,6 +69,20 @@ export async function POST(request: NextRequest) {
     const result = await handleIncomingMessage(parsed.data.conversation_id, parsed.data.message)
     return respond(NextResponse.json(result))
   } catch (err) {
+    // Clean 503 when the Anthropic env var is missing — surfaces a stable
+    // machine-readable code instead of leaking the SDK's raw
+    // "Could not resolve authentication method" string. Logged at info
+    // level (it's a configuration problem, not a fault) and NOT
+    // Sentry-captured (would drown the operator in noise).
+    if (err instanceof AnthropicNotConfiguredError) {
+      reqLog.info(
+        { conversationId: parsed.data.conversation_id },
+        'ai.chat.anthropic_not_configured'
+      )
+      return respond(
+        NextResponse.json({ error: 'anthropic_not_configured' }, { status: 503 })
+      )
+    }
     const message = err instanceof Error ? err.message : 'AI chat failed'
     reqLog.error({ err, conversationId: parsed.data.conversation_id }, 'ai.chat.failed')
     captureApiError(err, {

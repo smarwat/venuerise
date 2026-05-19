@@ -12,8 +12,10 @@ import {
   sendTourNotificationEmail,
   runWithConcurrency,
 } from '@/lib/integrations/tour-notifications'
+import { recordTourStatusEvent } from '@/lib/integrations/tour-status-events'
 
 const NOTIFY_CONCURRENCY = 5
+const AUDIT_CONCURRENCY = 5
 
 /**
  * POST /api/admin/tours/bulk-cancel  (Phase 8F)
@@ -276,7 +278,69 @@ export async function POST(request: NextRequest) {
   const cancelledCount = cancelledIdSet.size
   const affectedRows = candidates.filter((c) => cancelledIdSet.has(c.id))
 
-  // 9. Phase 8H — best-effort lead notifications. Bounded concurrency = 5
+  // 9. Phase 8M — unified status-event audit, one row per actually-cancelled
+  // tour. Bounded concurrency mirrors the notification fan-out below so
+  // we don't blow past Supabase's concurrent-write headroom. Audit
+  // failures NEVER fail the API response — the cancel already happened
+  // in step 8; we report counts in `audit_summary` so the operator can
+  // see if any rows missed the audit (rare, would indicate a DB issue).
+  let auditAttempted = 0
+  let auditRecorded = 0
+  let auditFailed = 0
+  if (affectedRows.length > 0) {
+    const auditOutcomes = await runWithConcurrency(
+      affectedRows,
+      AUDIT_CONCURRENCY,
+      async (row) =>
+        recordTourStatusEvent({
+          venueId: targetVenueId,
+          tourId: row.id,
+          leadId: row.lead_id,
+          actorKind: 'operator',
+          actorId: user.id,
+          action: 'bulk_cancel',
+          // `row.leads` was joined at candidate-fetch time; we know the
+          // tour's status was scheduled|confirmed (UPDATE guard re-asserted
+          // it), but the candidates select didn't include `status`. Pass
+          // null for previous_status — the action verb (`bulk_cancel`)
+          // already communicates "was in one of the active states".
+          previousStatus: null,
+          newStatus: 'cancelled',
+          reason: reason ?? null,
+          metadata: {
+            route: '/api/admin/tours/bulk-cancel',
+            from_date,
+            to_date,
+            bulk_cancel_request_id: requestId,
+          },
+          requestId,
+        })
+    )
+    for (const outcome of auditOutcomes) {
+      auditAttempted++
+      if (!outcome.ok) {
+        auditFailed++
+        // runWithConcurrency caught a sync throw — helper itself never
+        // throws. Capture + continue.
+        reqLog.error(
+          { err: outcome.error, venueId: targetVenueId },
+          'admin.tours_bulk_cancel.audit_threw'
+        )
+        captureApiError(outcome.error, {
+          requestId,
+          route: '/api/admin/tours/bulk-cancel',
+          userId: user.id,
+          venueId: targetVenueId,
+        })
+        continue
+      }
+      const r = outcome.value
+      if (r.ok) auditRecorded++
+      else auditFailed++ // helper already logged + captured
+    }
+  }
+
+  // 10. Phase 8H — best-effort lead notifications. Bounded concurrency = 5
   // so we don't spike Resend. The notification helper already swallows
   // its own errors; we additionally wrap each call in runWithConcurrency
   // which never throws. Net behavior: the API response is never blocked
@@ -357,6 +421,9 @@ export async function POST(request: NextRequest) {
       notif_queued: notifQueued,
       notif_skipped: notifSkipped,
       notif_failed: notifFailed,
+      audit_attempted: auditAttempted,
+      audit_recorded: auditRecorded,
+      audit_failed: auditFailed,
     },
     'admin.tours_bulk_cancel.completed'
   )
@@ -373,6 +440,14 @@ export async function POST(request: NextRequest) {
         queued: notifQueued,
         skipped: notifSkipped,
         failed: notifFailed,
+      },
+      // Phase 8M — per-row status-event audit. `recorded` ≤ `attempted`;
+      // a delta indicates a transient DB write failure that the operator
+      // should investigate (the cancel itself already succeeded).
+      audit_summary: {
+        attempted: auditAttempted,
+        recorded: auditRecorded,
+        failed: auditFailed,
       },
     })
   )

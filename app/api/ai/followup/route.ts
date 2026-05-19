@@ -4,6 +4,7 @@ import { processPendingFollowUp } from '@/lib/agents/orchestrator'
 import { assertOwnsFollowUp, OwnershipError } from '@/lib/auth/assert-ownership'
 import { SALES_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
+import { AnthropicNotConfiguredError } from '@/lib/anthropic'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -68,6 +69,16 @@ export async function POST(request: NextRequest) {
     const result = await processPendingFollowUp(parsed.data.follow_up_id)
     return respond(NextResponse.json(result))
   } catch (err) {
+    // Configuration short-circuit — see /api/ai/chat for rationale.
+    if (err instanceof AnthropicNotConfiguredError) {
+      reqLog.info(
+        { followUpId: parsed.data.follow_up_id },
+        'ai.followup.anthropic_not_configured'
+      )
+      return respond(
+        NextResponse.json({ error: 'anthropic_not_configured' }, { status: 503 })
+      )
+    }
     const message = err instanceof Error ? err.message : 'Follow-up processing failed'
     reqLog.error({ err, followUpId: parsed.data.follow_up_id }, 'ai.followup.failed')
     captureApiError(err, {

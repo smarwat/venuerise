@@ -1,12 +1,20 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useCallback, useEffect, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { format } from 'date-fns'
-import { Clock, MapPin, CheckCircle2, Loader2, CalendarCheck } from 'lucide-react'
+import {
+  Clock,
+  MapPin,
+  CheckCircle2,
+  Loader2,
+  CalendarCheck,
+  History,
+} from 'lucide-react'
 import { Badge } from '@/components/dashboard/ui/Badge'
 import { Button } from '@/components/dashboard/ui/Button'
 import EditTourDrawer, { type EditableTour } from './EditTourDrawer'
+import TourAuditDrawer from './TourAuditDrawer'
 
 /**
  * Phase 8E — interactive Upcoming Tours list + edit drawer host.
@@ -52,12 +60,83 @@ interface TourInteractionClientProps {
   tours: UpcomingTour[]
 }
 
+// Phase 8P — light client-side UUID shape check for the `audit_tour`
+// query value. The drawer's own fetch is the real authority — this
+// just protects against rendering with garbage like `?audit_tour=hello`.
+// We accept any non-empty string that LOOKS uuid-ish; the API call
+// fails cleanly if it's wrong, and the drawer's forbidden/error states
+// handle it.
+const UUID_RX = /^[0-9a-fA-F-]{30,40}$/
+function isAuditTourIdShapeValid(v: string | null): v is string {
+  return typeof v === 'string' && UUID_RX.test(v)
+}
+
 export default function TourInteractionClient({ tours }: TourInteractionClientProps) {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [selectedTour, setSelectedTour] = useState<EditableTour | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+  // Phase 8N — per-tour audit drawer state. Mounted once at the bottom so
+  // a single drawer instance handles every row's Audit click.
+  // Phase 8P — initial state derives from the URL so a deep-linked tab
+  // (`?audit_tour=<uuid>`) opens the drawer automatically. The drawer
+  // mounts hidden when `audit_tour` is absent.
+  const initialAuditId = searchParams.get('audit_tour')
+  const initiallyValid = isAuditTourIdShapeValid(initialAuditId)
+  const [auditTourId, setAuditTourId] = useState<string | null>(
+    initiallyValid ? initialAuditId : null
+  )
+  const [auditOpen, setAuditOpen] = useState<boolean>(initiallyValid)
+
+  // Phase 8P — keep the URL in sync if an external nav (Back/Forward,
+  // a sibling component) changes `audit_tour`. We treat the URL as the
+  // source of truth for drawer presence; local clicks call `setAudit*`
+  // AND update the URL via `updateAuditParam` below.
+  useEffect(() => {
+    const next = searchParams.get('audit_tour')
+    if (!isAuditTourIdShapeValid(next)) {
+      if (auditOpen) {
+        setAuditOpen(false)
+        setAuditTourId(null)
+      }
+      return
+    }
+    if (next !== auditTourId) {
+      setAuditTourId(next)
+      setAuditOpen(true)
+    } else if (!auditOpen) {
+      setAuditOpen(true)
+    }
+    // We intentionally don't depend on `auditOpen`/`auditTourId` — this
+    // effect only re-runs on URL change, and the local state mirrors
+    // the URL one-way. Local state changes that AREN'T URL-driven go
+    // through `updateAuditParam`, which writes the URL first.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
+
+  // Phase 8P — single helper for writing the audit_tour query while
+  // preserving every other param (notably `month=YYYY-MM` from the
+  // Phase 8E MonthNavClient). `router.replace` so filter/drawer state
+  // doesn't pollute browser history.
+  const updateAuditParam = useCallback(
+    (tourId: string | null) => {
+      const params = new URLSearchParams(searchParams.toString())
+      if (tourId) params.set('audit_tour', tourId)
+      else params.delete('audit_tour')
+      const query = params.toString()
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    },
+    [router, pathname, searchParams]
+  )
+
+  function openAudit(tourId: string) {
+    setAuditTourId(tourId)
+    setAuditOpen(true)
+    updateAuditParam(tourId)
+  }
 
   function openEdit(tour: UpcomingTour) {
     setSelectedTour(tour)
@@ -163,6 +242,21 @@ export default function TourInteractionClient({ tours }: TourInteractionClientPr
                       Mark confirmed
                     </Button>
                   )}
+                  {/* Phase 8N — per-tour audit drawer trigger. `stopPropagation`
+                      so the click doesn't also open the EditTourDrawer (the
+                      parent button covers the avatar + meta block). */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openAudit(tour.id)
+                    }}
+                  >
+                    <History className="w-3 h-3" />
+                    Audit
+                  </Button>
                 </div>
               </div>
             </div>
@@ -183,6 +277,20 @@ export default function TourInteractionClient({ tours }: TourInteractionClientPr
           if (!next) setSelectedTour(null)
         }}
         tour={selectedTour}
+      />
+      {/* Phase 8N — audit drawer mounted once, reused across rows.
+          Phase 8P — closing the drawer also strips `audit_tour` from
+          the URL while preserving the `month=YYYY-MM` Phase 8E query. */}
+      <TourAuditDrawer
+        tourId={auditTourId}
+        open={auditOpen}
+        onOpenChange={(next) => {
+          setAuditOpen(next)
+          if (!next) {
+            setAuditTourId(null)
+            updateAuditParam(null)
+          }
+        }}
       />
     </>
   )

@@ -683,6 +683,150 @@ Do NOT bulk-resurrect via `UPDATE tours SET status='scheduled'` — that bypasse
 
 ---
 
+## 14. This week's tours inbox panel (Phase 8J)
+
+`/dashboard/inbox` now renders a compact "This week's tours" card next to the empty-state prompt. It lists every `scheduled` or `confirmed` tour for the venue with `scheduled_at` between Sunday 00:00 and Saturday 23:59 (local), ascending. Each row links straight to that lead's conversation thread.
+
+### 14.1 Demo script
+
+1. Seed demo data:
+   ```bash
+   npm run demo:seed
+   ```
+2. Navigate to `/dashboard/inbox`.
+3. The "This week's tours" panel appears centered in the left half of the inbox view, above the "Select a conversation" prompt.
+4. Click any tour row → the inbox routes to `/dashboard/inbox/<lead_id>` for that lead, showing the conversation thread + the Phase 8F TourLifecycleStrip.
+5. Demonstrate the click-through pivot: operator sees a tour Thursday → one click → reading the conversation context for that lead.
+
+### 14.2 Empty / out-of-week behavior
+
+- If the venue has no `scheduled`/`confirmed` tours in the current week, the panel shows "No tours this week." — no spinner, no skeleton; the panel is server-rendered.
+- Tours that are `completed`, `cancelled`, or `no_show` are NOT shown — the panel is forward-looking only.
+- Tours outside the current Sun→Sat window are NOT shown — operators looking for next week's calendar should use `/dashboard/tours` with the month nav.
+
+### 14.3 What the panel does NOT do
+
+- It does not surface lead lifecycle (stage, last message, AI status) — that's the existing ConversationList on the right.
+- It does not allow re-scheduling or status changes inline — the operator clicks through to the thread + uses the TourLifecycleStrip / EditTourDrawer.
+- It does not show tours from other venues, even for admins — single-venue scope, same as the rest of the inbox view.
+
+---
+
+## 15. Lead-facing confirm/cancel links (Phase 8K)
+
+Lead-facing tour emails now include "Confirm your tour" and "Need to cancel?" links. The links are HMAC-signed (7-day TTL) and route to public `GET /tour/confirm` / `GET /tour/cancel` endpoints — no login required.
+
+### 15.1 Setup
+
+Generate a secret and add it to `.env.local`:
+
+```bash
+openssl rand -hex 32
+# => paste into TOUR_ACTION_SECRET=...
+```
+
+Restart `npm run dev` after setting the env var. The notification helper does an env-presence check on each send; once the secret is configured the links appear in the next email.
+
+### 15.2 Demo script
+
+1. Schedule a tour from the dashboard (`/dashboard/tours` → "Schedule Tour" or from a lead detail panel).
+2. The Phase 8G `created` notification fires immediately. With `TOUR_ACTION_SECRET` set, the email body now includes two extra lines:
+   ```
+   Confirm your tour: http://localhost:3000/tour/confirm?token=…
+   Need to cancel? http://localhost:3000/tour/cancel?token=…
+   ```
+   Without Resend configured, look for these lines in the console-fallback log line.
+3. Copy the **confirm** URL → open in a browser. You should see a "Tour confirmed" page with a green badge. Within seconds, the lead also receives the Phase 8G `confirmed` notification (or another console-fallback log line).
+4. Reload the same URL → page now shows "This tour is already handled. Current status: confirmed." (idempotent, no 500, no second email).
+5. Copy the **cancel** URL → open in a browser. Page shows "Tour cancelled" (cancel after confirm is a valid forward transition). A `cancelled` notification fires.
+6. Reload the cancel URL → "Already handled. Current status: cancelled."
+
+### 15.3 Error states to demo
+
+- Tamper the token (change one character) → "This link is no longer valid." page, 400 status, no DB write. A `tour.action.invalid_signature` warn fires in logs + Sentry.
+- Wait past `exp` (7d default) or temporarily set a 1s TTL in dev → "This link is no longer valid."
+- Click `confirm` on a cancelled tour → "Already handled. Current status: cancelled." (the route doesn't reverse the cancellation).
+- Click either link AFTER `scheduled_at` → "This tour has already passed."
+
+### 15.4 What it does NOT do
+
+- No "reschedule" link — only confirm + cancel. The lead can reply to the email and the operator uses the Phase 8F TourLifecycleStrip to reschedule.
+
+### 15.5 Single-use enforcement (Phase 8L)
+
+Phase 8L added migration 012 (`public.tour_action_events`) with a `unique (tour_id, token_nonce)` constraint. The route handler INSERTs an audit row BEFORE flipping tour status, so:
+
+- A token clicked twice flips the tour once; the second click hits the unique constraint and shows "Already handled" without firing a second notification or writing a duplicate audit row.
+- A scraped token replayed from a log can no longer succeed even within the 7-day TTL — the unique constraint is the atomic claim.
+- The admin endpoint `GET /api/admin/tours/recent-token-actions` now reads from `tour_action_events` directly (was best-effort in Phase 8K, inferring from `tours.updated_at`).
+
+### 15.6 HTML email templates (Phase 8L)
+
+The four lead-facing action-link kinds (`created`, `rescheduled`, `reminder_24h`, `reminder_2h`) plus the two terminal kinds (`confirmed`, `cancelled`) now ship as multipart/alternative. The HTML body has:
+
+- White card, slate background
+- Brand blue `#1D4ED8` "Confirm tour" CTA button
+- Muted slate "Need to cancel?" secondary link
+- Mobile-safe `max-width: 480px`, inline CSS only, no external assets
+
+Plaintext stays as the canonical fallback — operators reading console-fallback logs see exactly what they saw before Phase 8L.
+
+### 15.7 Debug HTML preview (Phase 8L)
+
+For QA / styling work without burning real tokens:
+
+```
+http://localhost:3000/tour/confirm?as=html&kind=success
+http://localhost:3000/tour/cancel?as=html&kind=already
+                                          &kind=invalid
+                                          &kind=expired
+```
+
+Always available in development. In production, gated to `TOUR_ACTION_DEBUG_PREVIEW=1`. The preview branch reads zero data, mutates nothing, never honors `?token=` — so it can't be used to forge a real action.
+
+---
+
+## 16. Tour status audit UI surfaces (Phase 8N)
+
+Phase 8M added the unified `tour_status_events` audit feed + the admin endpoint. Phase 8N makes it visible inside the product so operators don't need curl or SQL.
+
+### 16.1 Three surfaces, three levels of depth
+
+| Surface | Where | Depth | Audience |
+|---|---|---|---|
+| **Recent activity panel** | `/dashboard/inbox/[leadId]` (inside TourLifecycleStrip) | last 5 events for the relevant tour | admins/owners only (non-admins get 401/403 → panel silently hides) |
+| **Per-tour audit drawer** | `/dashboard/tours` Upcoming list (click "Audit" on a row) + the inbox "View full audit" button | last 50 events for one tour with expandable metadata + Copy event id | admins/owners (drawer renders a friendly "no permission" state otherwise) |
+| **Status activity feed** | `/dashboard/settings/billing` (below pause history) | last 25 venue-wide events as a compact table | admins/owners only (server-rendered, gated by `venue.role`) |
+
+All three reuse the shared `tour-audit-types.ts` helpers (`actorLabel`, `actionLabel`, `statusLabel`, `formatAuditTime`) so vocabulary stays consistent.
+
+### 16.2 Demo script
+
+1. `npm run demo:seed` (gives you a venue with tours).
+2. Schedule + confirm a tour from the dashboard. Cancel another. Trigger a bulk-cancel.
+3. Visit `/dashboard/tours` → click **Audit** on any upcoming-tour row. The drawer opens, shows the last 50 events newest-first, each row with an actor chip (Lead / Operator / Cron / System).
+4. Expand **Details** on any row → metadata is pretty-printed in a monospace block.
+5. Click **Copy event id** → check shows + the id is on your clipboard for support tickets.
+6. Visit `/dashboard/inbox/<leadId>` for a lead with tour activity → the strip now shows a "Recent tour activity" panel above the conversation thread with up to 5 events.
+7. Click **View full audit** in that panel → same drawer opens with the full 50.
+8. Visit `/dashboard/settings/billing` (as an admin) → scroll past pause history → see the **Tour status activity** card with a compact table of the last 25 events.
+
+### 16.3 Optional one-shot backfill
+
+Legacy tours that landed in their current status BEFORE Phase 8M have no audit rows. To populate a synthetic baseline so the UI always has something to show:
+
+1. Set `TOUR_STATUS_BACKFILL=1` in the runtime environment.
+2. In the Inngest dashboard, find the function `seed-tour-status-events` and send the event `admin/tour-status-events.backfill`.
+3. The job inserts one row per legacy tour:
+   - `actor_kind = 'system'`
+   - `actor_id = 'backfill-8N'`
+   - `action = 'legacy_status_snapshot'`
+   - `metadata = { backfilled: true, source: 'phase_8n', tour_updated_at }`
+4. Idempotent — re-running skips any tour that already has at least one event. Capped at 500 rows per run.
+5. With the env flag unset, the job short-circuits with `{ skipped: true, reason: 'disabled' }`. Two guards (env flag + manual event trigger + no cron) prevent accidental fires.
+
+---
+
 ## 9. Quick reference
 
 | Command | Effect |

@@ -757,6 +757,50 @@ This is the Phase 8H re-arm flow. Diagnostic sequence:
    - `resumed_at < current_period_end` → re-arm should fire on the next nightly cron run. Force a run via the Inngest dashboard if you don't want to wait.
 5. If the cron has clearly run since the recovery and still didn't re-arm, search for the structured event `jobs.billing_tour_auto_pause.history_archived` / `jobs.billing_tour_auto_pause.rearmed` for the subscription id. Absence of both with non-zero `scanned` in the run summary indicates the candidate query is excluding this row — usually because `current_period_end` isn't `< now() - 7 days`.
 
+### "Venue is still showing tour pause banner after recovery"
+
+**Symptom**: customer says Stripe processed their payment but the amber banner on `/dashboard/tours` is still showing, and any new tour they try to schedule is rejected by the billing gate.
+
+1. Confirm Stripe actually transitioned the subscription:
+   ```sql
+   select id, status, current_period_end, updated_at
+   from public.subscriptions
+   where venue_id = '<uuid>'
+   order by created_at desc
+   limit 1;
+   ```
+   - If `status` is still `past_due`, the recovery hasn't landed yet on our side. Wait for the next webhook, or trigger a re-sync from the Stripe dashboard (Developers → Webhooks → "Resend" the latest `customer.subscription.updated`).
+   - If `status` is now `active` / `trialing` but the banner is still there, continue to step 2.
+2. Inspect the pause metadata + recovery stamp:
+   ```sql
+   select metadata->>'tours_paused_at'      as paused_at,
+          metadata->>'tours_resumed_at'     as resumed_at,
+          metadata->>'tours_pause_cleared_at' as cleared_at
+   from public.subscriptions
+   where venue_id = '<uuid>'
+   order by created_at desc
+   limit 1;
+   ```
+   - `paused_at` set, `resumed_at` set → the dispatcher DID stamp recovery. The banner should be off. Hard-refresh the dashboard tab; if still visible, check whether the user has a stale RSC cache by navigating away + back.
+   - `paused_at` set, `resumed_at` NULL → the dispatcher missed it. Continue to step 3.
+3. Manually clear the pause via the admin endpoint:
+   ```bash
+   curl -i -X POST http://localhost:3000/api/admin/tours/clear-pause \
+     -H "Cookie: <admin session>" \
+     -H "Content-Type: application/json" \
+     -d '{ "reason": "Stripe webhook lost — payment confirmed via Stripe dashboard" }'
+   ```
+   Expected response:
+   ```json
+   { "success": true, "changed": true, "venue_id": "...", "subscription_id": "..." }
+   ```
+   `changed: false` with `reason: "not_paused"` means the pause was already cleared between steps 2 and 3 — refresh and the banner should be gone.
+4. Verify the banner is gone:
+   - Reload `/dashboard/tours` — the amber strip is gone.
+   - `select metadata ->> 'tours_paused_at' from public.subscriptions where venue_id = '<uuid>'` returns NULL.
+   - `select metadata -> 'tour_pause_history' from public.subscriptions where venue_id = '<uuid>'` is unchanged (cleared pauses are not archived to history — only auto-resumed pauses are, by the Phase 8H cron).
+5. If you're an admin/owner, you can also do steps 2–4 from the UI: `/dashboard/settings/billing` → scroll to the "Tour pause history" card → click **Clear pause**.
+
 ### Bulk-cancel notification troubleshooting
 
 `POST /api/admin/tours/bulk-cancel` (Phase 8F + 8H) returns:
@@ -825,3 +869,607 @@ Common reasons for skips:
 - Resend down / not configured → console-fallback in dev, `error: '<provider message>'` in prod.
 
 In every case the tour write itself succeeded — the email failure is a delivery issue, not a data issue.
+
+### Tour notification emails not sending (Phase 8J)
+
+If a customer says their leads aren't getting tour confirmations or reminders, walk through the layers from outermost (DB intent) to innermost (provider acceptance).
+
+1. Confirm the tour record exists and the lead has an email:
+   ```sql
+   select t.id, t.status, t.scheduled_at,
+          t.reminder_24h_sent, t.reminder_2h_sent,
+          l.name, l.email
+   from public.tours t
+   left join public.leads l on l.id = t.lead_id
+   where t.venue_id = '<uuid>'
+     and t.scheduled_at > now() - interval '7 days'
+   order by t.scheduled_at desc
+   limit 20;
+   ```
+   - `l.email IS NULL` → the helper / cron silently skips (no email to send to). Capture the lead's email and update them in the dashboard.
+   - `t.reminder_24h_sent = false` 25+ hours BEFORE `scheduled_at` → reminder hasn't fired yet (selection window is [scheduled_at - 24h, scheduled_at - 22h] — 15 min cadence). Wait or trigger the cron manually.
+2. Check whether an outbound row was ever written:
+   ```sql
+   select created_at, provider, status, error,
+          metadata->>'tour_notification_kind' as kind
+   from public.outbound_messages
+   where venue_id = '<uuid>'
+     and related_table = 'tours'
+     and related_id = '<tour uuid>'
+   order by created_at desc;
+   ```
+   - **No rows at all** → the cron / route never attempted a send. Check `ai_actions` for `tour_reminder_*_failed/skipped` rows OR application logs for `tour.notification.*` events.
+   - **Row with `status = 'suppressed'`** → the lead is in `public.email_suppressions`. Inspect `reason`. If they want to opt back in, delete the suppression row manually.
+   - **Row with `status = 'failed'` / `'bounced'` / `'complained'`** → Resend rejected or the recipient bounced. Check `error` text + the Resend dashboard.
+   - **Row with `status = 'queued'`** → handed to Resend but the delivery webhook hasn't landed yet. Wait 30s and re-check; if still `queued` after a few minutes, check `/api/health` for `resend_webhook: 'configured'`.
+3. For reminders specifically, the cron writes an `ai_actions` row on EVERY outcome (delivered / suppressed / console_fallback / failed):
+   ```sql
+   select created_at, action, success, error_message, output_summary
+   from public.ai_actions
+   where venue_id = '<uuid>'
+     and agent = 'tour-scheduler'
+     and action like 'tour_reminder_%'
+     and created_at > now() - interval '24 hours'
+   order by created_at desc;
+   ```
+   This is the fastest way to see what the cron decided + why. Look for:
+   - `tour_reminder_24h_sent` → success path, lead got the email.
+   - `tour_reminder_24h_skipped` with `error_message = 'console_fallback'` → no Resend key configured; restore `RESEND_API_KEY` + `RESEND_FROM_EMAIL`.
+   - `tour_reminder_24h_skipped` with `error_message = 'missing_email'` → the lead row had no email.
+   - `tour_reminder_24h_failed` → real provider error; `error_message` carries the Resend response.
+4. Pivot to aggregate counts via the admin endpoint:
+   ```bash
+   curl -s "http://localhost:3000/api/admin/tours/notification-stats?days=7" \
+     -H "Cookie: <admin session>" | jq .totals
+   ```
+   - `attempted` low → cron / routes aren't firing at all (Inngest unhealthy? Check `/api/health` for `jobs: 'inngest'`).
+   - `suppressed` high → the venue's lead list contains a lot of unsubscribed addresses; lead-list hygiene needed.
+   - `failed` high → Resend health issue; check the Resend status page + escalate.
+5. Confirm Resend webhook delivery confirmations are flowing back:
+   ```sql
+   select count(*), max(created_at)
+   from public.outbound_messages
+   where status = 'delivered'
+     and created_at > now() - interval '24 hours';
+   ```
+   - Zero `delivered` rows in 24 hours of activity → the Resend webhook isn't reaching us. Check `RESEND_WEBHOOK_SECRET` is set, verify the webhook URL in the Resend dashboard points to `/api/resend/webhook`, and look for 4xx responses in the Resend webhook logs.
+
+### Tour action link failed (Phase 8K)
+
+When a lead reports that the confirm/cancel link in their email doesn't work, walk these checks in order. Each one maps to a specific outcome page the lead might be seeing.
+
+1. **"This link is no longer valid."** — token rejected.
+   ```bash
+   grep -E 'tour\.action\.(invalid_signature|token_rejected|action_mismatch)' <log source>
+   ```
+   - `invalid_signature` → tamper. Sentry will also alert. If the same source IP appears repeatedly, the lead's email client may be re-encoding the URL (some corporate gateways re-write query params). Ask the lead to copy-paste the full URL into a browser address bar instead of clicking.
+   - `expired` → 7-day TTL elapsed. Send a fresh email (any Phase 8G lifecycle action regenerates the links).
+   - `malformed_token` → URL was truncated mid-token. Common with screen-reader copy-paste; ask the lead to forward the original email.
+   - `action_mismatch` → token was for `cancel` but the lead opened `/tour/confirm` (or vice versa). Usually a bookmarked URL from a prior email; just send a fresh email.
+2. **"This tour has already passed."** — `scheduled_at <= now`.
+   - Confirm in `tours` table:
+     ```sql
+     select scheduled_at, status from public.tours where id = '<tour uuid>';
+     ```
+   - If the lead wants to schedule a new tour, the operator uses the inbox TourLifecycleStrip → "Re-schedule cancelled tour" (Phase 8I) or "Schedule another tour".
+3. **"This tour is already handled."** — terminal status reached.
+   - The status column tells you which terminal state. Confirm what action the lead actually wanted:
+     ```sql
+     select status, updated_at from public.tours where id = '<tour uuid>';
+     ```
+   - If they expected the OPPOSITE action (clicked confirm but tour says cancelled), check `ai_actions` or the new admin endpoint:
+     ```bash
+     curl -s "http://localhost:3000/api/admin/tours/recent-token-actions?limit=20" \
+       -H "Cookie: <admin session>" | jq '.items[] | select(.tour_id == "<tour uuid>")'
+     ```
+4. **"We couldn't find that tour."** — `tours.id` doesn't resolve.
+   - Either the tour was deleted out-of-band (`DELETE` from SQL — bypasses the route's idempotency) or the token references a non-existent UUID (extremely unlikely with HMAC).
+   - Confirm whether the tour ever existed:
+     ```sql
+     select id from public.tours where id = '<tour uuid>';
+     ```
+   - Pivot to `ai_actions` history for the lead if the tour is missing — the cron may have generated reminders for it before it was deleted.
+5. **Lead says they clicked but nothing happened (no page loaded).**
+   - Verify `TOUR_ACTION_SECRET` is configured in production:
+     ```bash
+     curl -s http://localhost:3000/api/health | jq .demo.tour_action_links
+     ```
+     The flag says `'mounted'` based on CODE presence, not secret configuration. To verify the secret is live, look for the once-per-process structured warn `tour.notification.no_action_secret` — if it's absent in recent logs, the secret is configured and the helper has been emitting links.
+   - If `TOUR_ACTION_SECRET` is missing, every tour notification email since startup has been sent without action links. Fix the env var, restart the process, and re-send.
+   - Verify `NEXT_PUBLIC_APP_URL` matches the deployed URL — if it points to `http://localhost:3000` in production, leads in their browser will land on a 404.
+
+### Tour action audit table (Phase 8L)
+
+`public.tour_action_events` is the canonical record of every redeemed tour action token. Use it when the question is "did this lead actually click the link?" or "what's been happening to this venue's tours lately?".
+
+```sql
+-- recent activity for a venue (mirrors what the admin endpoint returns)
+select e.occurred_at, e.action, e.source_ip, e.user_agent,
+       e.tour_id, e.lead_id, l.name as lead_name, l.email as lead_email
+from public.tour_action_events e
+left join public.leads l on l.id = e.lead_id
+where e.venue_id = '<venue uuid>'
+order by e.occurred_at desc
+limit 20;
+
+-- replay attempts blocked by the unique constraint won't appear here
+-- (the INSERT failed), but the application log records each one:
+--   grep 'tour.action.single_use_replay_blocked' <log source>
+
+-- everything that happened to one specific tour
+select occurred_at, action, source_ip
+from public.tour_action_events
+where tour_id = '<tour uuid>'
+order by occurred_at asc;
+```
+
+If a customer says "the lead says they confirmed, but the dashboard shows the tour as still scheduled":
+
+1. Check `tour_action_events` for any row matching the tour.
+2. If a row exists with `action='confirm'` AND the tour status is still `scheduled`, the status UPDATE failed AFTER the audit row landed. Look for `tour.action.update_failed` in logs (extremely rare — Sentry-captured if so).
+3. If no row exists, the lead never clicked, OR they clicked a tampered/expired link (check `tour.action.invalid_signature` / `tour.action.token_rejected` warns).
+
+The audit table is append-only from the dashboard's perspective (no RLS INSERT policy for authenticated callers). Service-role writes are the only path, and they come exclusively from the Phase 8K handler. There is no public-route way to inject a fake row.
+
+### Unified tour status events (Phase 8M)
+
+`public.tour_status_events` records EVERY tour status change, regardless of write path. Use it when the question is "who changed this tour, when, and how?" — broader than the Phase 8L lead-token audit.
+
+```sql
+-- full history for one tour
+select occurred_at, actor_kind, actor_id, action,
+       previous_status, new_status, reason, metadata
+from public.tour_status_events
+where tour_id = '<tour uuid>'
+order by occurred_at asc;
+
+-- last 24h of bulk cancels with the operator who pressed the button
+select occurred_at, actor_id, venue_id, tour_id, reason
+from public.tour_status_events
+where action = 'bulk_cancel'
+  and occurred_at > now() - interval '24 hours'
+order by occurred_at desc;
+
+-- find every cron auto-pause cancellation for a venue
+select occurred_at, tour_id, metadata->>'subscription_id' as sub_id
+from public.tour_status_events
+where venue_id = '<venue uuid>'
+  and actor_kind = 'cron'
+  and action = 'auto_pause_cancel'
+order by occurred_at desc;
+```
+
+For the same data via the admin HTTP API:
+
+```bash
+curl -s "http://localhost:3000/api/admin/tours/status-events?tour_id=<uuid>" \
+  -H "Cookie: <admin session>" | jq .items
+```
+
+Filters: `venue_id`, `tour_id`, `lead_id`, `actor_kind` (`lead_token|operator|cron|system|all`), `action`, `limit` (1..200, default 50). See BILLING-QA §7o for full examples.
+
+The Phase 8K/8L `recent-token-actions` endpoint is now deprecated (same data via `?actor_kind=lead_token` on the new endpoint) but still mounted. Responses include `Deprecation: true` + `Link: rel="successor-version"` headers so client SDKs can migrate gracefully.
+
+### "Who cancelled my July bookings?"
+
+A common operator question that the Phase 8M audit answers in one query:
+
+```sql
+select e.occurred_at,
+       e.actor_kind,
+       e.actor_id,
+       e.action,
+       e.reason,
+       e.tour_id,
+       t.scheduled_at,
+       l.name as lead_name
+from public.tour_status_events e
+left join public.tours t on t.id = e.tour_id
+left join public.leads l on l.id = e.lead_id
+where e.venue_id = '<uuid>'
+  and e.new_status = 'cancelled'
+  and t.scheduled_at >= '2026-07-01'
+  and t.scheduled_at <  '2026-08-01'
+order by e.occurred_at asc;
+```
+
+`actor_kind` tells you whether it was a lead (`lead_token`), the operator dashboard (`operator`), or the auto-pause cron (`cron`). `actor_id` is the operator's user uuid (resolve via `auth.users` if needed) or the cron's function id.
+
+### Operator UI for tour audit (Phase 8N)
+
+Three in-product surfaces over the same `tour_status_events` data — admins/owners get them automatically, other roles see nothing (silent 401/403 fall-through on the client surfaces, server-side role gate on the billing feed):
+
+- `/dashboard/tours` — every Upcoming Tour row has an **Audit** button that opens a per-tour drawer with the last 50 events + expandable metadata + Copy event id.
+- `/dashboard/inbox/<leadId>` — `TourLifecycleStrip` shows a "Recent tour activity" panel (last 5 events) with a **View full audit** button that opens the same drawer.
+- `/dashboard/settings/billing` — admins see a compact "Tour status activity" table (last 25 venue-wide events) below the pause history card.
+
+Common triage shortcuts (no SQL needed):
+
+| Scenario | Where to look |
+|---|---|
+| "Why did this tour cancel?" | `/dashboard/tours` → Audit button → look for the most recent `Cancelled` row |
+| "Did the lead click my email link?" | Same drawer → look for `actor_kind = Lead` rows |
+| "Who on my team rescheduled this?" | Same drawer → look for `actor_kind = Operator` rows; the `Actor id` in the Details expansion is the user uuid |
+| "What did the auto-pause cron touch tonight?" | `/dashboard/settings/billing` → activity feed → filter by eye for `Auto-paused` action rows |
+
+### Tour status realtime publication (Phase 8O)
+
+`tour_status_events` was added to the `supabase_realtime` publication via a one-shot ops command (not a migration). The `RealtimeTourStatusLayer` mounted on `/dashboard/tours` and `/dashboard/settings/billing` subscribes to `postgres_changes` INSERT events on this table and refreshes the page automatically.
+
+Verify the table is in the publication:
+
+```sql
+select tablename
+from pg_publication_tables
+where pubname = 'supabase_realtime' and schemaname = 'public'
+order by tablename;
+```
+
+Expect to see `tour_status_events` alongside `leads`, `messages`, `conversations`, `tours`.
+
+If it's missing (e.g. after a publication reset), the realtime subscription will silently succeed but receive no events. Re-apply with an idempotent guard:
+
+```sql
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'tour_status_events'
+  ) then
+    alter publication supabase_realtime add table public.tour_status_events;
+  end if;
+end $$;
+```
+
+This is safe to run any number of times.
+
+### CSV export of tour status events (Phase 8O)
+
+For support tickets, compliance requests, or insurance claims that need an exportable audit trail:
+
+```bash
+APP=https://your-deploy.example.com
+COOKIE="sb-...-auth-token=..."
+
+# all recent events for the caller's primary venue (default JSON limit 50)
+curl -s "$APP/api/admin/tours/status-events?format=csv" -b "$COOKIE" \
+  > tour-audit-$(date -u +%F).csv
+
+# narrow to one tour
+curl -s "$APP/api/admin/tours/status-events?format=csv&tour_id=<uuid>" -b "$COOKIE"
+
+# operator-driven changes in the last 200 events
+curl -s "$APP/api/admin/tours/status-events?format=csv&actor_kind=operator&limit=200" -b "$COOKIE"
+```
+
+The endpoint caps at `limit=200` per request. For wider windows, paginate by `occurred_at` cursor manually OR query the DB directly:
+
+```sql
+copy (
+  select id, venue_id, tour_id, lead_id, actor_kind, actor_id, action,
+         previous_status, new_status, source_ip, user_agent, reason,
+         occurred_at, metadata::text as metadata_json
+  from public.tour_status_events
+  where venue_id = '<uuid>'
+    and occurred_at between '2026-01-01' and '2026-04-01'
+  order by occurred_at asc
+) to '/tmp/audit-q1.csv' with (format csv, header true);
+```
+
+### Paginated CSV pulls for wide audit windows (Phase 8P)
+
+The Phase 8O CSV export caps at `limit=200` per request. Phase 8P adds `?occurred_before=<ISO>` so operators can chain pages for compliance / insurance exports.
+
+```bash
+APP=https://your-deploy.example.com
+COOKIE="sb-...-auth-token=..."
+OUT=/tmp/audit-$(date -u +%F).csv
+
+# First page — newest first.
+HDRS=$(mktemp)
+curl -s -D "$HDRS" \
+  "$APP/api/admin/tours/status-events?format=csv&limit=200" \
+  -b "$COOKIE" > page-1.csv
+
+# Concat header from page 1 plus body chunks.
+head -1 page-1.csv > "$OUT"
+tail -n +2 page-1.csv >> "$OUT"
+
+# Loop pages while X-Has-More: true.
+N=1
+while grep -q '^x-has-more: true' "$HDRS"; do
+  CURSOR=$(grep -i '^x-next-cursor:' "$HDRS" | awk '{print $2}' | tr -d '\r')
+  N=$((N + 1))
+  curl -s -D "$HDRS" \
+    "$APP/api/admin/tours/status-events?format=csv&limit=200&occurred_before=$CURSOR" \
+    -b "$COOKIE" > page-$N.csv
+  # Skip the BOM-prefixed header row on follow-up pages; append the body only.
+  tail -n +2 page-$N.csv >> "$OUT"
+done
+
+echo "Wrote $N pages to $OUT"
+```
+
+Notes:
+- The `X-Has-More: false` header (or absence of `X-Next-Cursor`) is the loop stop signal.
+- `<` is strict — no row appears in two consecutive pages.
+- Each request goes through the same admin auth/rate-limit/tenant gates; the rate limiter applies per-caller, so spreading wide pulls across minutes avoids hitting it.
+
+### URL state for the billing activity feed (Phase 8P)
+
+The activity feed filters sync to `?actor` and `?action` query params. Copying the URL preserves filter state; the `Reset filters` button strips both params. Invalid values silently coerce to `all`, so a stale link with a typo'd `?actor=opertor` just opens the unfiltered view rather than 404'ing.
+
+### Audit drawer deep linking (Phase 8P)
+
+`/dashboard/tours?audit_tour=<uuid>` opens the audit drawer for that tour on initial render. Closing the drawer strips `audit_tour` but preserves `month=YYYY-MM` and any future siblings.
+
+If a deep-linked drawer fails to open:
+1. Confirm the UUID looks valid (8-4-4-4-12 hex characters).
+2. Confirm the caller is an admin/owner — non-admins see the drawer's forbidden empty state.
+3. Check application logs for `admin.tours_status_events.completed` filtered on `tour_id` — the drawer's fetch goes through the same endpoint as the rest of the audit surface.
+
+### Single-shot streamed CSV export (Phase 8Q)
+
+For exports up to 5000 rows, the Phase 8P paginated shell loop is no longer needed. The new stream mode emits the entire CSV in one response:
+
+```bash
+APP=https://your-deploy.example.com
+COOKIE="sb-...-auth-token=..."
+
+curl -L "$APP/api/admin/tours/status-events?format=csv&stream=1&limit=200&actor_kind=operator&action=cancel" \
+  -b "$COOKIE" \
+  -o cancels-by-operator-$(date -u +%F).csv
+```
+
+Cap is a hard 5000 rows. For wider windows, fall back to the Phase 8P paginated loop (the streamed mode honors the same filters + the `occurred_before` cursor, so you can chain TWO streamed requests to cover 10000 rows: one without `occurred_before`, one with the timestamp of the last row in the first file).
+
+Verify the export was complete:
+
+```bash
+# count data rows (skip the header)
+tail -n +2 cancels-by-operator-*.csv | wc -l
+
+# also confirm the trailing line isn't an abort marker
+tail -1 cancels-by-operator-*.csv
+# → if it starts with "# stream aborted:", the stream was interrupted;
+#   re-run with the last successful row's occurred_at as `?occurred_before=`.
+```
+
+### Audit search filter (Phase 8Q)
+
+`/api/admin/tours/status-events?q=<term>` matches case-insensitive substrings against:
+- `reason`
+- `actor_id`
+- `action`
+- `previous_status`
+- `new_status`
+
+Not server-side: `metadata::text` (PostgREST limitation — see BILLING-QA §7s). The billing-page UI also searches metadata over the loaded slice as a client-side fallback.
+
+Examples:
+
+```bash
+# all events where operator-supplied reason mentions "fire"
+curl -s "$APP/api/admin/tours/status-events?q=fire" -b "$COOKIE" | jq '.items[] | {action, reason, actor_kind}'
+
+# narrow further — operator-driven cancels with "maintenance" in reason
+curl -s "$APP/api/admin/tours/status-events?actor_kind=operator&action=cancel&q=maintenance" \
+  -b "$COOKIE" | jq .items
+```
+
+### Per-user filter persistence
+
+The billing-page activity feed persists actor / action / search to `localStorage` under `venuerise:tour-status-feed:filters:v1`. URL params always win when present. To diagnose a stuck filter set on a colleague's browser:
+
+```js
+// in the operator's DevTools console
+localStorage.getItem('venuerise:tour-status-feed:filters:v1')
+// → '{"actor":"operator","q":"fire"}'
+
+localStorage.removeItem('venuerise:tour-status-feed:filters:v1')
+// then reload — defaults restore.
+```
+
+The in-app Reset filters button does this automatically and ALSO clears URL params.
+
+### Audit search not finding metadata (Phase 8R)
+
+If `?q=` works for scalar columns (action, reason, actor_id) but doesn't find rows where `metadata::text` contains the term:
+
+1. **Confirm migration 014 ran.** The RPC must exist:
+   ```sql
+   select proname, prosecdef
+   from pg_proc
+   where proname = 'search_tour_status_events';
+   ```
+   Expect one row with `prosecdef = true`. Re-apply via Supabase MCP if missing.
+
+2. **Confirm the RPC is GRANTed to service_role.**
+   ```sql
+   select has_function_privilege(
+     'service_role',
+     'public.search_tour_status_events(uuid, uuid, uuid, text, text, text, timestamptz, integer)',
+     'execute'
+   ) as can_execute;
+   ```
+   Should return `true`. If false, re-grant:
+   ```sql
+   grant execute on function public.search_tour_status_events(
+     uuid, uuid, uuid, text, text, text, timestamptz, integer
+   ) to service_role;
+   ```
+
+3. **Verify the route is using the RPC path.** Application log line `admin.tours_status_events.completed` includes `filters.q_mode`:
+   - `'rpc_metadata'` → route dispatched to the RPC (Phase 8R).
+   - `'standard'` → route used the PostgREST chain (no metadata search). Should never happen when `q` is set.
+   ```bash
+   grep 'admin.tours_status_events.completed' <log source> | grep '"q_mode":"standard"' | grep '"q":"[^n]'
+   ```
+   A non-null `q` with `q_mode=standard` is the bug signal.
+
+4. **Reproduce against the DB directly.** Bypass the route entirely:
+   ```sql
+   select id, action, metadata
+   from public.search_tour_status_events(
+     p_venue_id := '<venue uuid>',
+     p_q := 'past_due_7_days',
+     p_limit := 20
+   );
+   ```
+   If this returns rows but the API doesn't, the route's RPC integration is the bug. If this returns no rows but the data is there, the predicate (`metadata::text ILIKE '%term%'`) doesn't match — check whether the metadata value is wrapped in quotes (`"past_due_7_days"` vs `past_due_7_days`) and adjust the search term accordingly.
+
+### Operator activity digest did not send (Phase 8R)
+
+If the daily digest cron isn't reaching venue owners:
+
+1. **Env flag.** `OPERATOR_DIGEST_ENABLED` must be exactly `'1'`. Anything else (unset, `'true'`, `'yes'`, `'0'`) short-circuits with `{ skipped: true, reason: 'disabled' }`. Check the deployed env:
+   ```bash
+   # locally / staging via the deploy platform's env inspector
+   echo "OPERATOR_DIGEST_ENABLED=$OPERATOR_DIGEST_ENABLED"
+   ```
+
+2. **Inngest registration.** Confirm `operator-activity-digest` appears in the Inngest dashboard's function list. If absent, the build didn't include `lib/jobs/functions/operator-activity-digest.ts` in `allJobFunctions` — re-deploy.
+
+3. **Events in the last 24h.** A venue with zero activity gets no digest:
+   ```sql
+   select venue_id, count(*) as n
+   from public.tour_status_events
+   where occurred_at >= now() - interval '24 hours'
+   group by 1 order by 2 desc;
+   ```
+
+4. **Owner email lookup.** Each venue's earliest owner-role member must have a resolvable email:
+   ```sql
+   select vm.venue_id, vm.user_id
+   from public.venue_members vm
+   where vm.venue_id = '<uuid>' and vm.role = 'owner'
+   order by vm.created_at asc
+   limit 1;
+   ```
+   Cross-reference the returned `user_id` in `auth.users` (via Supabase dashboard) to confirm `email` is set.
+
+5. **Outbound delivery.** Check whether the email was attempted:
+   ```sql
+   select created_at, status, provider, error,
+          metadata->>'tour_digest_date' as digest_date
+   from public.outbound_messages
+   where venue_id = '<uuid>'
+     and related_table = 'tour_status_events'
+   order by created_at desc
+   limit 5;
+   ```
+   - `status='queued'` + `provider='resend'` → handed to Resend; check Resend dashboard for delivery state.
+   - `status='suppressed'` → owner unsubscribed; manually delete from `email_suppressions` if intentional.
+   - `provider='console'` → Resend not configured in the runtime environment.
+   - No rows → the cron didn't send (env flag off, no events, owner lookup failed, etc.). Check application logs for `jobs.operator_activity_digest.*`.
+
+6. **Force a manual run.** From a Node REPL with service-role creds:
+   ```ts
+   import { runDigestScan } from '@/lib/jobs/functions/operator-activity-digest'
+   console.log(await runDigestScan())
+   ```
+   Returns either `{ skipped: true, reason: 'disabled' }` or `{ scannedVenues, sent, skipped, failed }`.
+
+### Audit metadata search is slow (Phase 8S)
+
+If `?q=` over metadata feels sluggish or runs hot on the DB:
+
+1. **Verify `pg_trgm` is installed**:
+   ```sql
+   select extname from pg_extension where extname = 'pg_trgm';
+   ```
+   Expect one row. Re-apply migration 015 if missing.
+
+2. **Verify the generated column exists**:
+   ```sql
+   select column_name, data_type, generation_expression
+   from information_schema.columns
+   where table_schema='public' and table_name='tour_status_events'
+     and column_name='metadata_text';
+   ```
+   Expect one row with `generation_expression = COALESCE((metadata)::text, ''::text)`.
+
+3. **Verify the index exists**:
+   ```sql
+   select indexname, indexdef from pg_indexes
+   where schemaname='public' and tablename='tour_status_events'
+     and indexname='tour_status_events_metadata_text_trgm_idx';
+   ```
+   Expect `CREATE INDEX … USING gin (metadata_text gin_trgm_ops)`.
+
+4. **Run EXPLAIN ANALYZE** for a representative search term:
+   ```sql
+   explain analyze
+   select * from public.search_tour_status_events(
+     p_venue_id := '<venue uuid>',
+     p_q        := 'past_due_7_days',
+     p_limit    := 50
+   );
+   ```
+   Look for `Bitmap Index Scan tour_status_events_metadata_text_trgm_idx` in the plan. If you see a `Seq Scan` on `tour_status_events` with a filter on `metadata_text`, the planner decided the term wasn't selective enough — trigram indexes need ≥ 3 characters to win. Try a longer term.
+
+5. **If the column or index is missing**, re-apply migration 015 via Supabase MCP — both ALTER + CREATE INDEX statements are idempotent (`if not exists` guards).
+
+### Operator digest unsubscribe not working (Phase 8S)
+
+If the unsubscribe link in a digest email doesn't flip the opt-out flag:
+
+1. **Verify `DIGEST_UNSUBSCRIBE_SECRET` is set on both the signing side (cron) AND the verifying side (route)**. They share one secret; rotating one without the other invalidates every outstanding link.
+   - Look for `jobs.operator_activity_digest.no_unsubscribe_secret` in logs — fires once per process when the cron tried to sign a link but the env was missing.
+   - Look for `digest.unsubscribe.secret_missing` in logs — fires when the route tried to verify but the env was missing.
+
+2. **Verify the token hasn't expired**. Default TTL is 30 days. Old digest emails past 30 days return `"This link has expired."` Operators receiving a fresh digest should always have a valid link.
+
+3. **Verify the subscription metadata is being written**:
+   ```sql
+   select id, metadata->>'digest_disabled' as flag,
+          metadata->>'digest_disabled_at' as flipped_at
+   from public.subscriptions
+   where venue_id = '<uuid>'
+   order by created_at desc
+   limit 1;
+   ```
+   - `flag = 'true'` → opt-out succeeded; next morning's cron will skip.
+   - `flag IS NULL` → click never landed OR the route hit an error; check application logs for `digest.unsubscribe.*` events.
+
+4. **Confirm the route is hitting the LATEST subscription row.** The opt-out logic orders by `created_at desc LIMIT 1`. A venue with a cancelled+new subscription pair gets the opt-out flipped on the most recent row — confirm that's the one the cron also reads (it uses the same priority order).
+
+5. **Common causes of `400 "Link not valid"`**:
+   - `invalid_signature` → tamper attempt OR the secret was rotated.
+   - `expired` → > 30 days old.
+   - URL `venue_id` doesn't match the token's `venue_id` payload (defense against cross-venue replay).
+   - Token shape malformed (corporate email gateway re-wrote the URL).
+
+### Re-enable operator digest for a venue (Phase 8S)
+
+After an unsubscribe, the venue is permanently opted out until the flag is manually cleared. To re-enable:
+
+```sql
+update public.subscriptions
+set metadata = (metadata - 'digest_disabled' - 'digest_disabled_at')
+where id = '<subscription_id>';
+```
+
+The next morning's cron run will include the venue again. No re-signup email is sent — the venue owner gets the digest naturally on the next eligible day.
+
+### Backfilling legacy tours (Phase 8N)
+
+A venue that's been on VenueRise since before Phase 8M will have tours with no audit events at all. The Audit drawer renders an empty state for those, which is technically correct but unhelpful. To seed a synthetic baseline:
+
+1. Set `TOUR_STATUS_BACKFILL=1` in the deploy environment.
+2. Inngest dashboard → find function `seed-tour-status-events` → send event `admin/tour-status-events.backfill`.
+3. The job:
+   - Pulls tours with `updated_at` in the last 90 days, batch of 500.
+   - Skips any with an existing event row (idempotent).
+   - Writes one row per tour: `actor_kind='system'`, `actor_id='backfill-8N'`, `action='legacy_status_snapshot'`, metadata includes `{ backfilled: true, source: 'phase_8n', tour_updated_at }`.
+4. Run again as needed to cover the rest. With the env flag unset OR no manual event sent, the job is a no-op.
+
+Verify after a backfill:
+
+```sql
+select count(*) as backfilled_rows
+from public.tour_status_events
+where actor_kind = 'system' and actor_id = 'backfill-8N';
+```

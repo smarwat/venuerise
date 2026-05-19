@@ -5,6 +5,8 @@ import { tourRemindersFn } from './tour-reminders'
 import { billingTrialReminderFn } from './billing-trial-reminder'
 import { billingDunningFn } from './billing-dunning'
 import { billingTourAutoPauseFn } from './billing-tour-auto-pause'
+import { seedTourStatusEventsFn } from './seed-tour-status-events'
+import { operatorActivityDigestFn } from './operator-activity-digest'
 
 /** Every Inngest function the app exposes. Single source of truth. */
 export const allJobFunctions = [
@@ -15,4 +17,6 @@ export const allJobFunctions = [
   billingTrialReminderFn,
   billingDunningFn,
   billingTourAutoPauseFn,
+  seedTourStatusEventsFn,
+  operatorActivityDigestFn,
 ]

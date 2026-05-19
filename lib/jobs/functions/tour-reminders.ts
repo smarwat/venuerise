@@ -1,8 +1,13 @@
 import 'server-only'
 import { inngest } from '../client'
 import { createServiceClient } from '@/lib/supabase/service'
-import { generateTourReminder } from '@/lib/agents/tour-scheduler'
 import { sendEmail, emailConfigured } from '@/lib/integrations/email'
+import {
+  buildTourNotificationBody,
+  buildTourNotificationHtml,
+  tryBuildTourActionUrls,
+  type TourNotificationKind,
+} from '@/lib/integrations/tour-notifications'
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
 
@@ -20,6 +25,23 @@ import { captureJobError } from '@/lib/observability/sentry'
  * Console fallback → flag NOT flipped + ai_action(success=false, action=*_skipped)
  * Provider error   → flag NOT flipped + ai_action(success=false, action=*_failed)
  * ──────────────────────────────────────────────────────────────────────────
+ *
+ * ── PHASE 8J — TEMPLATE STANDARDIZATION ───────────────────────────────────
+ * Reminder bodies now come from `buildTourNotificationBody` (the same
+ * helper Phase 8G uses for create/confirm/cancel/reschedule), with two
+ * new kinds `reminder_24h` and `reminder_2h`. We stopped calling the
+ * `generateTourReminder` agent for body generation so the lead-facing
+ * tour comms surface stays visually consistent across all five touch
+ * points: create → confirm → reminder24h → reminder2h → cancel.
+ *
+ * Selection logic, schedule, flag-flip optimistic concurrency, and the
+ * three failure modes (suppression / console-fallback / provider-error)
+ * are unchanged from the Phase 3 design — only the body builder + the
+ * outbound_messages `tour_notification_kind` metadata tag are new.
+ *
+ * Confirmation/cancellation deep links: not present today. The new
+ * template surfaces a "reply to this email" line; one-click links would
+ * need a signed token + new API route, deferred to a future phase.
  */
 
 const BATCH_LIMIT = 50
@@ -59,6 +81,8 @@ type TourRow = {
   lead_id: string
   venue_id: string
   scheduled_at: string
+  duration_minutes: number | null
+  location_notes: string | null
   reminder_24h_sent: boolean
   reminder_2h_sent: boolean
   leads: { name: string; email: string | null } | null
@@ -76,7 +100,8 @@ async function processReminderBatch(
   const { data, error } = await supabase
     .from('tours')
     .select(`
-      id, lead_id, venue_id, scheduled_at, reminder_24h_sent, reminder_2h_sent,
+      id, lead_id, venue_id, scheduled_at, duration_minutes, location_notes,
+      reminder_24h_sent, reminder_2h_sent,
       leads:lead_id ( name, email ),
       venues:venue_id ( name, ai_persona_name )
     `)
@@ -117,40 +142,51 @@ async function processReminderBatch(
       continue
     }
 
-    // 1. Generate reminder text.
-    let reminderText: string
-    try {
-      reminderText = await generateTourReminder({
-        leadName: tour.leads.name,
-        venueName: tour.venues.name,
-        personaName: tour.venues.ai_persona_name,
-        scheduledAt: tour.scheduled_at,
-        hoursUntil,
-      })
-    } catch (err) {
-      const errMessage = err instanceof Error ? err.message : String(err)
-      log.error({ err, hoursUntil, tourId: tour.id }, 'jobs.tour_reminders.generation_failed')
-      captureJobError('tour-reminders', err, {
-        tourId: tour.id, leadId: tour.lead_id, venueId: tour.venue_id,
-      })
-      await logTourAction(supabase, {
-        venue_id: tour.venue_id,
-        lead_id: tour.lead_id,
-        action: `tour_reminder_${hoursUntil}h_failed`,
-        output_summary: '(generation failed)',
-        success: false,
-        error_message: errMessage,
-      })
-      failed++
-      continue
+    // 1. Build reminder body via the shared Phase 8G/8J helper. No more
+    //    AI generation — visual consistency with create/confirm/cancel
+    //    matters more than tone variation for a 24h/2h heads-up. The
+    //    helper is pure + deterministic, so the "generation_failed" path
+    //    is gone (one less failure mode to handle). Phase 8K adds the
+    //    signed action URLs when TOUR_ACTION_SECRET is configured.
+    const kind: TourNotificationKind =
+      hoursUntil === 24 ? 'reminder_24h' : 'reminder_2h'
+    const tourLog = log.child({
+      hoursUntil,
+      tourId: tour.id,
+      op: 'tour.notification',
+    })
+    const actionUrls = tryBuildTourActionUrls(tour.id, tourLog)
+    const notifArgs = {
+      kind,
+      tourId: tour.id,
+      venueId: tour.venue_id,
+      leadId: tour.lead_id,
+      leadEmail: tour.leads.email,
+      leadName: tour.leads.name,
+      scheduledAt: tour.scheduled_at,
+      durationMinutes: tour.duration_minutes,
+      locationNotes: tour.location_notes,
+      venueName: tour.venues.name,
+      confirmUrl: actionUrls?.confirm ?? null,
+      cancelUrl: actionUrls?.cancel ?? null,
     }
+    const { subject, text: reminderText } = buildTourNotificationBody(notifArgs)
+    // Phase 8L — also ship HTML so reminder emails get the polished
+    // CTA buttons. Plaintext stays as the fallback for clients that
+    // strip HTML.
+    const reminderHtml = buildTourNotificationHtml(notifArgs)
 
     // 2. Send the email. Phase 4B: sendEmail handles suppression checks,
     //    writes an outbound_messages row, and decorates with unsubscribe link.
+    //    Phase 8J: tag the metadata with `tour_notification_kind` so the
+    //    new admin stats endpoint can aggregate reminders alongside the
+    //    lifecycle emails.
+    //    Phase 8L: multipart/alternative — both text + html now.
     const sendResult = await sendEmail({
       to: tour.leads.email,
-      subject: `${hoursUntil === 24 ? 'Tomorrow' : 'In 2 hours'}: your tour at ${tour.venues.name}`,
+      subject,
       text: reminderText,
+      html: reminderHtml,
       venueId: tour.venue_id,
       leadId: tour.lead_id,
       relatedTable: 'tours',
@@ -158,6 +194,7 @@ async function processReminderBatch(
       metadata: {
         tour_id: tour.id,
         reminder_window: `${hoursUntil}h`,
+        tour_notification_kind: kind,
       },
     })
 

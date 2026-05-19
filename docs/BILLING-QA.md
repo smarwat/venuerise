@@ -1144,6 +1144,1083 @@ If a single PATCH changes both `status` AND `scheduled_at`, only one email is se
 
 `ADMIN_ENDPOINT_COUNT` bumped from 13 → 14 (added `/api/admin/tours/paused-venues`).
 
+## 7k. Tour pause history + clear-pause admin tool (Phase 8I)
+
+Phase 8H made the auto-pause cron re-arm aware. Phase 8I exposes the resulting timeline to operators and gives them an explicit reset button.
+
+### Endpoint contracts
+
+**`GET /api/admin/tours/pause-history`**
+
+| Field | Type | Notes |
+|---|---|---|
+| auth | `requireAdmin()` | 401 unauthenticated, 403 if not admin/owner anywhere |
+| rate-limit key | `admin:tours-pause-history:{userId}` | shared with all other admin rate-limited reads |
+| query `venue_id?` | uuid | falls back to caller's primary venue; cross-tenant requires `ADMIN_ROLES` on the target |
+| query `limit?` | int 1–100 | default 20 — caps the number of `items` returned |
+
+Response (always 200 on success):
+
+```json
+{
+  "items": [
+    {
+      "paused_at":      "2026-05-01T18:00:00.000Z",
+      "resumed_at":     "2026-05-04T18:00:00.000Z",
+      "paused_reason":  "past_due_7_days",
+      "resumed_reason": "payment_recovered",
+      "paused_count":   4,
+      "archived_at":    "2026-05-18T18:00:00.000Z"
+    }
+  ],
+  "current": {
+    "paused_at":      "2026-05-18T18:00:00.000Z",
+    "paused_reason":  "past_due_7_days",
+    "paused_count":   2,
+    "resumed_at":     null,
+    "resumed_reason": null
+  }
+}
+```
+
+- `items` is `tour_pause_history` reversed (newest first) then capped at `limit`. Malformed entries are silently dropped — one bad row never breaks the whole audit surface.
+- `current` is always present; every field is `null` when the venue has never been paused.
+- Returns ONLY the six pause/resume keys + four current-state scalars. Other subscription metadata (Stripe-side fields, dunning audit, etc.) is never spread into the response.
+
+**`POST /api/admin/tours/clear-pause`**
+
+| Field | Type | Notes |
+|---|---|---|
+| auth | `requireAdmin()` | same as above |
+| rate-limit key | `admin:tours-clear-pause:{userId}` | per-caller |
+| body `venue_id?` | uuid | optional override; cross-tenant requires `ADMIN_ROLES` on target |
+| body `reason?` | string max 240 | optional free-text recorded in metadata |
+
+Response shapes (200 in every success branch):
+
+```json
+// pause existed, cleared
+{ "success": true, "changed": true, "venue_id": "...", "subscription_id": "..." }
+
+// no current pause to clear (idempotent)
+{ "success": true, "changed": false, "reason": "not_paused" }
+
+// venue has no subscription row at all (rare — pre-onboarding)
+{ "success": true, "changed": false, "reason": "no_subscription" }
+```
+
+### Metadata before / after
+
+**Before clear-pause** (typical Phase 8H re-arm state):
+
+```json
+{
+  "tours_paused_at":   "2026-05-18T18:00:00.000Z",
+  "tours_paused_reason": "past_due_7_days",
+  "tours_paused_count":  2,
+  "tour_pause_history": [
+    { "paused_at": "...", "resumed_at": "...", "paused_reason": "...",
+      "resumed_reason": "...", "paused_count": 4, "archived_at": "..." }
+  ]
+}
+```
+
+**After clear-pause** (with operator-supplied `reason`):
+
+```json
+{
+  "tour_pause_history": [
+    { "paused_at": "...", "resumed_at": "...", "paused_reason": "...",
+      "resumed_reason": "...", "paused_count": 4, "archived_at": "..." }
+  ],
+  "tours_pause_cleared_at":     "2026-05-19T08:12:00.000Z",
+  "tours_pause_cleared_by":     "<operator user uuid>",
+  "tours_pause_cleared_reason": "Stripe webhook lost, recovered out-of-band"
+}
+```
+
+Note what survives and what doesn't:
+
+- `tour_pause_history` is preserved verbatim. The cleared cycle is NOT moved into history (it never had a `resumed_at`).
+- The five scalar pause/resume keys (`tours_paused_at`, `tours_paused_reason`, `tours_paused_count`, `tours_resumed_at`, `tours_resumed_reason`) are all deleted.
+- Three new forensic keys are written. `tours_pause_cleared_by` is the operator's auth.users.id, NOT email — pivot through `auth.admin.getUserById` if you need to identify them.
+
+### When to clear pause vs let Stripe recovery handle it
+
+The Phase 8G dispatcher already stamps `tours_resumed_at` on `past_due → active|trialing`, and the `/dashboard/tours` banner check is `tours_paused_at IS NOT NULL AND tours_resumed_at IS NULL`. So **in the normal recovery flow, the banner flips off on its own** — you don't need clear-pause for that.
+
+Use clear-pause ONLY when:
+
+| Scenario | Why clear-pause |
+|---|---|
+| Webhook lost / Stripe outage | Recovery happened in Stripe but no `customer.subscription.updated` ever landed; the dispatcher never got a chance to stamp `tours_resumed_at`. |
+| Out-of-band billing fix | Write-off, comp, or manual invoice marking — Stripe will never send a recovery event, so no `tours_resumed_at` will ever land. |
+| QA / staging cleanup | A synthetic `past_due` was used to exercise the pause flow and needs to be reset without re-running through Stripe. |
+
+In all three cases, clear-pause is the right tool. For routine "payment recovered" cases, the webhook does it for you.
+
+### Dashboard surface
+
+`/dashboard/settings/billing` now renders `<PauseHistoryTable>` below the billing status card for admins and owners. The table:
+
+- Shows the active pause (if any) with a "Clear pause" button that POSTs to the endpoint above + calls `router.refresh()` on success.
+- Lists the last 10 archived `tour_pause_history` entries (newest first), each with paused-at, resumed-at, duration between, cancelled count, and the reason transition.
+- Returns "No tour pause history yet." when both `current` and `items` are empty.
+
+Sales / coordinator / viewer roles see only the existing billing status card — the table is gated server-side by `ADMIN_ROLES` membership.
+
+## 7l. Tour notification stats (Phase 8J)
+
+`GET /api/admin/tours/notification-stats` aggregates `outbound_messages` rows scoped to tour communications. Use it to spot delivery problems before customers complain.
+
+### Endpoint contract
+
+| Field | Type | Notes |
+|---|---|---|
+| auth | `requireAdmin()` | 401 unauthenticated, 403 if not admin/owner anywhere |
+| rate-limit key | `admin:tours-notification-stats:{userId}` | shared with other admin-list reads |
+| `venue_id?` | uuid | defaults to caller's primary; cross-tenant requires `ADMIN_ROLES` |
+| `days?` | int 1–90 | default 30 |
+
+### Example
+
+```bash
+curl -s "http://localhost:3000/api/admin/tours/notification-stats?days=30" \
+  -H "Cookie: <admin session>" | jq .
+```
+
+Response:
+
+```json
+{
+  "venue_id": "8b7c5a90-…",
+  "window_days": 30,
+  "items": [
+    { "kind": "created",      "provider": "resend",  "status": "delivered", "count": 42 },
+    { "kind": "cancelled",    "provider": "resend",  "status": "delivered", "count": 5 },
+    { "kind": "reminder_24h", "provider": "resend",  "status": "delivered", "count": 18 },
+    { "kind": "reminder_24h", "provider": "resend",  "status": "suppressed","count": 1 },
+    { "kind": "reminder_2h",  "provider": "resend",  "status": "queued",    "count": 17 },
+    { "kind": null,           "provider": "console", "status": "queued",    "count": 3 }
+  ],
+  "totals": { "attempted": 86, "sent": 82, "failed": 0, "suppressed": 1 }
+}
+```
+
+### Status roll-up rules
+
+| `outbound_messages.status` | Counts in `totals.*` |
+|---|---|
+| `queued`, `delivered` | `sent` |
+| `failed`, `bounced`, `complained` | `failed` |
+| `suppressed` | `suppressed` |
+| (any) | `attempted` always increments |
+
+**`queued`/`sent` means provider handoff, not inbox placement.** Resend transitions `queued → delivered` asynchronously via webhook (Phase 4B+). A `queued` row counted under `sent` here means "Resend accepted the request"; true delivery requires correlating with the Resend webhook trail in `outbound_messages.status = 'delivered'` after the webhook fires.
+
+### `kind: null` rows
+
+The Phase 8G `sendTourNotificationEmail` helper + the Phase 8J reminder cron both tag emails with `metadata.tour_notification_kind`. Older rows (Phase 4B-era tour reminders sent before Phase 8J) have NULL `tour_notification_kind` — these surface in `items` with `kind: null`. The `totals` still counts them correctly; only the per-kind breakdown loses fidelity for those legacy rows.
+
+### PII posture
+
+- Never returns lead emails, message bodies, subjects, or provider_message_id.
+- Only the three group-by keys + count per row + the four-bucket totals.
+- Sentry-captures DB errors.
+
+## 7m. Tour action links (Phase 8K)
+
+Lead-facing tour emails carry signed action URLs that let the recipient confirm or cancel a tour with one click — no dashboard account required.
+
+### Security model
+
+| Layer | What it does |
+|---|---|
+| **HMAC-SHA256** | Token payload (`{tour_id, action, exp, nonce}`) signed with `TOUR_ACTION_SECRET`. Tamper attempts fail `verifyTourActionToken` with `invalid_signature` → 400 + Sentry warn. |
+| **TTL** | Default 7 days. Expired tokens fail with `expired` → 400. |
+| **Action binding** | `/tour/confirm` only accepts tokens with `action='confirm'`; `/tour/cancel` only accepts `action='cancel'`. Mismatch → 400 with the same generic copy as expired (we don't leak which dimension failed). |
+| **Per-IP rate limit** | The existing Upstash user-action limiter (30/min) keyed by `tour-action:<ip>`. Hits return a small HTML 429 page. |
+| **Status-transition guards** | Confirm requires `status='scheduled'`. Cancel requires `status ∈ {scheduled, confirmed}`. Tours with `scheduled_at <= now` are rejected as `tour_in_past`. |
+| **`X-Robots-Tag: noindex, nofollow`** | Set on every response so even if a token URL leaks into a public web archive, search engines won't index it. |
+| **Redacted logs** | The full token never appears in any structured log line. `redactTourToken()` emits `<first6>…<first6>` for correlation only. |
+
+### No DB storage — what that means
+
+Phase 8K ships migration-free. We do NOT persist:
+- which tokens have been issued
+- which tokens have been redeemed
+- when a token was last used
+
+Idempotent state machines stand in for true single-use:
+- `confirm` clicked twice → first click flips `scheduled→confirmed`; second click hits `already_handled` (no-op, no second email, no 500).
+- `cancel` clicked twice → first click flips current status to `cancelled`; second click hits `already_handled`.
+- `confirm` after a cancel → refused with `already_handled (currentStatus=cancelled)` — we never reverse a cancel via the link surface.
+
+**Replay window**: an attacker who lifts a valid token from a leaked log can replay it until either (a) the tour transitions out of the eligible-status set, or (b) the 7-day `exp` passes. This is the explicit cost of going migration-free. A future phase will add a `tour_action_events` table for write-once persistence:
+
+```sql
+-- future Phase 8L sketch — NOT in this phase
+create table public.tour_action_events (
+  id uuid primary key default uuid_generate_v4(),
+  tour_id uuid not null references public.tours(id) on delete cascade,
+  token_nonce text not null,             -- the `nonce` field from the payload
+  action text not null check (action in ('confirm', 'cancel')),
+  source_ip text,
+  user_agent text,
+  occurred_at timestamptz not null default now(),
+  unique (tour_id, token_nonce)          -- enforces true single-use
+);
+```
+
+With that table the handler can `INSERT … ON CONFLICT DO NOTHING` to atomically claim the nonce and refuse a replay.
+
+### Recent token actions admin endpoint
+
+`GET /api/admin/tours/recent-token-actions` (Phase 8K). Best-effort operator surface — returns recent tours that landed in `confirmed` or `cancelled` for a venue:
+
+```bash
+curl -s "http://localhost:3000/api/admin/tours/recent-token-actions?limit=20" \
+  -H "Cookie: <admin session>" | jq .items
+```
+
+Response:
+
+```json
+{
+  "items": [
+    { "tour_id": "...", "lead_id": "...", "lead_name": "...",
+      "lead_email": "...", "status": "confirmed",
+      "updated_at": "2026-05-18T18:00:00.000Z" }
+  ]
+}
+```
+
+**Important caveat**: without `tour_action_events`, this endpoint cannot distinguish between a status flip from the public token link vs the operator dashboard PATCH vs the admin bulk-cancel route vs raw SQL. It surfaces every recent terminal-status update for the venue and trusts the operator to cross-reference with conversation context.
+
+## 7n. Tour action audit + single-use enforcement (Phase 8L)
+
+Phase 8K shipped lead-facing confirm/cancel links with stateless HMAC tokens — replay-able within the 7-day TTL. Phase 8L closes the replay gap with migration 012 (`tour_action_events`) and an audit-fed admin endpoint.
+
+### Migration 012 — `public.tour_action_events`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | pk, `gen_random_uuid()` |
+| `venue_id` | uuid | FK → `venues(id)` ON DELETE CASCADE |
+| `tour_id` | uuid | FK → `tours(id)` ON DELETE CASCADE |
+| `lead_id` | uuid | FK → `leads(id)` ON DELETE SET NULL (survives lead deletion for forensics) |
+| `token_nonce` | text | the random hex from the signed token payload; never returned by any endpoint |
+| `action` | text | `'confirm' \| 'cancel'` (CHECK) |
+| `source_ip` | text | already CIDR-masked at insert time (192.168.1.42 → 192.168.1.0) |
+| `user_agent` | text | capped at 500 chars at insert time |
+| `occurred_at` | timestamptz | `default now()` |
+
+Constraints / indexes:
+- `unique (tour_id, token_nonce)` — the single-use claim.
+- `(venue_id, occurred_at desc)` — operator "recent activity for this venue" feed.
+- `(tour_id, occurred_at desc)` — "what's happened to this specific tour?" triage.
+- `(action, occurred_at desc)` — monitoring aggregates ("how many confirms in the last day?").
+
+RLS:
+- SELECT for `has_venue_role(venue_id, auth.uid(), array['owner','admin'])`.
+- No INSERT/UPDATE/DELETE policies for authenticated callers — every write comes from the service-role route handler.
+
+### Single-use enforcement flow
+
+```
+verify_token  →  load tour  →  status guards  →  INSERT tour_action_events  →  UPDATE tours  →  notify
+                                                  │
+                                                  ├── ok        → continue
+                                                  ├── unique    → render "Already handled", skip UPDATE + notify
+                                                  └── other DB  → Sentry-capture, render error, skip UPDATE
+```
+
+The INSERT happens AFTER cryptographic verification, so tampered tokens never produce audit rows. The `unique (tour_id, token_nonce)` constraint is the atomic claim: even two concurrent requests with the same nonce can't both succeed.
+
+Status idempotency from Phase 8K is preserved as defense in depth — if `tour_action_events` is ever wiped (test reset, manual SQL), the existing status guards still prevent double-flips.
+
+### What happens on…
+
+| Scenario | Result |
+|---|---|
+| First click on a `confirm` token for a scheduled tour | Audit row inserted, tour flips to `confirmed`, notification email fires, page shows "Tour confirmed" |
+| Second click on the same `confirm` token | Audit INSERT hits unique violation, page shows "Already handled" with `currentStatus=<value>`, NO second status flip, NO second email |
+| `cancel` token clicked after the lead already confirmed | New nonce + different `(tour_id, nonce)` pair → audit row inserted, tour flips to `cancelled`, cancellation email fires |
+| Tampered token (one char changed) | Signature verification fails → page shows "Link not valid", NO audit row, Sentry warn captures `invalid_signature` |
+| Expired token (past `exp`) | Verification fails with `expired` → page shows "Link not valid", NO audit row, structured log only (not Sentry — expected outcome) |
+| Tour deleted between email send and click | Tour lookup returns null → page shows "We couldn't find that tour", NO audit row |
+| Tour `scheduled_at` already in the past | Tour-in-past guard fires → page shows "This tour has already passed", NO audit row |
+
+### Admin endpoint — now backed by the audit table
+
+`GET /api/admin/tours/recent-token-actions` (existed since Phase 8K; rewritten in 8L):
+
+```bash
+curl -s "http://localhost:3000/api/admin/tours/recent-token-actions?limit=20" \
+  -H "Cookie: <admin session>" | jq .items
+```
+
+Response:
+
+```json
+{
+  "items": [
+    { "id": "...",
+      "venue_id": "...",
+      "tour_id": "...",
+      "lead_id": "...",
+      "lead_name": "Sarah Johnson",
+      "lead_email": "sarah@example.com",
+      "action": "confirm",
+      "source_ip": "192.168.1.0",
+      "user_agent": "Mozilla/5.0 …",
+      "occurred_at": "2026-05-18T14:21:00.000Z" }
+  ]
+}
+```
+
+`token_nonce` is **never** returned. `source_ip` is **always** the CIDR-masked form — the raw IP is never written to the DB in the first place.
+
+Implementation: two service-role queries (events first, then a batched `IN ()` against `leads` to resolve names/emails). Splitting them avoids PostgREST's foreign-table inference quirks and lets us return events for deleted leads with `lead_name: null`.
+
+### HTML email templates (Phase 8L)
+
+`buildTourNotificationHtml(args)` ships alongside the existing plaintext builder. Both shapes are passed to `sendEmail` so Resend delivers multipart/alternative. Clients that strip HTML fall back to the unchanged plaintext.
+
+Visual identity (per Phase 8L spec):
+- Clean white card on `#F4F6FB` slate background
+- Brand blue `#1D4ED8` primary "Confirm tour" CTA
+- Muted slate text-link "Need to cancel?" secondary
+- Table-based layout (Outlook-safe), inline CSS only
+- Zero external assets — no images, no web fonts, no tracking pixels
+- Max-width 480px for mobile-safe rendering
+
+The `confirmed` + `cancelled` kinds intentionally omit the action buttons (no useful action to offer once the tour is in a terminal state).
+
+### Debug HTML preview
+
+For QA / styling work without burning real tokens:
+
+```
+GET /tour/confirm?as=html&kind=success
+GET /tour/cancel?as=html&kind=already
+                         &kind=invalid
+                         &kind=expired
+```
+
+Gated to non-production OR `TOUR_ACTION_DEBUG_PREVIEW=1`. The branch reads zero data, mutates nothing, never honors `?token=`. In production with the flag off, the `?as=html` query is silently ignored.
+
+## 7o. Unified tour status-event audit (Phase 8M)
+
+Phase 8L's `tour_action_events` is narrow — it locks down lead-token redemption and that's it. Phase 8M adds `tour_status_events`, a wider audit feed that records every tour status change regardless of who or what triggered it.
+
+### Two tables, two jobs
+
+| Table | Phase | Role |
+|---|---|---|
+| `public.tour_action_events` | 8L | Single-use claim for lead-token redemption. The `unique (tour_id, token_nonce)` constraint is the atomic replay defeat. NOT a general audit. |
+| `public.tour_status_events` | 8M | Unified audit of every tour status change across every write path. Use this when the question is "who/what changed this tour, when?". |
+
+Lead-token actions write to BOTH tables for one release cycle. After downstream dashboards have migrated off the deprecated `/api/admin/tours/recent-token-actions`, a future phase can stop double-writing.
+
+### Migration 013 — `public.tour_status_events`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | pk |
+| `venue_id` | uuid | FK ON DELETE CASCADE |
+| `tour_id` | uuid | FK ON DELETE CASCADE |
+| `lead_id` | uuid | FK ON DELETE SET NULL |
+| `actor_kind` | text | CHECK ∈ {`lead_token`, `operator`, `cron`, `system`} |
+| `actor_id` | text | polymorphic: operator → user uuid; cron → function id; lead_token → null; system → free-form |
+| `action` | text | free-form verb (`confirm`, `cancel`, `status_change`, `reschedule`, `bulk_cancel`, `auto_pause_cancel`, …) |
+| `previous_status` | text | nullable — pre-flip status |
+| `new_status` | text | not null |
+| `source_ip` | text | already CIDR-masked at write time |
+| `user_agent` | text | capped at 500 chars at write time |
+| `reason` | text | operator-supplied free-text (e.g. bulk-cancel reason) |
+| `metadata` | jsonb | structured context, PII-free by convention |
+| `occurred_at` | timestamptz | `default now()` |
+
+Indexes: `(venue_id, occurred_at desc)`, `(tour_id, occurred_at desc)`, `(venue_id, actor_kind, occurred_at desc)`, `(action, occurred_at desc)`.
+
+RLS: enabled. SELECT for `has_venue_role(venue_id, auth.uid(), array['owner','admin'])`. No INSERT/UPDATE/DELETE policies for authenticated callers — every write goes through the service-role `recordTourStatusEvent` helper.
+
+### Write paths covered
+
+| Path | `actor_kind` | `actor_id` | `action` |
+|---|---|---|---|
+| `GET /tour/confirm?token=…` | `lead_token` | null | `confirm` |
+| `GET /tour/cancel?token=…` | `lead_token` | null | `cancel` |
+| `PATCH /api/tours/[id]` flip to confirmed | `operator` | `user.id` | `confirm` |
+| `PATCH /api/tours/[id]` flip to cancelled | `operator` | `user.id` | `cancel` |
+| `PATCH /api/tours/[id]` other status change | `operator` | `user.id` | `status_change` |
+| `PATCH /api/tours/[id]` reschedule only (no status change) | `operator` | `user.id` | `reschedule` |
+| `POST /api/admin/tours/bulk-cancel` per affected tour | `operator` | `user.id` | `bulk_cancel` |
+| `billing-tour-auto-pause` cron per cancelled tour | `cron` | `'billing-tour-auto-pause'` | `auto_pause_cancel` |
+
+Every write is best-effort. Audit failures NEVER fail the primary action — the status change already landed, the audit is just observability.
+
+### Admin endpoint
+
+`GET /api/admin/tours/status-events`
+
+```bash
+# all recent activity for the caller's venue
+curl -s "http://localhost:3000/api/admin/tours/status-events?limit=50" \
+  -H "Cookie: <admin session>" | jq .items
+
+# everything that happened to one tour
+curl -s "…/api/admin/tours/status-events?tour_id=<uuid>" -H "Cookie: …" | jq .items
+
+# one lead's audit slice
+curl -s "…/api/admin/tours/status-events?lead_id=<uuid>" -H "Cookie: …" | jq .items
+
+# only operator-driven changes (no lead tokens, no cron)
+curl -s "…/api/admin/tours/status-events?actor_kind=operator" -H "Cookie: …" | jq .items
+
+# all bulk cancels in the last N rows
+curl -s "…/api/admin/tours/status-events?action=bulk_cancel&limit=200" -H "Cookie: …" | jq .items
+
+# all cron auto-pause cancellations
+curl -s "…/api/admin/tours/status-events?actor_kind=cron&action=auto_pause_cancel" -H "Cookie: …" | jq .items
+```
+
+Filters (all optional, all combinable): `venue_id`, `tour_id`, `lead_id`, `actor_kind` (`lead_token|operator|cron|system|all`), `action`, `limit` (1..200, default 50).
+
+PII posture:
+- Does NOT join leads. `lead_name`/`lead_email` are not returned. Pivot via `lead_id` → `/dashboard/inbox/<lead_id>`.
+- `source_ip` always returned in the CIDR-masked form (raw IPs never reach the DB).
+- `token_nonce` is exclusive to `tour_action_events`; not present in this table.
+- `metadata` spread as-is; write paths keep PII out by convention.
+
+### Deprecation: `/api/admin/tours/recent-token-actions`
+
+The Phase 8K/8L narrow endpoint stays mounted for one release cycle. Every response now carries:
+
+```http
+Deprecation: true
+Link: </api/admin/tours/status-events?actor_kind=lead_token>; rel="successor-version"
+```
+
+External dashboards should switch to the unified endpoint. The deprecated route continues to work — it reads from `tour_action_events`, the unified endpoint reads from `tour_status_events`.
+
+### Common diagnostic queries
+
+```sql
+-- complete history for one tour (every transition, every path)
+select occurred_at, actor_kind, actor_id, action, previous_status, new_status, reason
+from public.tour_status_events
+where tour_id = '<uuid>'
+order by occurred_at asc;
+
+-- one lead's tour activity over the last 30 days
+select occurred_at, actor_kind, action, new_status, tour_id
+from public.tour_status_events
+where lead_id = '<uuid>' and occurred_at > now() - interval '30 days'
+order by occurred_at desc;
+
+-- bulk cancels in the last 24h (operator triage)
+select occurred_at, actor_id, venue_id, tour_id, reason
+from public.tour_status_events
+where action = 'bulk_cancel' and occurred_at > now() - interval '24 hours'
+order by occurred_at desc;
+
+-- all lead-token confirms/cancels in the last week, by venue
+select venue_id, action, count(*) as n
+from public.tour_status_events
+where actor_kind = 'lead_token' and occurred_at > now() - interval '7 days'
+group by 1, 2 order by 1, 2;
+
+-- all cron auto-pause cancellations
+select occurred_at, venue_id, tour_id, metadata->>'subscription_id' as sub
+from public.tour_status_events
+where actor_kind = 'cron' and action = 'auto_pause_cancel'
+order by occurred_at desc;
+```
+
+## 7p. Tour status audit UI surfaces (Phase 8N)
+
+Phase 8M shipped the unified audit feed; operators still had to curl `/api/admin/tours/status-events` or write SQL to see it. Phase 8N adds three in-product surfaces over the same data.
+
+### Surfaces
+
+| Surface | Where | Depth | How it reads |
+|---|---|---|---|
+| Inbox recent activity panel | `/dashboard/inbox/[leadId]` (in `TourLifecycleStrip`) | last 5 events for the lead's relevant tour | client `fetch` to `/api/admin/tours/status-events?tour_id=…&limit=5` |
+| Per-tour audit drawer | `/dashboard/tours` Upcoming list (Audit button) + the inbox "View full audit" button | last 50 events for one tour, expandable metadata, Copy event id | client `fetch` to `/api/admin/tours/status-events?tour_id=…&limit=50` |
+| Billing settings activity feed | `/dashboard/settings/billing` (below pause history) | last 25 venue-wide events as a compact table | server-side service-role read of `tour_status_events` |
+
+The drawer + inbox panel hit the same admin endpoint (cookie auth), so the existing `requireAdmin()` gate is the access boundary. Non-admins get 401/403 and the UI hides silently — no error surface, no leaked existence. The billing feed reuses the service-role read directly because the page is already RLS-gated by the operator-side `venue.role ∈ ADMIN_ROLES` check.
+
+### Two-vs-three table primer
+
+Operators sometimes ask which audit table to query for what. Quick mental model:
+
+| Question | Table | Why |
+|---|---|---|
+| "Did this token already redeem?" (replay defense) | `tour_action_events` | Owns `unique (tour_id, token_nonce)` — Phase 8L |
+| "Who changed this tour, when, from what to what?" | `tour_status_events` | Unified feed across all write paths — Phase 8M |
+| "What does the operator see in the Audit drawer?" | `tour_status_events` | The drawer reads only from the unified feed |
+
+The lead-token write path still inserts into BOTH tables for one release cycle.
+
+### Backfill (`seed-tour-status-events`)
+
+Optional one-shot Inngest job that writes synthetic baseline rows for legacy tours (anything updated in the last 90 days that has no `tour_status_events` row yet). Triggered manually only:
+
+```ts
+// Inngest dashboard → send event:
+{ name: 'admin/tour-status-events.backfill' }
+```
+
+Requires `TOUR_STATUS_BACKFILL=1` in the runtime environment. Without the flag the job short-circuits with `{ skipped: true, reason: 'disabled' }`. No cron schedule.
+
+Idempotent — re-runs skip any tour that already has at least one audit row. Capped at 500 tours per invocation. Synthetic rows are easy to spot in audit queries:
+
+```sql
+select count(*) as synthetic_rows
+from public.tour_status_events
+where actor_kind = 'system' and actor_id = 'backfill-8N';
+```
+
+## 7q. Tour status filters + CSV export + realtime (Phase 8O)
+
+Phase 8N surfaced the unified audit feed inside the product. Phase 8O makes it operationally useful: filter in the UI, export for compliance, and stay live without manual refresh.
+
+### Billing-page filter chips
+
+`/dashboard/settings/billing` → "Tour status activity" card now exposes two selects:
+
+| Filter | Options |
+|---|---|
+| Actor | `All actors`, `Lead`, `Operator`, `Cron`, `System` |
+| Action | `All actions`, `Confirmed`, `Cancelled`, `Rescheduled`, `Status changed`, `Bulk cancelled`, `Auto-paused`, `Legacy snapshot` |
+
+Filtering happens client-side against the already-loaded 25-row slice — no extra DB hit. For a deeper window or a different filter combination, pivot to the admin CSV export below.
+
+Distinct empty states:
+- No rows in the slice at all → "No tour status events recorded yet."
+- Rows exist but none match the active filters → "No events match the active filters." + a Reset filters link.
+
+### CSV export
+
+`GET /api/admin/tours/status-events?format=csv` returns the same filtered rows as the JSON variant, serialized as a downloadable `.csv`.
+
+```bash
+curl -i "$APP/api/admin/tours/status-events?format=csv&actor_kind=operator&action=cancel&limit=200" \
+  -b "sb-...-auth-token=..."
+```
+
+Response headers:
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="tour-status-events-2026-05-18.csv"
+Cache-Control: no-store
+X-Request-Id: <uuid>
+```
+
+Columns (in order): `id, venue_id, tour_id, lead_id, actor_kind, actor_id, action, previous_status, new_status, source_ip, user_agent, reason, occurred_at, metadata_json`.
+
+Escaping rules:
+- Fields containing comma, quote, CR, or LF are wrapped in double quotes.
+- Internal quotes are doubled (`"` → `""`).
+- `metadata_json` is the compact JSON of the row's `metadata` jsonb column — operators get the full structured context without losing fidelity vs the JSON endpoint.
+- File starts with a UTF-8 BOM so Excel opens it correctly.
+
+Auth / tenant / rate-limit / Sentry posture is **identical** to the JSON path. All other query params (`venue_id`, `tour_id`, `lead_id`, `actor_kind`, `action`, `limit`) work the same way.
+
+### CSV privacy posture
+
+- `token_nonce` from `tour_action_events` is **never** included. CSV exposes only `tour_status_events` columns.
+- `source_ip` is already CIDR-masked at write time (Phase 8L `maskIp`). The DB never holds raw IPs.
+- `lead_id` is included (it's already in the JSON endpoint), but no lead email/name join.
+- `user_agent` is capped at 500 chars at write time.
+
+### Realtime audit stream
+
+`RealtimeTourStatusLayer` subscribes to Supabase Realtime:
+
+| Setting | Value |
+|---|---|
+| Channel | `tour-status-events:venue:${venueId}` |
+| Event | `postgres_changes` filtered to `INSERT` |
+| Schema/table | `public.tour_status_events` |
+| Filter | `venue_id=eq.${venueId}` |
+| On insert | Toast `"Tour activity recorded"` + `router.refresh()` |
+
+Mounted on `/dashboard/tours` and `/dashboard/settings/billing` (admin/owner only on billing). The layer is non-rendering except for the toast.
+
+**Prereq**: `tour_status_events` must be in the `supabase_realtime` publication. Applied via ops command in Phase 8O (no migration file):
+
+```sql
+alter publication supabase_realtime add table public.tour_status_events;
+```
+
+If the table is ever removed from the publication, the channel subscribes successfully but receives no events. The RUNBOOK §7 includes the idempotent re-apply recipe.
+
+### Known limitation: CSV export is capped by `limit`
+
+The CSV path honors the same `limit` query param as the JSON path (max 200, default 50). For compliance or insurance requests that need a wider window, the operator either:
+1. Submits multiple paginated requests, OR
+2. Queries the DB directly via SQL/Supabase.
+
+A future phase could add streaming export with cursor-based pagination — out of scope for 8O.
+
+## 7r. URL-synced filters + cursor pagination + debounced realtime (Phase 8P)
+
+Phase 8O made the audit data interactive. Phase 8P tightens the operator workflow with four ergonomic improvements.
+
+### URL-synced billing-page filters
+
+`/dashboard/settings/billing` activity feed filters now read and write to URL query params:
+
+| Param | Values |
+|---|---|
+| `?actor` | `lead_token`, `operator`, `cron`, `system` (absent = all) |
+| `?action` | `confirm`, `cancel`, `reschedule`, `status_change`, `bulk_cancel`, `auto_pause_cancel`, `legacy_status_snapshot` (absent = all) |
+
+Behavior:
+- Changing a select uses `router.replace`, not full navigation — no browser history pollution.
+- Copying the URL and opening in a new tab restores the same filters.
+- Invalid values (typos, stale links, malicious input) silently coerce to `all`.
+- **Reset filters** removes both params from the URL.
+- Filtering still runs client-side over the loaded 25-row slice; URL-syncing is purely state preservation.
+
+### Cursor pagination on `GET /api/admin/tours/status-events`
+
+New optional query param:
+
+```
+?occurred_before=<ISO-8601 timestamp>
+```
+
+Returns rows with `occurred_at < occurred_before`, still ordered `occurred_at desc`. Works in both JSON and CSV branches.
+
+**JSON response shape** (existing `items` array unchanged, two new fields added):
+
+```json
+{
+  "items": [...],
+  "next_cursor": "2026-05-18T12:34:56.000Z",
+  "has_more": true
+}
+```
+
+- `next_cursor` = `occurred_at` of the last returned row when `items.length === limit`.
+- `has_more` = `items.length === limit`.
+- If fewer rows than `limit` come back, `next_cursor: null` + `has_more: false`.
+
+**CSV response** keeps the same body + Content-Disposition, plus two new headers:
+
+```
+X-Has-More: true | false
+X-Next-Cursor: 2026-05-18T12:34:56.000Z   (only when has_more === true)
+```
+
+Example chain (CSV):
+
+```bash
+# page 1
+curl -i "$APP/api/admin/tours/status-events?format=csv&limit=200" \
+  -b "$COOKIE" \
+  -D headers1.txt -o page1.csv
+
+# read X-Next-Cursor from headers1.txt → 2026-05-18T12:00:00.000Z
+curl -i "$APP/api/admin/tours/status-events?format=csv&limit=200&occurred_before=2026-05-18T12:00:00.000Z" \
+  -b "$COOKIE" \
+  -D headers2.txt -o page2.csv
+```
+
+The strict `<` comparison guarantees chained pages never duplicate rows. A venue whose row count is exactly a multiple of `limit` will return `has_more: true` on the final full page; the next page comes back empty as the stop signal.
+
+### Realtime refresh debounce
+
+`RealtimeTourStatusLayer` now debounces `router.refresh()` calls:
+
+- Each INSERT still fires an immediate "Tour activity recorded" toast (so operators see bulk volume).
+- `router.refresh()` calls are coalesced via a **1000ms trailing debounce** — every new event resets the timer; only the last one survives the window.
+- A burst of 20 events typically produces 20 toasts but only 1–3 refreshes.
+- Pending timeout is cleared on unmount so a fast page transition doesn't trigger a stray refresh.
+- Channel/filter/event/table strings are unchanged from Phase 8O.
+
+### Audit drawer deep linking on `/dashboard/tours`
+
+Clicking the **Audit** button on a tour row now writes:
+
+```
+/dashboard/tours?audit_tour=<tour_uuid>
+```
+
+Behavior:
+- Initial render reads `?audit_tour` and auto-opens the drawer if shape-valid.
+- Closing the drawer strips `?audit_tour` from the URL but preserves every other param (notably `?month=YYYY-MM` from the Phase 8E MonthNavClient).
+- Invalid shapes (non-UUID-like strings) are ignored client-side; the drawer stays closed and the param remains for the operator to fix.
+- Back/Forward across `audit_tour` changes is honored: a sibling component that updates the URL flips the drawer state.
+
+Example deep link:
+
+```
+https://app.venuerise.com/dashboard/tours?month=2026-06&audit_tour=8b7c5a90-...
+```
+
+## 7s. Filter persistence + audit search + streamed CSV (Phase 8Q)
+
+Phase 8P syncs filter state to the URL. Phase 8Q adds three operator-depth features without changing schema or auth posture.
+
+### Per-user filter persistence
+
+The billing-page activity feed now persists filter selections to `localStorage` under the key:
+
+```
+venuerise:tour-status-feed:filters:v1
+```
+
+Priority order on every page load:
+
+1. **URL params** (`?actor`, `?action`, `?q`) when present and valid — always win.
+2. **localStorage** values from a previous session — used only if URL is empty.
+3. **Defaults** (`all` / empty search) when neither source has values.
+
+When the operator changes a filter or search, both surfaces update in lockstep: the URL via `router.replace` (no history pollution) AND the storage slot. Reset filters wipes both.
+
+Edge cases:
+- Invalid JSON in storage (manual tampering, schema drift) is silently ignored. The next valid change overwrites the slot.
+- Default values (`all` / empty) are NOT persisted — storage gets removed instead. A cleared state round-trips cleanly to "no defaults" on next load.
+- The bootstrap runs once on mount; opening a deep-linked tab with URL params still wins, and clearing storage in another tab takes effect on the next visit.
+
+### `?q=` search
+
+Add a free-text filter to `GET /api/admin/tours/status-events`:
+
+```
+?q=<string>
+```
+
+Validation:
+- Optional. Empty after trim → treated as absent.
+- Max 120 chars (Zod rejects longer with 400 `validation_failed`).
+- Trimmed at the route boundary.
+
+Server-side search runs a PostgREST `.or(...)` clause over scalar columns:
+
+| Column |
+|---|
+| `reason` |
+| `actor_id` |
+| `action` |
+| `previous_status` |
+| `new_status` |
+
+All matches are case-insensitive substring (`ilike` with `%term%`). Backslashes and double-quotes are escaped before being embedded in the `.or()` expression.
+
+**Known limitation: `metadata::text` is NOT searched server-side.** PostgREST's chainable `.or()` doesn't cleanly express a jsonb-cast `ilike`, and a Postgres function would require a migration (forbidden in 8Q). The billing-page client search compensates by also matching the stringified metadata over the loaded slice, so operators searching for e.g. `stripe_event` or `past_due_7_days` still find rows in the UI. A future migration can add a generated text column + a single `or()` arm.
+
+Combines with every other filter (`venue_id`, `tour_id`, `lead_id`, `actor_kind`, `action`), every output format (`json` and `csv`), and cursor pagination (`occurred_before`).
+
+### Streamed CSV export
+
+```
+?format=csv&stream=1
+```
+
+Only meaningful when `format=csv` (the route silently treats `?stream=1` without `format=csv` as a regular JSON request — no error). Internally pages through results using the existing `occurred_at` cursor; emits one continuous CSV body via a `ReadableStream` so the entire export never materializes in memory.
+
+Bounds:
+- Page size = `?limit` if provided, otherwise 200.
+- Hard cap = **5000 rows** per request (constant `STREAM_HARD_CAP`). Pages stop when the cap is hit OR a page returns fewer rows than its requested limit.
+- `?occurred_before=<ISO>` is honored as the STARTING cursor (resume mid-stream).
+
+Response headers:
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="tour-status-events-stream-YYYY-MM-DD.csv"
+Cache-Control: no-store
+X-Streamed: true
+X-Row-Limit: 5000
+```
+
+Body shape:
+- UTF-8 BOM at start (Excel compatibility).
+- CSV header row emitted ONCE.
+- Per-page chunks appended with the same column ordering as the Phase 8O CSV path.
+- Each data row terminated by `\n`. No duplicate header rows.
+
+Failure mode:
+- Per-page DB error → a trailing comment line `# stream aborted: <message>\n` is emitted, the stream is closed, and the error is Sentry-captured. The downloaded file's row count will be short; the trailing comment is the truth signal.
+
+Auth / tenant / rate-limit / Sentry posture is identical to the non-streamed paths.
+
+Example:
+
+```bash
+curl -L "$APP/api/admin/tours/status-events?format=csv&stream=1&limit=200&q=cancel&actor_kind=operator" \
+  -b "sb-...-auth-token=..." \
+  -o tour-status-events.csv
+```
+
+This single command replaces the multi-page Phase 8P shell loop for any export ≤ 5000 rows.
+
+## 7t. Metadata-aware audit search (Phase 8R)
+
+Phase 8Q's `?q=` search was scalar-only — `metadata::text` couldn't be reached through PostgREST's chainable `.or()`. Phase 8R adds migration 014 with a SECURITY DEFINER RPC that closes the gap.
+
+### RPC contract
+
+```
+public.search_tour_status_events(
+  p_venue_id        uuid              REQUIRED
+  p_tour_id         uuid    DEFAULT null
+  p_lead_id         uuid    DEFAULT null
+  p_actor_kind      text    DEFAULT null
+  p_action          text    DEFAULT null
+  p_q               text    DEFAULT null
+  p_occurred_before timestamptz DEFAULT null
+  p_limit           integer DEFAULT 50    (clamped 1..200 inside SQL)
+) RETURNS TABLE (… every column of tour_status_events)
+```
+
+Search semantics:
+- `p_q` is trimmed; empty after trim → no search filter.
+- Otherwise the predicate matches case-insensitive substring (`ILIKE '%term%'`) against:
+  - `actor_id`
+  - `action`
+  - `previous_status`
+  - `new_status`
+  - `reason`
+  - `source_ip`
+  - `user_agent`
+  - `metadata::text` ← the gap Phase 8Q couldn't close
+- Other filters apply with AND semantics. `p_venue_id` is always required (the RPC body explicitly applies it as defense-in-depth even though the route already tenant-binds).
+
+### Security posture
+
+- `SECURITY DEFINER` — runs with the function owner's privileges.
+- `set search_path = public` — pinned at function definition time, no path-injection.
+- `REVOKE ALL FROM PUBLIC` + `GRANT EXECUTE TO service_role` only. `authenticated` and `anon` never get execute, so a leaked anon key can't enumerate the audit log.
+- The route's `requireAdmin()` + cross-venue `requireVenueRole(ADMIN_ROLES)` remain the primary access boundary. The RPC's `p_venue_id` filter is defense-in-depth.
+- `p_q` is passed as a parameterized bind — Postgres handles escaping. The `%` wildcards are appended inside the SQL expression, not concatenated into a query string.
+
+### Route integration
+
+`GET /api/admin/tours/status-events` now branches:
+
+| `?q=` present | Path | Searches metadata |
+|---|---|---|
+| No | PostgREST chain (Phase 8O/8P/8Q) | No |
+| Yes | `search_tour_status_events` RPC (Phase 8R) | **Yes** |
+
+Both branches honor the same filters, return the same JSON/CSV/stream shapes, and use the same cursor-pagination semantics. The completion log gets a new `filters.q_mode: 'rpc_metadata' | 'standard'` field so operators can audit which path served a request.
+
+### Example
+
+```bash
+# returns rows where metadata jsonb mentions 'past_due_7_days'
+curl -s "$APP/api/admin/tours/status-events?q=past_due_7_days" \
+  -b "$COOKIE" | jq '.items[] | {action, metadata}'
+
+# combine with all other filters
+curl -s "$APP/api/admin/tours/status-events?actor_kind=cron&q=past_due_7_days&limit=200" \
+  -b "$COOKIE" | jq .items
+
+# streamed CSV with metadata search
+curl -L "$APP/api/admin/tours/status-events?format=csv&stream=1&q=stripe_event" \
+  -b "$COOKIE" -o stripe-events.csv
+```
+
+### Direct SQL access
+
+For ops queries that bypass the HTTP route:
+
+```sql
+select id, action, previous_status, new_status, metadata
+from public.search_tour_status_events(
+  p_venue_id   := '<venue uuid>',
+  p_q          := 'past_due_7_days',
+  p_actor_kind := 'cron',
+  p_limit      := 100
+)
+order by occurred_at desc;
+```
+
+Only callable from the `service_role` role.
+
+## 7u. Daily operator activity digest (Phase 8R)
+
+Optional Inngest cron that emails venue owners a 24-hour summary of `tour_status_events` activity.
+
+| Field | Value |
+|---|---|
+| Function id | `operator-activity-digest` |
+| Schedule | `0 8 * * *` (daily 8am UTC) |
+| Hard gate | `OPERATOR_DIGEST_ENABLED === '1'` (absent / any other value → skips with `{ skipped: true, reason: 'disabled' }`) |
+| Lookback | 24 hours |
+| Venue cap | 200 per run |
+| Email subject | `VenueRise daily activity summary` |
+
+### Summary shape
+
+For each venue with ≥ 1 event in the lookback window, the body includes:
+- Venue name (resolved from `public.venues`) or short id fallback.
+- Total events count.
+- Counts by `action` (sorted by count desc).
+- Counts by `actor_kind` (sorted by count desc).
+- Link to `${NEXT_PUBLIC_APP_URL}/dashboard/settings/billing`.
+
+### Idempotency posture
+
+Before sending to a venue, the cron probes `outbound_messages` for an existing row this UTC date with:
+- `venue_id = <target>`
+- `related_table = 'tour_status_events'`
+- `metadata->>'tour_digest_date' = <today utc>`
+
+If found, skip (idempotent on re-trigger within the same UTC day).
+
+**Known limitation**: this is a best-effort de-dup, not a strong guarantee. Two crons firing within the same minute could both probe, both find no row, and both send. Real deployments run a single Inngest worker per function, so the exposure is narrow. A future migration could add a dedicated `digest_sends` table for absolute single-send.
+
+### Failure posture
+
+- One venue failure NEVER aborts the batch.
+- Owner lookup failures → skip with `skip_no_owner_email`.
+- Suppression → skip; next-day's run retries.
+- Console-fallback → skip (digest not marked sent; retried next day once Resend is configured).
+- Provider errors → Sentry-captured + `failed` counter incremented.
+- Returns `{ scannedVenues, sent, skipped, failed }` for the Inngest run summary.
+
+### Run it manually
+
+For staging / debugging, trigger the Inngest function from the dashboard. Or in a Node REPL with service-role creds:
+
+```ts
+import { runDigestScan } from '@/lib/jobs/functions/operator-activity-digest'
+const summary = await runDigestScan()
+console.log(summary)
+// → { skipped: true, reason: 'disabled' }   if OPERATOR_DIGEST_ENABLED !== '1'
+// → { scannedVenues, sent, skipped, failed } otherwise
+```
+
+## 7v. Indexed metadata audit search (Phase 8S)
+
+Phase 8R closed the metadata-search gap with a SECURITY DEFINER RPC, but the underlying predicate (`metadata::text ILIKE '%term%'`) was unindexed — fine at < ~1k rows, linear-slower past that. Phase 8S adds migration 015 with a generated column + a trigram GIN index so operator search stays fast as the audit log grows.
+
+### Migration 015 — what it adds
+
+1. `create extension if not exists pg_trgm` — idempotent; Supabase usually ships pg_trgm pre-loaded.
+2. `metadata_text text generated always as (coalesce(metadata::text, '')) stored` — a materialized mirror of `metadata::text` on `tour_status_events`. Operator-search-only; nothing else in the app reads this column.
+3. `create index ... using gin (metadata_text gin_trgm_ops)` — the index that turns `ILIKE '%term%'` into an indexed lookup.
+4. `create or replace function search_tour_status_events(...)` — same signature, same return shape, same SECURITY DEFINER posture, same `GRANT EXECUTE TO service_role`. Only the predicate body changes: `metadata::text ILIKE …` becomes `metadata_text ILIKE …`.
+
+### Verification
+
+```sql
+-- column present?
+select column_name, data_type, generation_expression
+from information_schema.columns
+where table_schema='public' and table_name='tour_status_events'
+  and column_name='metadata_text';
+
+-- index present?
+select indexname, indexdef from pg_indexes
+where schemaname='public' and tablename='tour_status_events'
+  and indexname='tour_status_events_metadata_text_trgm_idx';
+
+-- RPC still SECURITY DEFINER?
+select proname, prosecdef from pg_proc
+where proname='search_tour_status_events';
+```
+
+### Expected performance improvement
+
+For a typical metadata search (`?q=past_due_7_days` over a few hundred thousand `tour_status_events` rows), the trigram GIN index drops the predicate from a sequential ILIKE scan to a bitmap index scan + recheck. On synthetic data the planner typically:
+
+- Without index: `Seq Scan` over `tour_status_events`, filtering on the cast.
+- With index: `Bitmap Index Scan tour_status_events_metadata_text_trgm_idx` → `Bitmap Heap Scan tour_status_events`.
+
+For very short search terms (1-2 chars) the planner may still prefer a seq scan — trigram indexes need at least 3 characters of selectivity to win. Operators searching for `id` or `ok` may not see speedup; documented as expected behavior.
+
+### Write amplification
+
+Every INSERT/UPDATE on `tour_status_events` now also writes a `metadata_text` value + a GIN index entry. The audit table is append-only and venue volumes are small (handful of rows per venue per day at the high end), so the overhead is negligible. The Phase 8M write paths (`recordTourStatusEvent`) are unaffected — they don't reference the new column.
+
+### Security posture — unchanged
+
+The RPC is still:
+- `SECURITY DEFINER` with pinned `search_path = public`
+- `REVOKE ALL FROM PUBLIC` + `GRANT EXECUTE TO service_role` only
+- Called by the HTTP route ONLY after `requireAdmin()` + cross-venue `requireVenueRole(ADMIN_ROLES)` pass
+- `p_venue_id` applied as a hard WHERE clause inside the function body (defense in depth)
+
+The route contract is unchanged. Callers already using `?q=` get the speedup automatically.
+
+## 7w. Operator digest HTML + unsubscribe (Phase 8S)
+
+### HTML email body
+
+The Phase 8R operator-activity-digest cron now ships an Outlook-safe HTML body alongside the plaintext fallback. Visual identity matches the Phase 8L tour notification emails:
+
+- White rounded card on a slate (`#F4F6FB`) background
+- Brand-blue total-event chip
+- Stacked detail tables (one per "by action" / "by actor")
+- Inline CSS only, no images, no web fonts, no tracking pixels
+- Max-width 480px for mobile
+- `<table>` layout (Outlook-safe)
+
+Plaintext stays as the canonical fallback for clients that strip HTML. The cron passes both `text` + `html` to `sendEmail` so Resend delivers multipart/alternative.
+
+### Unsubscribe token model
+
+```ts
+// Token payload
+{
+  venue_id: string,  // UUID
+  exp:      number,  // Unix ms — 30 day TTL
+  nonce:    string   // 32 hex chars (16 random bytes)
+}
+
+// Wire format
+<base64url(JSON payload)>.<base64url(HMAC-SHA256)>
+
+// URL
+${NEXT_PUBLIC_APP_URL}/api/digest/unsubscribe?venue_id=<uuid>&token=<signed>
+```
+
+- HMAC secret: `DIGEST_UNSUBSCRIBE_SECRET` (≥16 chars enforced).
+- Short/missing secret → digest emails ship without the link, single warn per process.
+- URL `venue_id` MUST match the signed payload `venue_id` — defends against an attacker swapping the param to unsubscribe a different venue using a leaked token.
+- Tamper attempts (`invalid_signature`) → 400 page + Sentry capture.
+- Per-IP rate limit on the public route (reuses the Upstash user-action limiter keyed `digest-unsubscribe:<ip>`).
+- `X-Robots-Tag: noindex, nofollow` on every response.
+- Full token never appears in logs — `redactDigestUnsubscribeToken` emits `<head6>…<tail6>` for correlation.
+
+### `subscriptions.metadata.digest_disabled` flag
+
+The unsubscribe route looks up the most-recent subscription for the venue (same priority order as Phase 7D/8I) and merges:
+
+```jsonc
+{
+  // ...preserved existing keys...
+  "digest_disabled": true,
+  "digest_disabled_at": "2026-05-18T18:00:00.000Z"
+}
+```
+
+The digest cron's per-venue loop reads the same row before sending; if `digest_disabled === true`, it skips with `operator_digest.skipped_disabled` and never invokes `sendEmail`.
+
+### Re-enable a venue's digest
+
+There's no in-app "resubscribe" UI in Phase 8S (deferred). To re-enable manually via SQL:
+
+```sql
+update public.subscriptions
+set metadata = (metadata - 'digest_disabled' - 'digest_disabled_at')
+where id = '<subscription_id>';
+```
+
+The next morning's cron run will include the venue again.
+
 ## 7. Adding a new write route
 
 When you add a new mutation endpoint, you MUST:

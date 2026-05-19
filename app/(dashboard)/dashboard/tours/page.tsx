@@ -14,6 +14,7 @@ import {
   isValid,
 } from 'date-fns'
 import RealtimeToursLayer from '@/components/dashboard/tours/RealtimeToursLayer'
+import RealtimeTourStatusLayer from '@/components/dashboard/tours/RealtimeTourStatusLayer'
 import TourSchedulingClient from '@/components/dashboard/tours/TourSchedulingClient'
 import MonthNavClient from '@/components/dashboard/tours/MonthNavClient'
 import TourInteractionClient from '@/components/dashboard/tours/TourInteractionClient'
@@ -274,6 +275,14 @@ export default async function ToursPage({
           and refreshes the page on any event. `router.refresh()` preserves
           the current ?month=YYYY-MM search param so we stay on the same view. */}
       {venueId && <RealtimeToursLayer venueId={venueId} />}
+      {/* Phase 8O — independent realtime subscription on the
+          tour_status_events audit feed. When any audit row is inserted
+          for this venue (lead-token click, operator PATCH, admin
+          bulk-cancel, auto-pause cron), the layer fires a soft
+          "Tour activity recorded" toast and calls router.refresh()
+          so the audit drawer and Upcoming Tours list reflect the
+          latest state without manual reload. */}
+      {venueId && <RealtimeTourStatusLayer venueId={venueId} />}
     </div>
   )
 }

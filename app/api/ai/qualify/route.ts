@@ -6,6 +6,7 @@ import { verifyInternalRequest, INTERNAL_SIGNATURE_HEADER } from '@/lib/auth/int
 import { assertOwnsLead, OwnershipError } from '@/lib/auth/assert-ownership'
 import { SALES_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
+import { AnthropicNotConfiguredError } from '@/lib/anthropic'
 import { rateLimitAi, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -133,6 +134,13 @@ export async function POST(request: NextRequest) {
     reqLog.info({ leadId: lead_id, venueId }, 'ai.qualify.completed')
     return respond(NextResponse.json(result))
   } catch (err) {
+    // Configuration short-circuit — no Sentry capture, info-level only.
+    if (err instanceof AnthropicNotConfiguredError) {
+      reqLog.info({ leadId: lead_id, venueId }, 'ai.qualify.anthropic_not_configured')
+      return respond(
+        NextResponse.json({ error: 'anthropic_not_configured' }, { status: 503 })
+      )
+    }
     const message = err instanceof Error ? err.message : 'AI qualification failed'
     reqLog.error({ err, leadId: lead_id, venueId }, 'ai.qualify.failed')
     captureApiError(err, { requestId, route: '/api/ai/qualify', leadId: lead_id, venueId })

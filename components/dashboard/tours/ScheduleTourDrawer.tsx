@@ -63,6 +63,17 @@ interface ScheduleTourDrawerProps {
   /** Optional default body for the location notes textarea. */
   defaultNotes?: string
   /**
+   * Phase 8I — optional ISO datetime to seed the date + time inputs
+   * with. Useful for "re-schedule cancelled tour" flows where we want
+   * the operator to land on the OLD tour's slot as a starting point.
+   * Falls back to `nextTuesdayAtTenAm()` when omitted.
+   */
+  defaultScheduledAt?: string
+  /**
+   * Phase 8I — optional duration override (15–240). Falls back to 60.
+   */
+  defaultDurationMinutes?: number
+  /**
    * Called after a successful POST. Caller decides what to do — typically
    * `router.refresh()`. The drawer ALSO calls `router.refresh()` internally
    * so the realtime tours layer + the calendar both pick up the new row.
@@ -132,29 +143,58 @@ export default function ScheduleTourDrawer({
   leads,
   defaultLeadId,
   defaultNotes = '',
+  defaultScheduledAt,
+  defaultDurationMinutes,
   onScheduled,
 }: ScheduleTourDrawerProps) {
   const router = useRouter()
-  const seedDefaults = splitIsoToLocal(nextTuesdayAtTenAm())
+  // Phase 8I — accept optional defaults to seed the form for re-schedule
+  // flows. The fallback chain mirrors how the form re-seeds on re-open
+  // (see useEffect below) so initial render + re-open behavior agree.
+  const seedIso = defaultScheduledAt ?? nextTuesdayAtTenAm()
+  const seedDefaults = splitIsoToLocal(seedIso)
+  const seedDuration =
+    typeof defaultDurationMinutes === 'number' &&
+    defaultDurationMinutes >= 15 &&
+    defaultDurationMinutes <= 240
+      ? defaultDurationMinutes
+      : 60
   const [leadId, setLeadId] = useState<string>(defaultLeadId ?? leads[0]?.id ?? '')
   const [date, setDate] = useState<string>(seedDefaults.date)
   const [time, setTime] = useState<string>(seedDefaults.time)
-  const [duration, setDuration] = useState<number>(60)
+  const [duration, setDuration] = useState<number>(seedDuration)
   const [notes, setNotes] = useState<string>(defaultNotes)
   const [status, setStatus] = useState<SubmitState>({ kind: 'idle' })
 
   // Re-seed when the drawer re-opens (so a closed-and-re-opened drawer
-  // doesn't show stale state from the last submit).
+  // doesn't show stale state from the last submit). Phase 8I — same
+  // fallback chain as the initial render so a parent that toggles the
+  // drawer between "fresh tour" and "re-schedule cancelled" gets the
+  // right slot/duration each time it opens.
   useEffect(() => {
     if (!open) return
-    const seed = splitIsoToLocal(nextTuesdayAtTenAm())
+    const seedIsoOnOpen = defaultScheduledAt ?? nextTuesdayAtTenAm()
+    const seed = splitIsoToLocal(seedIsoOnOpen)
+    const durationOnOpen =
+      typeof defaultDurationMinutes === 'number' &&
+      defaultDurationMinutes >= 15 &&
+      defaultDurationMinutes <= 240
+        ? defaultDurationMinutes
+        : 60
     setLeadId(defaultLeadId ?? leads[0]?.id ?? '')
     setDate(seed.date)
     setTime(seed.time)
-    setDuration(60)
+    setDuration(durationOnOpen)
     setNotes(defaultNotes)
     setStatus({ kind: 'idle' })
-  }, [open, defaultLeadId, defaultNotes, leads])
+  }, [
+    open,
+    defaultLeadId,
+    defaultNotes,
+    defaultScheduledAt,
+    defaultDurationMinutes,
+    leads,
+  ])
 
   const canSubmit =
     status.kind !== 'submitting' &&

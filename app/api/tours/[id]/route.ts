@@ -9,6 +9,7 @@ import {
   sendTourNotificationEmail,
   type TourNotificationKind,
 } from '@/lib/integrations/tour-notifications'
+import { recordTourStatusEvent } from '@/lib/integrations/tour-status-events'
 import { z } from 'zod'
 
 const UpdateTourSchema = z.object({
@@ -20,6 +21,33 @@ const UpdateTourSchema = z.object({
   reminder_2h_sent: z.boolean().optional(),
   outcome: z.string().optional().nullable(),
 })
+
+/**
+ * Phase 8M — derive the audit action verb from a before/after pair.
+ * Returns null when nothing relevant changed (no audit row written).
+ *
+ * Status change always wins over scheduled_at change: a single PATCH
+ * that flips status AND moves the slot writes one row with the status
+ * verb, since the status flip is the operator-visible action.
+ */
+function deriveTourAuditAction(
+  before: { status: string | null; scheduled_at: string | null },
+  after: { status: string | null; scheduled_at: string | null }
+): string | null {
+  if (before.status !== after.status) {
+    if (after.status === 'cancelled') return 'cancel'
+    if (after.status === 'confirmed') return 'confirm'
+    return 'status_change'
+  }
+  if (
+    after.scheduled_at &&
+    before.scheduled_at &&
+    after.scheduled_at !== before.scheduled_at
+  ) {
+    return 'reschedule'
+  }
+  return null
+}
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const requestId = getOrCreateRequestId(request)
@@ -34,9 +62,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   // Phase 8G — also pull current `status` + `scheduled_at` so we can derive
   // the notification kind (rescheduled vs confirmed vs cancelled) after the
   // update lands.
+  // Phase 8M widens the pre-fetch with `duration_minutes` so the unified
+  // status-event audit can record the duration diff in metadata.
   const { data: tourRow } = await supabase
     .from('tours')
-    .select('id, venue_id, lead_id, status, scheduled_at')
+    .select('id, venue_id, lead_id, status, scheduled_at, duration_minutes')
     .eq('id', id)
     .maybeSingle()
   if (!tourRow) return respond(NextResponse.json({ error: 'Tour not found' }, { status: 404 }))
@@ -45,6 +75,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     lead_id: string | null
     status: string | null
     scheduled_at: string | null
+    duration_minutes: number | null
   }
   const venueId = tourBefore.venue_id
 
@@ -86,6 +117,49 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (error) {
     captureApiError(error, { requestId, route: '/api/tours/[id]', tourId: id, userId: user.id, venueId })
     return respond(NextResponse.json({ error: error.message }, { status: 500 }))
+  }
+
+  // Phase 8M — unified status-event audit. Operator-driven PATCH writes
+  // here whenever status or scheduled_at actually changed. Derivation
+  // matches what we already use for notification routing in the Phase 8G
+  // helper below, but the audit covers a wider set of transitions:
+  //   - status change to cancelled         → 'cancel'
+  //   - status change to confirmed         → 'confirm'
+  //   - any other status change            → 'status_change'
+  //   - scheduled_at change with no status → 'reschedule'
+  //   - nothing relevant changed           → no audit row written
+  const afterForAudit = data as {
+    id: string
+    lead_id: string | null
+    status: string | null
+    scheduled_at: string | null
+    duration_minutes: number | null
+  }
+  const auditAction = deriveTourAuditAction(
+    { status: tourBefore.status, scheduled_at: tourBefore.scheduled_at },
+    { status: afterForAudit.status, scheduled_at: afterForAudit.scheduled_at }
+  )
+  if (auditAction) {
+    void recordTourStatusEvent({
+      venueId,
+      tourId: afterForAudit.id,
+      leadId: afterForAudit.lead_id,
+      actorKind: 'operator',
+      actorId: user.id,
+      action: auditAction,
+      previousStatus: tourBefore.status,
+      newStatus: afterForAudit.status ?? 'unknown',
+      metadata: {
+        route: '/api/tours/[id]',
+        scheduled_at_before: tourBefore.scheduled_at,
+        scheduled_at_after: afterForAudit.scheduled_at,
+        duration_before: tourBefore.duration_minutes,
+        duration_after: afterForAudit.duration_minutes,
+      },
+      requestId,
+    }).catch(() => {
+      /* swallowed — helper already logs + Sentry-captures */
+    })
   }
 
   // If completed, update lead stage

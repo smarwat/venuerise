@@ -1,6 +1,7 @@
 import 'server-only'
 import { inngest } from '../client'
 import { createServiceClient } from '@/lib/supabase/service'
+import { recordTourStatusEvent } from '@/lib/integrations/tour-status-events'
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
 
@@ -107,6 +108,11 @@ interface RunSummary {
   cancelled_tours: number
   skipped: number
   failed: number
+  // Phase 8M — non-fatal counter for unified status-event audit misses.
+  // Incremented when an audit insert fails for a tour we already cancelled.
+  // Does NOT count toward `failed` (the cron's primary action still
+  // succeeded); operators monitor it separately.
+  audit_failed: number
 }
 
 interface TourPauseHistoryEntry {
@@ -252,6 +258,7 @@ async function runAutoPauseScan(): Promise<RunSummary> {
     cancelled_tours: 0,
     skipped: 0,
     failed: 0,
+    audit_failed: 0,
   }
   const supabase = createServiceClient()
   const now = new Date()
@@ -312,24 +319,63 @@ async function runAutoPauseScan(): Promise<RunSummary> {
     const archive = extractPriorPausePair(sub.metadata)
     const isRearm = archive !== null
 
-    // Cancel future scheduled/confirmed tours.
+    // Cancel future scheduled/confirmed tours. Phase 8M: we pre-fetch
+    // the candidate rows (id + lead_id + status) BEFORE the UPDATE so
+    // we can record `previous_status` + `lead_id` in the audit feed
+    // per cancelled tour. The UPDATE re-asserts the eligible status set
+    // to avoid clobbering rows that flipped between SELECT + UPDATE.
     let cancelledCount = 0
+    let auditRows: Array<{ id: string; lead_id: string | null; status: string }> = []
     try {
-      const { data: cancelledRaw, error: cancelErr } = await supabase
+      const { data: candidatesRaw, error: candErr } = await supabase
         .from('tours')
-        .update({ status: 'cancelled' })
+        .select('id, lead_id, status')
         .eq('venue_id', sub.venue_id)
         .in('status', ['scheduled', 'confirmed'])
         .gt('scheduled_at', now.toISOString())
-        .select('id')
 
-      if (cancelErr) {
-        subLog.error({ err: cancelErr }, 'jobs.billing_tour_auto_pause.cancel_failed')
-        captureJobError('billing-tour-auto-pause', cancelErr, { venueId: sub.venue_id })
+      if (candErr) {
+        subLog.error({ err: candErr }, 'jobs.billing_tour_auto_pause.candidate_query_failed_per_venue')
+        captureJobError('billing-tour-auto-pause', candErr, { venueId: sub.venue_id })
         summary.failed++
         continue
       }
-      cancelledCount = (cancelledRaw as Array<{ id: string }> | null)?.length ?? 0
+
+      const candidates =
+        ((candidatesRaw ?? []) as Array<{
+          id: string
+          lead_id: string | null
+          status: string
+        }>)
+
+      if (candidates.length === 0) {
+        // No future tours to cancel. We still want the pause stamp to
+        // land (count = 0) so the banner reflects "billing paused" even
+        // when no actual cancellations were needed.
+        cancelledCount = 0
+        auditRows = []
+      } else {
+        const ids = candidates.map((c) => c.id)
+        const { data: cancelledRaw, error: cancelErr } = await supabase
+          .from('tours')
+          .update({ status: 'cancelled' })
+          .in('id', ids)
+          .in('status', ['scheduled', 'confirmed'])
+          .gt('scheduled_at', now.toISOString())
+          .select('id')
+
+        if (cancelErr) {
+          subLog.error({ err: cancelErr }, 'jobs.billing_tour_auto_pause.cancel_failed')
+          captureJobError('billing-tour-auto-pause', cancelErr, { venueId: sub.venue_id })
+          summary.failed++
+          continue
+        }
+        const cancelledIds = new Set(
+          ((cancelledRaw ?? []) as Array<{ id: string }>).map((r) => r.id)
+        )
+        cancelledCount = cancelledIds.size
+        auditRows = candidates.filter((c) => cancelledIds.has(c.id))
+      }
     } catch (err) {
       subLog.error({ err }, 'jobs.billing_tour_auto_pause.cancel_threw')
       captureJobError('billing-tour-auto-pause', err, { venueId: sub.venue_id })
@@ -388,6 +434,38 @@ async function runAutoPauseScan(): Promise<RunSummary> {
       )
     }
     summary.paused++
+
+    // Phase 8M — write one unified status-event audit row per cancelled
+    // tour. Sequential (not parallel) because typical past-due venues
+    // have a small handful of future tours; the overhead is negligible
+    // and serial calls keep error attribution simple in logs. Audit
+    // failures are non-fatal and surface in `summary.audit_failed`.
+    for (const row of auditRows) {
+      const result = await recordTourStatusEvent({
+        venueId: sub.venue_id,
+        tourId: row.id,
+        leadId: row.lead_id,
+        actorKind: 'cron',
+        actorId: 'billing-tour-auto-pause',
+        action: 'auto_pause_cancel',
+        previousStatus: row.status,
+        newStatus: 'cancelled',
+        reason: 'past_due_7_days',
+        metadata: {
+          subscription_id: sub.id,
+          current_period_end: sub.current_period_end,
+          tours_paused_at: pausedAtIso,
+          auto_pause_run: true,
+          rearm: isRearm,
+        },
+      })
+      if (!result.ok) {
+        // Already logged + Sentry-captured inside the helper. We just
+        // count it here so the run summary surfaces a non-zero value
+        // for operators to spot a pattern across runs.
+        summary.audit_failed++
+      }
+    }
     summary.cancelled_tours += cancelledCount
   }
 
