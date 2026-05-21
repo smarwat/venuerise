@@ -595,7 +595,10 @@ export async function generateInstantLeadResponse(
   // deterministic floor.
   const heuristicScore = computeHeuristicConfidence(responseText)
   const finalConfidence = computeFinalConfidence(modelConfidence, heuristicScore)
-  const heuristicConfidence: number | null = heuristicScore
+  // `computeHeuristicConfidence` always returns a number (0..100), so
+  // the result type is `number`, not `number | null`. The original
+  // annotation was misleading — fixed during the hardening pass.
+  const heuristicConfidence: number = heuristicScore
 
   // ── Risk flags + autopilot decision ────────────────────────────────
   const riskFlags = detectDraftRiskFlags(responseText)
