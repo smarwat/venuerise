@@ -400,6 +400,8 @@ Catalog entry: `adminIntegrations.leadForwardingTest`.
 |---|---|---|---|
 | `/api/integrations/meta/webhook` | GET/POST | `rateLimitWidget` | `widget:<ip>` (Phase 8BE catalog entry `inboundChannel.metaWebhook`) |
 | `/api/admin/integrations/meta/test-parse` | POST | `rateLimitUserAction` | `admin:integrations:meta:webhook-test:<userId>` |
+| `/api/integrations/meta/oauth/start` | GET | `rateLimitUserAction` | `admin:integrations:meta:oauth-start:<userId>` |
+| `/api/integrations/meta/oauth/callback` | GET | `rateLimitUserAction` | `admin:integrations:meta:oauth-callback:<userId>` |
 
 The public webhook keeps the per-IP throttle even after
 signature verification — Meta retries are bursty and a

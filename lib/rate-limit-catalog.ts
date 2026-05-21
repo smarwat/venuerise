@@ -276,6 +276,18 @@ export const RATE_LIMIT_DOMAINS = {
     // Phase 8BF — admin Meta-webhook payload QA endpoint. Pure
     // parser run; no DB write. Strict per-user budget.
     metaWebhookTest:     'admin:integrations:meta:webhook-test',
+    // Phase GTM-Meta-OAuth — initiates Meta OAuth dialog redirect.
+    // Generates CSRF state, sets cookie, 302 to facebook.com.
+    // USER-scoped — a hammer-clicking operator only burns their
+    // own quota.
+    metaOauthStart:      'admin:integrations:meta:oauth-start',
+    // Phase GTM-Meta-OAuth — handles the OAuth callback. Validates
+    // CSRF state, exchanges code → tokens via Graph API, writes
+    // venue_channel_connections + meta_oauth_tokens rows. Slightly
+    // tighter than `start` because each call burns ~3 Graph API
+    // requests; an abusive caller could exhaust our rate budget
+    // with Meta if uncapped.
+    metaOauthCallback:   'admin:integrations:meta:oauth-callback',
   },
 
   // ── Public inbound channel forwarding (Phase 8BE) — IP+VENUE bucket.

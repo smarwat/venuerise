@@ -203,6 +203,19 @@ export const AUDIT_ACTIONS = {
 
   // ── Meta / Instagram / Facebook connector (Phase 8BF) ───────────────────
   META_WEBHOOK_TEST_PARSE: 'meta_webhook_test_parse',
+
+  // ── Meta OAuth (Phase GTM-Meta-OAuth) ──────────────────────────────────
+  // Distinct from `channel_connection_created` (the operator-typed
+  // manual connection row). These cover the OAuth-flow side: an
+  // operator initiated the Facebook OAuth dialog, came back from
+  // Meta with a code, exchanged it for tokens, and successfully
+  // (or unsuccessfully) persisted the long-lived Page Access Token
+  // in `meta_oauth_tokens`. Audit metadata records: scopes granted,
+  // page_ids connected, ig_business_account_ids — NEVER tokens.
+  CHANNEL_META_OAUTH_INITIATED: 'channel_meta_oauth_initiated',
+  CHANNEL_META_OAUTH_CONNECTED: 'channel_meta_oauth_connected',
+  CHANNEL_META_OAUTH_FAILED:    'channel_meta_oauth_failed',
+  CHANNEL_META_OAUTH_REVOKED:   'channel_meta_oauth_revoked',
 } as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS]

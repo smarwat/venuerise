@@ -309,6 +309,8 @@ accepted payload, which constitutes the forensic trail.
 |---|---|---|
 | `/api/integrations/meta/webhook` | GET/POST | AUDIT_EXEMPT — public webhook route. Successful verification + normalization leaves the forensic trail in `messages` + `external_messages` via the normalization helper. Failed signature/verification events are NOT audited (would spam the table on any internet noise); pino + Sentry capture them safely without the token/secret/body. |
 | `/api/admin/integrations/meta/test-parse` | POST | `meta_webhook_test_parse` |
+| `/api/integrations/meta/oauth/start` | GET | `channel_meta_oauth_initiated`. Admin-only. Metadata records state_token_prefix (16-char hex, not the full CSRF token) + scopes_requested. NEVER logs the state, the cookie payload, or the dialog URL. |
+| `/api/integrations/meta/oauth/callback` | GET | `channel_meta_oauth_connected` on success, `channel_meta_oauth_failed` on every error path (user denial, CSRF mismatch, tenant access denied, missing code, Graph API failure). Success metadata: pages_connected, ig_business_accounts_connected, granted_scopes, subscription_failures. Failure metadata: `outcome` field with reason code. NEVER logs the token, the code, the cookie, or Graph error bodies. |
 
 The test-parse audit row carries only parser-derived
 signals (`object_type`, `events_parsed`, `events_ignored`,

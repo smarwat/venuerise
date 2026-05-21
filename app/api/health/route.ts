@@ -349,6 +349,10 @@ interface HealthBody {
     instant_response_safety_gate: 'mounted'
     instant_response_settings: 'mounted'
     instant_response_auto_send_scaffold: 'scaffold-only'
+    meta_oauth_start: 'mounted'
+    meta_oauth_callback: 'mounted'
+    meta_oauth_token_storage: 'mounted'
+    meta_outbound_sending: 'scaffold-only'
   }
   uptime_ms: number
   ts: string
@@ -2384,6 +2388,37 @@ export async function GET(request: Request) {
       instant_response_safety_gate: 'mounted',
       instant_response_settings: 'mounted',
       instant_response_auto_send_scaffold: 'scaffold-only',
+      // Phase GTM-Meta-OAuth — Meta Messenger OAuth scaffold.
+      //   - meta_oauth_start: GET /api/integrations/meta/oauth/start
+      //     mounted. ADMIN_ROLES gated; generates CSRF state in
+      //     httpOnly cookie; 302 to Facebook OAuth dialog. Returns
+      //     503 meta_oauth_not_configured when META_APP_ID /
+      //     META_APP_SECRET / NEXT_PUBLIC_APP_URL are unset.
+      //   - meta_oauth_callback: GET /api/integrations/meta/oauth/
+      //     callback mounted. Validates state cookie in constant-
+      //     time; exchanges code → short-lived → long-lived user
+      //     token → Page tokens; writes venue_channel_connections
+      //     + meta_oauth_tokens; subscribes each Page to webhook
+      //     fields; redirects to /dashboard/settings/billing on
+      //     success or error.
+      //   - meta_oauth_token_storage: meta_oauth_tokens table
+      //     created (migration 038) with deny-all RLS so only the
+      //     service-role client can read tokens. Sanitizer on
+      //     venue_channel_connections.metadata explicitly rejects
+      //     token-shaped keys, so this dedicated table is the only
+      //     legitimate token home.
+      //   - meta_outbound_sending: SCAFFOLD-ONLY. The
+      //     `sendMetaMessage` helper is dual-gated on
+      //     `META_OUTBOUND_SENDING_ENABLED=true` env AND the caller
+      //     passing `confirmedAllowedToSend: true` — without BOTH it
+      //     throws MetaSendDisabledError. No code path wires it into
+      //     auto-send today. Enable only after Meta App Review.
+      //   - Routes live under /api/integrations/meta/oauth/*, NOT
+      //     under /api/admin/*, so ADMIN_ENDPOINT_COUNT is unchanged.
+      meta_oauth_start: 'mounted',
+      meta_oauth_callback: 'mounted',
+      meta_oauth_token_storage: 'mounted',
+      meta_outbound_sending: 'scaffold-only',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
