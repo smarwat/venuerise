@@ -4,3 +4,10 @@ out/
 .env.local
 .DS_Store
 *.tsbuildinfo
+
+# Playwright (Phase 9T)
+.auth/
+playwright-report/
+test-results/
+playwright/.cache/
+blob-report/

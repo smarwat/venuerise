@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-05-20T18:29:51.817Z",
+  "disclaimer": "This report is an internal evidence package and does not represent a third-party SOC 2 attestation. Formal SOC 2 requires an auditor, scoped system description, control design review, observation period, evidence collection, and exceptions/remediation. See docs/SOC2-EVIDENCE-MAP.md for the gap inventory.",
+  "summary": {
+    "total": 44,
+    "implemented": 28,
+    "partial": 11,
+    "manual": 5,
+    "unknown": 0,
+    "notApplicable": 0
+  },
+  "controlCount": 44
+}

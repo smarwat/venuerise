@@ -1,138 +1,146 @@
 'use client'
 
-import { motion, useMotionValue, useSpring, useTransform, useReducedMotion } from 'framer-motion'
-import { ArrowRight, Bell, Zap, Calendar, RefreshCw, ChevronRight, Activity, Check } from 'lucide-react'
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+  useReducedMotion,
+} from 'framer-motion'
+import {
+  ArrowRight,
+  Check,
+  Activity,
+  AlertTriangle,
+  Calendar,
+  MessageSquare,
+  type LucideIcon,
+} from 'lucide-react'
 import { useEffect } from 'react'
 import CTAButton from './ui/CTAButton'
 
-// Hero background image — served from public/hero-venue.jpg
+/**
+ * GTM-0B — Revenue OS hero.
+ *
+ * The previous hero pitched VenueRise as a "24/7 sales coordinator"
+ * that "responds in under 60 seconds" — both autonomy overclaims we
+ * can no longer back since the entire product posture is
+ * operator-approved drafts only (no autonomous sending).
+ *
+ * This rewrite frames the wedge:
+ *   "Stop losing weddings in the follow-up gap. AI Revenue OS that
+ *    connects your fragmented inquiry channels and shows where
+ *    revenue is leaking."
+ *
+ * The right-hand visual now stages three Revenue OS leak cards
+ * (Slow first reply / Qualified no tour / Tour pending confirm)
+ * pulled directly from the dashboard's actual surfaces so the
+ * preview matches what the buyer sees on the live demo.
+ */
+
 const HERO_BG = '/hero-venue.jpg'
 
 const trustSignals = [
-  "Built for venues that can't afford to miss a single high-intent inquiry",
-  'No setup fees',
-  'Live in 14 days',
-  'Works with your existing CRM.',
+  'AI drafts. Your team approves.',
+  'No autonomous sending.',
+  'Connects website, Instagram, The Knot, WeddingWire, Meta Ads.',
+  'Pilot setup in days, not quarters.',
 ]
 
-const partnerLogos = [
-  { label: 'the knot', cls: 'font-display italic text-[22px] font-medium' },
-  { label: 'WEDDING WIRE', cls: 'font-sans text-[13px] font-extrabold tracking-[0.18em] leading-[1.15]', stacked: true },
-  { label: 'ZOLA', cls: 'font-sans text-[26px] font-extrabold tracking-[0.22em]' },
-  { label: 'Google Reviews', google: true },
-  { label: 'BIZBASH', cls: 'font-sans text-[19px] font-extrabold tracking-[0.16em]' },
-  { label: 'WEDDING SPOT', cls: 'font-sans text-[13px] font-extrabold tracking-[0.18em] leading-[1.15]', stacked: true },
-  { label: 'JOY', cls: 'font-sans text-[22px] font-extrabold tracking-[0.34em]' },
-]
-
-function InquiryCard() {
+function LeakCard({
+  label,
+  count,
+  value,
+  tone,
+  icon: Icon,
+  helper,
+}: {
+  label: string
+  count: string
+  value?: string
+  tone: 'amber' | 'rose' | 'blue'
+  icon: LucideIcon
+  helper: string
+}) {
+  const toneClass = {
+    amber: 'bg-amber-50 text-amber-700 border-amber-200',
+    rose: 'bg-rose-50 text-rose-700 border-rose-200',
+    blue: 'bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE]',
+  }[tone]
   return (
-    <div className="bg-white rounded-2xl p-4 w-[300px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.55)] ring-1 ring-black/[0.04]">
+    <div className="bg-white rounded-2xl p-4 w-[300px] shadow-[0_24px_70px_-15px_rgba(0,0,0,0.6)] ring-1 ring-black/[0.04]">
       <div className="flex items-start gap-3">
-        <div className="w-9 h-9 rounded-full bg-[#1A6FFF]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <Bell className="w-4 h-4 text-[#1A6FFF]" strokeWidth={2} />
+        <div
+          className={`w-9 h-9 rounded-xl ${toneClass} border flex items-center justify-center shrink-0 mt-0.5`}
+        >
+          <Icon className="w-4 h-4" strokeWidth={2} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-bold text-[#1A6FFF] uppercase tracking-[0.14em]">New Inquiry</span>
-            <span className="text-[10px] text-[#94A3B8] tabular-nums">just now</span>
+          <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[#94A3B8]">
+            {label}
+          </p>
+          <div className="mt-1 flex items-baseline gap-2">
+            <span className="text-[22px] font-bold text-[#0A0A1A] tabular-nums leading-none">
+              {count}
+            </span>
+            {value && (
+              <span className="text-[12px] text-[#475569] tabular-nums">
+                {value}
+              </span>
+            )}
           </div>
-          <p className="text-[14px] font-semibold text-[#0A0A1A] mb-0.5">Sarah &amp; James Thompson</p>
-          <p className="text-[12px] text-[#64748B] mb-1.5">June 2026 · 180 guests · Saturday</p>
-          <p className="text-[12px] text-[#94A3B8] italic truncate">"We absolutely love your venue..."</p>
+          <p className="text-[11.5px] text-[#475569] mt-1 leading-relaxed">
+            {helper}
+          </p>
         </div>
       </div>
     </div>
   )
 }
 
-function PipelineCard() {
-  const rows = [
-    { label: 'Inquiries this week', value: '47', delta: '+12' },
-    { label: 'Tours booked', value: '12', delta: '+5' },
-    { label: 'Lead recovery rate', value: '34%', delta: '+8%' },
-  ]
+function RevenueAtRiskCard() {
   return (
-    <div className="bg-white rounded-2xl p-5 w-[340px] shadow-[0_24px_70px_-15px_rgba(0,0,0,0.6)] ring-1 ring-black/[0.04]">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-2xl p-5 w-[340px] shadow-[0_28px_80px_-20px_rgba(0,0,0,0.65)] ring-1 ring-black/[0.04]">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-[#1A6FFF]" strokeWidth={2} />
-          <p className="text-[13px] font-bold text-[#0A0A1A] uppercase tracking-[0.1em]">Pipeline · Live</p>
+          <Activity className="w-4 h-4 text-[#1D4ED8]" strokeWidth={2} />
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#0A0A1A]">
+            Pipeline at risk
+          </p>
         </div>
-        <span className="status-dot" aria-hidden="true" />
+        <span className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-semibold">
+          Demo
+        </span>
       </div>
-      <div className="space-y-3.5">
-        {rows.map((r, i) => (
-          <motion.div
-            key={r.label}
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 1.2 + i * 0.1, duration: 0.5 }}
-            className="flex items-center justify-between"
-          >
-            <span className="text-[13px] text-[#475569]">{r.label}</span>
-            <div className="flex items-baseline gap-2">
-              <span className="text-[15px] font-bold text-[#0A0A1A] tabular-nums">{r.value}</span>
-              <span className="text-[11px] font-semibold text-emerald-600 tabular-nums">{r.delta}</span>
-            </div>
-          </motion.div>
-        ))}
+      <div className="flex items-baseline gap-2">
+        <span className="text-[34px] font-bold text-[#0A0A1A] tracking-[-0.02em] tabular-nums leading-none">
+          $124k
+        </span>
+        <span className="text-[12px] text-[#475569]">est. at-risk pipeline</span>
       </div>
-    </div>
-  )
-}
-
-function BookingCard() {
-  return (
-    <div className="bg-white rounded-2xl p-4 w-[280px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.55)] ring-1 ring-black/[0.04]">
-      <div className="flex items-center gap-2 mb-2.5">
-        <Calendar className="w-3.5 h-3.5 text-[#1A6FFF]" />
-        <span className="text-[11px] font-bold text-[#1A6FFF] uppercase tracking-[0.12em]">Tour Booked</span>
-        <ChevronRight className="w-3.5 h-3.5 text-[#94A3B8] ml-auto" />
-      </div>
-      <p className="text-[16px] font-bold text-[#0A0A1A] mb-0.5 font-display tracking-[-0.01em]">Saturday, March 22</p>
-      <p className="text-[12px] text-[#94A3B8] mb-3">2:00 PM · Auto-confirmed</p>
-      <div className="flex items-center gap-1.5">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-        <span className="text-[12px] text-emerald-700 font-medium">Confirmed</span>
-      </div>
-    </div>
-  )
-}
-
-function ResponseFollowUpCard() {
-  return (
-    <div className="bg-white rounded-2xl w-[300px] shadow-[0_24px_70px_-15px_rgba(0,0,0,0.6)] ring-1 ring-black/[0.04] overflow-hidden">
-      {/* Response Sent block */}
-      <div className="p-4 pb-3.5">
-        <div className="flex items-center gap-2 mb-2.5">
-          <div className="w-6 h-6 rounded-full bg-emerald-50 flex items-center justify-center">
-            <Zap className="w-3 h-3 text-emerald-600" strokeWidth={2.5} />
-          </div>
-          <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-[0.12em]">
-            Response Sent
-          </span>
-          <span className="ml-auto status-dot" aria-hidden="true" />
+      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-[11.5px]">
+        <div className="flex justify-between">
+          <span className="text-[#475569]">Slow replies</span>
+          <span className="font-semibold text-[#0A0A1A] tabular-nums">5</span>
         </div>
-        <div className="flex items-baseline gap-1.5 mb-0.5">
-          <span className="text-[28px] font-bold text-[#0A0A1A] font-display tabular-nums leading-none">38</span>
-          <span className="text-[14px] text-[#64748B]">seconds</span>
+        <div className="flex justify-between">
+          <span className="text-[#475569]">No tour</span>
+          <span className="font-semibold text-[#0A0A1A] tabular-nums">3</span>
         </div>
-        <p className="text-[12px] text-[#94A3B8]">Personalized reply delivered</p>
+        <div className="flex justify-between">
+          <span className="text-[#475569]">Recovery</span>
+          <span className="font-semibold text-[#0A0A1A] tabular-nums">4</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-[#475569]">Confirm tour</span>
+          <span className="font-semibold text-[#0A0A1A] tabular-nums">2</span>
+        </div>
       </div>
-
-      {/* Soft divider */}
-      <div className="h-px bg-[#F1F5F9] mx-4" />
-
-      {/* Follow-up Active block */}
-      <div className="px-4 py-3.5 flex items-center gap-3">
-        <div className="w-8 h-8 rounded-full bg-[#1A6FFF]/10 flex items-center justify-center flex-shrink-0">
-          <RefreshCw className="w-3.5 h-3.5 text-[#1A6FFF]" strokeWidth={2} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold text-[#0A0A1A] leading-tight">Follow-up Active</p>
-          <p className="text-[11px] text-[#94A3B8] mt-0.5">7-day sequence · 4 touches left</p>
-        </div>
+      <div className="mt-3 pt-3 border-t border-[#F1F5F9] flex items-center justify-between text-[11px]">
+        <span className="text-[#475569]">Top source</span>
+        <span className="font-semibold text-[#047857]">
+          Google Ads · ~$42k booked
+        </span>
       </div>
     </div>
   )
@@ -146,33 +154,14 @@ function TrustCheck() {
   )
 }
 
-function GoogleReviewsMark() {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <span className="text-[16px] font-medium tracking-tight leading-tight">Google</span>
-      <div className="flex items-center gap-[1.5px]">
-        {[0, 1, 2, 3, 4].map((i) => (
-          <svg key={i} width="11" height="11" viewBox="0 0 24 24" fill="#F5C518">
-            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-          </svg>
-        ))}
-      </div>
-      <span className="text-[9px] tracking-[0.18em] uppercase font-semibold opacity-80">Reviews</span>
-    </div>
-  )
-}
-
 export default function Hero() {
   const reduced = useReducedMotion()
-
   const mouseX = useMotionValue(0)
   const mouseY = useMotionValue(0)
   const px = useSpring(mouseX, { stiffness: 60, damping: 22 })
   const py = useSpring(mouseY, { stiffness: 60, damping: 22 })
-
   const bgX = useTransform(px, (v) => v * -14)
   const bgY = useTransform(py, (v) => v * -8)
-
   const c1X = useTransform(px, (v) => v * -10)
   const c1Y = useTransform(py, (v) => v * -10)
   const c2X = useTransform(px, (v) => v * 14)
@@ -197,7 +186,6 @@ export default function Hero() {
       id="hero"
       className="relative min-h-[920px] lg:min-h-screen flex items-stretch pt-16 overflow-hidden bg-[#0A0F1F]"
     >
-      {/* Cinematic background image with subtle parallax */}
       <motion.div
         style={{ x: bgX, y: bgY }}
         className="absolute -inset-6 z-0 will-change-transform"
@@ -209,7 +197,6 @@ export default function Hero() {
         />
       </motion.div>
 
-      {/* Atmospheric overlays — left dim for text contrast + vignette */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-r from-[#070B1A]/92 via-[#070B1A]/55 to-[#070B1A]/15" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#070B1A]/30 via-transparent to-[#070B1A]/75" />
@@ -218,10 +205,8 @@ export default function Hero() {
         <div className="absolute inset-0 shadow-[inset_0_0_180px_60px_rgba(7,11,26,0.65)]" />
       </div>
 
-      {/* Main content */}
-      <div className="relative z-10 w-full max-w-[1320px] mx-auto px-4 sm:px-6 lg:px-10 pt-20 pb-44 lg:pt-24 lg:pb-44">
+      <div className="relative z-10 w-full max-w-[1320px] mx-auto px-4 sm:px-6 lg:px-10 pt-20 pb-24 lg:pt-24 lg:pb-32">
         <div className="grid lg:grid-cols-[1.1fr_1fr] gap-10 lg:gap-12 items-start">
-          {/* Left: Copy */}
           <div className="pt-2">
             <motion.div
               initial={{ opacity: 0, y: 12 }}
@@ -230,31 +215,30 @@ export default function Hero() {
               className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-[#4D90FF]/35 bg-[#1A6FFF]/[0.10] backdrop-blur-md text-[#9BBEFF] text-[11px] font-bold uppercase tracking-[0.18em] mb-7"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[#4D90FF] animate-pulse" />
-              Revenue Operations · Built for Wedding Venues
+              AI Revenue OS · Built for Wedding Venues
             </motion.div>
 
             <motion.h1
               initial={{ opacity: 0, y: 24 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.75, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
-              className="font-display text-[56px] sm:text-[72px] lg:text-[88px] xl:text-[100px] font-bold text-white leading-[0.98] tracking-[-0.028em] mb-7 drop-shadow-[0_6px_30px_rgba(0,0,0,0.55)]"
+              className="font-display text-[52px] sm:text-[68px] lg:text-[84px] xl:text-[92px] font-bold text-white leading-[1.0] tracking-[-0.028em] mb-7 drop-shadow-[0_6px_30px_rgba(0,0,0,0.55)]"
             >
-              <span className="block">Your next</span>
-              <span className="block">booking may</span>
-              <span className="block">
-                already be <em className="italic font-semibold text-[#4D90FF]">in</em>
-              </span>
-              <span className="block text-[#4D90FF] not-italic">your inbox.</span>
+              <span className="block">Stop losing</span>
+              <span className="block">weddings in the</span>
+              <span className="block text-[#4D90FF] not-italic">follow-up gap.</span>
             </motion.h1>
 
             <motion.p
               initial={{ opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.65, delay: 0.25 }}
-              className="text-[17px] lg:text-[18px] text-white/78 leading-[1.6] mb-8 max-w-[520px] drop-shadow-[0_2px_12px_rgba(0,0,0,0.5)]"
+              className="text-[17px] lg:text-[18px] text-white/82 leading-[1.6] mb-8 max-w-[560px] drop-shadow-[0_2px_12px_rgba(0,0,0,0.5)]"
             >
-              VenueRise responds to every inquiry in under 60 seconds, qualifies leads automatically,
-              and recovers the ones your team would have lost — like a 24/7 sales coordinator for your pipeline.
+              VenueRise is an AI Revenue OS for wedding venues. It
+              connects your website, Instagram, The Knot, WeddingWire,
+              Meta Ads, and inbox inquiries into one revenue dashboard,
+              then shows which leads need action before they go cold.
             </motion.p>
 
             <motion.div
@@ -263,21 +247,29 @@ export default function Hero() {
               transition={{ duration: 0.6, delay: 0.35 }}
               className="flex flex-col sm:flex-row gap-3 mb-10"
             >
-              <CTAButton href="#audit" variant="primary" size="lg">
-                Book a Free Venue Audit
+              <CTAButton href="/demo" variant="primary" size="lg">
+                Book a demo
                 <ArrowRight className="w-4 h-4" />
               </CTAButton>
               <CTAButton href="#how-it-works" variant="invert" size="lg">
-                See How It Works
+                See how it works
               </CTAButton>
             </motion.div>
 
-            {/* Trust signal pills — horizontal row of 4 */}
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5, duration: 0.55 }}
+              className="text-[12px] text-white/65 mb-6 max-w-[560px]"
+            >
+              AI drafts. Your team approves. No autonomous sending.
+            </motion.p>
+
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.55, duration: 0.6 }}
-              className="grid grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-3.5 max-w-[700px]"
+              className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5 max-w-[640px]"
             >
               {trustSignals.map((signal) => (
                 <div
@@ -291,11 +283,8 @@ export default function Hero() {
             </motion.div>
           </div>
 
-          {/* Right: Floating cards composition */}
+          {/* Right: leak cards composition */}
           <div className="relative hidden lg:block h-[620px] -mr-4">
-            {/* Right-column stack: Inquiry → Pipeline → Tour Booked */}
-
-            {/* Inquiry — top */}
             <motion.div
               initial={{ opacity: 0, x: 20, y: -8 }}
               animate={{ opacity: 1, x: 0, y: 0 }}
@@ -303,10 +292,15 @@ export default function Hero() {
               style={{ x: c1X, y: c1Y }}
               className="absolute top-0 right-0"
             >
-              <InquiryCard />
+              <LeakCard
+                label="Slow first reply"
+                count="5"
+                icon={MessageSquare}
+                tone="amber"
+                helper="Inquiries waiting > 1 hour for first response."
+              />
             </motion.div>
 
-            {/* Pipeline — middle, slightly offset left */}
             <motion.div
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -314,60 +308,44 @@ export default function Hero() {
               style={{ x: c2X, y: c2Y }}
               className="absolute top-[180px] right-[12px]"
             >
-              <PipelineCard />
+              <RevenueAtRiskCard />
             </motion.div>
 
-            {/* Tour Booked — bottom right */}
             <motion.div
               initial={{ opacity: 0, x: 20, y: 8 }}
               animate={{ opacity: 1, x: 0, y: 0 }}
               transition={{ delay: 1.4, duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
               style={{ x: c4X, y: c4Y }}
-              className="absolute top-[420px] right-[28px]"
+              className="absolute top-[440px] right-[28px]"
             >
-              <BookingCard />
+              <LeakCard
+                label="Tour pending confirm"
+                count="2"
+                icon={Calendar}
+                tone="blue"
+                helper="Scheduled tours that haven't been confirmed yet."
+              />
             </motion.div>
 
-            {/* Combined Response + Follow-up — floats in center, overlapping into hero copy area */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 1.15, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
               style={{ x: c3X, y: c3Y }}
-              className="absolute top-[320px] -left-32"
+              className="absolute top-[340px] -left-32"
             >
-              <ResponseFollowUpCard />
+              <LeakCard
+                label="Qualified, no tour"
+                count="3"
+                icon={AlertTriangle}
+                tone="rose"
+                helper="High-fit leads still waiting for a tour invite."
+              />
             </motion.div>
           </div>
         </div>
       </div>
 
-      {/* Trust logos strip — bottom of hero */}
-      <div className="absolute bottom-0 left-0 right-0 z-10 pb-8 pt-12 bg-gradient-to-t from-[#070B1A]/90 via-[#070B1A]/55 to-transparent">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10">
-          <p className="text-center text-[10.5px] tracking-[0.28em] font-bold text-white/55 uppercase mb-6">
-            Trusted by top venues nationwide
-          </p>
-          <div className="flex items-center justify-between gap-4 flex-wrap text-white/72">
-            {partnerLogos.map((logo) => (
-              <div
-                key={logo.label}
-                className="flex items-center justify-center min-w-0 flex-shrink-0 hover:text-white transition-colors duration-300"
-              >
-                {logo.google ? (
-                  <GoogleReviewsMark />
-                ) : (
-                  <span className={`${logo.cls} whitespace-pre-line text-center`}>
-                    {logo.stacked ? logo.label.split(' ').join('\n') : logo.label}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom transition to next section */}
       <div className="absolute bottom-0 left-0 right-0 h-[2px] z-20 bg-gradient-to-b from-transparent to-[#F4F7FF] pointer-events-none" />
     </section>
   )

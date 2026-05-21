@@ -49,6 +49,7 @@ export default function InvitationsTable({
   }
 
   async function handleRevoke(inv: TeamInvitation) {
+    // UI_INTERACTION_EXEMPT: admin-only team invitation revoke — native confirm is intentional friction.
     if (!window.confirm(`Revoke the invite to ${inv.email}?`)) return
     setBusy(inv.id, { kind: 'revoke' })
     try {

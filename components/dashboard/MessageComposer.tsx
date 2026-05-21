@@ -74,7 +74,17 @@ export default function MessageComposer({ conversationId, aiActive }: Props) {
 
       <div className="flex items-end gap-2">
         <div className="flex-1 flex items-center bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl pl-3 pr-2 py-1 focus-within:border-[#1D4ED8] focus-within:ring-[3px] focus-within:ring-[#3B82F6]/15 transition-all">
-          <button className="text-[#94A3B8] hover:text-[#1D4ED8] shrink-0 mr-2" title="Attach">
+          {/* Phase 9S — Attach + Voice are not yet wired. Honest fix:
+              disable + tooltip so the affordance doesn't look live.
+              When the upload + transcription paths ship, replace
+              `disabled` with the real `onClick`. */}
+          <button
+            type="button"
+            disabled
+            className="text-[#CBD5E1] cursor-not-allowed shrink-0 mr-2"
+            title="Attachments are not yet enabled"
+            aria-label="Attachments are not yet enabled"
+          >
             <Paperclip className="w-4 h-4" />
           </button>
           <textarea
@@ -85,7 +95,13 @@ export default function MessageComposer({ conversationId, aiActive }: Props) {
             rows={1}
             className="flex-1 bg-transparent outline-none text-[13px] text-[#0F172A] placeholder:text-[#94A3B8] resize-none py-2 max-h-[120px]"
           />
-          <button className="text-[#94A3B8] hover:text-[#1D4ED8] shrink-0 mx-1" title="Voice">
+          <button
+            type="button"
+            disabled
+            className="text-[#CBD5E1] cursor-not-allowed shrink-0 mx-1"
+            title="Voice input is not yet enabled"
+            aria-label="Voice input is not yet enabled"
+          >
             <Mic className="w-4 h-4" />
           </button>
           <button

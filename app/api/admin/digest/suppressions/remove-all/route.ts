@@ -9,6 +9,7 @@ import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
 import { recordDigestAuditEvent } from '@/lib/billing/digest-audit-events'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 
 /**
  * POST /api/admin/digest/suppressions/remove-all  (Phase 8AB)
@@ -280,6 +281,29 @@ export async function POST(request: NextRequest): Promise<Response> {
       requestId,
     })
   }
+
+  // Phase 9A — enterprise audit log. ONE summary row for the bulk
+  // operation (no per-member rows to keep the feed readable). The
+  // detail array is summarized in metadata; full per-member breakdown
+  // already lives in the Phase 8AC digest-specific audit table.
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/digest/suppressions/remove-all',
+    action: 'digest_suppression_remove_all',
+    targetTable: 'email_suppressions',
+    targetId: null,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      attempted_count: memberRows.length,
+      removed_count: removedCount,
+      operator_reason: reason ?? null,
+      scope: 'bulk',
+    },
+  })
 
   return respond(
     NextResponse.json({

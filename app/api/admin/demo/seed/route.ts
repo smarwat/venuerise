@@ -5,6 +5,8 @@ import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
 import { seedDemoVenue } from '@/lib/demo/demo-seed'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 
 /**
  * POST /api/admin/demo/seed (Phase 8A)
@@ -44,6 +46,24 @@ export async function POST(request: NextRequest) {
       requestId,
     })
     reqLog.info({ venueId, counts }, 'admin.demo.seed.completed')
+    // Phase 9B — enterprise audit. Demo seeding bulk-inserts
+    // fixture rows across multiple tables; the counts capture
+    // the magnitude. The seeder itself is idempotent so re-runs
+    // produce additional audit rows (one per re-seed action) —
+    // that's intentional, a re-seed IS an operator action.
+    void recordAuditEvent({
+      venueId,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/admin/demo/seed',
+      action: AUDIT_ACTIONS.DEMO_SEED,
+      targetTable: null,
+      targetId: null,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      metadata: { counts: counts as unknown as Record<string, unknown> },
+    })
     return respond(NextResponse.json({ success: true, ...counts }))
   } catch (err) {
     reqLog.error({ err, venueId }, 'admin.demo.seed.failed')

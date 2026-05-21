@@ -21,6 +21,18 @@ export default async function SettingsPage() {
     ? (await supabase.from('tour_availability').select('*').eq('venue_id', venue.id as string).order('day_of_week').order('start_time')).data ?? []
     : []
 
+  // Phase 8BC — hydrate blackout dates server-side so the
+  // Availability tab paints with the venue's existing blocked
+  // days. RLS scopes the read to sales-role members; ordering
+  // matches what the UI renders (earliest first).
+  const tourBlackouts = venue
+    ? (await supabase
+        .from('tour_blackouts')
+        .select('id, venue_id, blackout_date, reason, created_at')
+        .eq('venue_id', venue.id as string)
+        .order('blackout_date', { ascending: true })).data ?? []
+    : []
+
   return (
     <div className="p-6 lg:p-8 animate-slide-up">
       <PageHeader
@@ -31,6 +43,7 @@ export default async function SettingsPage() {
         venue={venue}
         knowledgeBase={knowledgeBase as Record<string, unknown>[]}
         tourAvailability={tourAvailability as Record<string, unknown>[]}
+        tourBlackouts={tourBlackouts as Record<string, unknown>[]}
       />
     </div>
   )

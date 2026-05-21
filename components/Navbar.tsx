@@ -5,10 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Menu, X, ArrowRight } from 'lucide-react'
 
 const navLinks = [
-  { label: 'How It Works', href: '#how-it-works' },
-  { label: 'Solutions', href: '#solutions' },
-  { label: 'Why VenueRise', href: '#why' },
-  { label: 'Results', href: '#roi' },
+  { label: 'Revenue leaks', href: '#leaks' },
+  { label: 'How it works', href: '#how-it-works' },
+  { label: 'Operator control', href: '#why' },
+  { label: 'Pilot', href: '#pilot' },
+  { label: 'FAQ', href: '#faq' },
 ]
 
 function VenueLogo() {
@@ -88,11 +89,10 @@ export default function Navbar() {
             {/* Desktop CTA */}
             <div className="hidden lg:flex items-center gap-3">
               <a
-                href="#audit"
-                onClick={(e) => handleScroll(e, '#audit')}
+                href="/demo"
                 className="flex items-center gap-2 px-5 py-2.5 bg-[#1A6FFF] text-white text-sm font-semibold rounded-xl hover:bg-[#1058D6] transition-all duration-200 hover:shadow-[0_6px_24px_rgba(26,111,255,0.45)]"
               >
-                Book Free Audit
+                Book a demo
                 <ArrowRight className="w-3.5 h-3.5" />
               </a>
             </div>
@@ -137,11 +137,10 @@ export default function Navbar() {
               ))}
               <div className="pt-3 mt-2 border-t border-black/[0.06]">
                 <a
-                  href="#audit"
-                  onClick={(e) => handleScroll(e, '#audit')}
+                  href="/demo"
                   className="flex items-center justify-center gap-2 w-full px-5 py-3 bg-[#1A6FFF] text-white font-semibold rounded-xl text-sm"
                 >
-                  Book Free Venue Audit
+                  Book a demo
                   <ArrowRight className="w-4 h-4" />
                 </a>
               </div>

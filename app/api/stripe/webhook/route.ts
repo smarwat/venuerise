@@ -1,3 +1,10 @@
+// webhook route — Stripe-initiated callback. `billing_events_log`
+// is the canonical forensic record (event id, type, payload,
+// handled state, replay history); duplicating into `audit_events`
+// would just double-store payloads we already keep verbatim
+// there. Operator-initiated replays via /api/admin/billing-events/[id]/replay
+// DO emit `audit_events` rows (Phase 9B). Documented in
+// docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import type Stripe from 'stripe'
 import { log } from '@/lib/log'

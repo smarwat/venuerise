@@ -22,9 +22,17 @@ interface KanbanColumnProps {
   stage: LeadStage
   leads: Lead[]
   onCardClick: (lead: Lead) => void
+  /** Phase 8AR — passed through to KanbanCard for the at-a-glance
+   *  Speed-to-Lead chip. Optional; defaults applied inside the card. */
+  slaMinutes?: number
 }
 
-export default function KanbanColumn({ stage, leads, onCardClick }: KanbanColumnProps) {
+export default function KanbanColumn({
+  stage,
+  leads,
+  onCardClick,
+  slaMinutes,
+}: KanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
   const cfg = STAGE_CONFIG[stage]
 
@@ -54,7 +62,12 @@ export default function KanbanColumn({ stage, leads, onCardClick }: KanbanColumn
       >
         <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
           {leads.map((lead) => (
-            <KanbanCard key={lead.id} lead={lead} onClick={onCardClick} />
+            <KanbanCard
+              key={lead.id}
+              lead={lead}
+              onClick={onCardClick}
+              slaMinutes={slaMinutes}
+            />
           ))}
         </SortableContext>
 

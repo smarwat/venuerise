@@ -1,118 +1,149 @@
 'use client'
 
-import { motion, useInView, useScroll, useTransform } from 'framer-motion'
+import { motion, useInView } from 'framer-motion'
 import { useRef } from 'react'
-import { Search, Settings2, Rocket, TrendingUp } from 'lucide-react'
+import { Inbox, Search, MessageSquare, BarChart3 } from 'lucide-react'
+
+/**
+ * GTM-0B — "How VenueRise works" — 4-step flow.
+ *
+ * Frame this as a layer that sits ON TOP of existing tools, not a
+ * replacement. The CRM/PMS question gets answered later in the FAQ;
+ * here we just describe the loop:
+ *
+ *   1. Unify  →  2. Detect  →  3. Draft  →  4. Track
+ */
 
 const steps = [
   {
+    icon: Inbox,
     number: '01',
+    title: 'Unify inquiries',
+    description:
+      'Website widget, Instagram DMs, Meta Lead Ads, The Knot, WeddingWire, and manual email get pulled into one inbox with source tracking.',
+    bullets: [
+      'Website embed + form widget',
+      'Manual + integrated channel routing',
+      'Per-source attribution stamped at intake',
+    ],
+  },
+  {
     icon: Search,
-    title: 'We audit your inquiry flow',
-    description:
-      'We map every step of your current pipeline — response times, drop-off points, follow-up gaps. You walk away with full visibility, even if you never work with us.',
-    detail: 'Free 30-min strategy session',
-  },
-  {
     number: '02',
-    icon: Settings2,
-    title: 'We build your venue system',
+    title: 'Detect revenue leaks',
     description:
-      'Custom response sequences, qualification logic, and follow-up cadence — tailored to your brand voice and sales process. Every message reviewed before launch.',
-    detail: '7–14 day build timeline',
+      'Revenue OS scans every lead against the gaps that quietly kill bookings: slow reply, high-fit idle, no tour booked, cold lead, reactivation candidate.',
+    bullets: [
+      'Slow first reply + cold lead recovery',
+      'Qualified-no-tour and tour-pending-confirm',
+      'Reactivation queue for lost-but-not-cold leads',
+    ],
   },
   {
+    icon: MessageSquare,
     number: '03',
-    icon: Rocket,
-    title: 'We launch and monitor live',
+    title: 'Draft the next best reply',
     description:
-      'Your system goes live. Every inquiry gets an instant, on-brand reply. Every lead enters a structured sequence. Your team focuses on tours, not chasing.',
-    detail: 'Live within two weeks',
+      'AI drafts brand-safe replies for tour invites, follow-ups, recovery, reactivation, and FAQs. Your team approves before anything goes out.',
+    bullets: [
+      'Brand voice + knowledge base guided drafts',
+      'Multiple variants per draft',
+      'Manual-required channels stay operator-sent',
+    ],
   },
   {
+    icon: BarChart3,
     number: '04',
-    icon: TrendingUp,
-    title: 'We optimize for booked tours',
+    title: 'Track booked-tour outcomes',
     description:
-      'We analyze which sequences book the most tours and refine timing, copy, and triggers monthly. Your system gets sharper every cycle.',
-    detail: 'Ongoing optimization included',
+      'Per-source pipeline, estimated booked value, and tour conversion rates show which channels and follow-ups actually move leads forward.',
+    bullets: [
+      'Attribution Performance + Booked Revenue by Source',
+      'Tour Booking + Speed-to-Lead roll-ups',
+      'Source-level leakage breakdown',
+    ],
   },
 ]
 
-export default function HowItWorks() {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const isInView = useInView(containerRef, { once: true, margin: '-80px' })
+const containerVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08 } },
+}
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] } },
+}
 
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ['start 70%', 'end 60%'],
-  })
-  const lineProgress = useTransform(scrollYProgress, [0, 1], ['0%', '100%'])
+export default function HowItWorks() {
+  const ref = useRef(null)
+  const isInView = useInView(ref, { once: true, margin: '-80px' })
 
   return (
-    <section id="how-it-works" className="relative py-24 lg:py-32 bg-white overflow-hidden">
-      <div className="noise-layer" />
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-black/[0.06] to-transparent" />
-
+    <section
+      id="how-it-works"
+      className="relative py-24 lg:py-32 bg-[#F4F7FF] overflow-hidden"
+    >
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-20">
-          <div className="section-label mx-auto w-fit">The Process</div>
+        <div className="max-w-2xl mb-16">
+          <div className="section-label">How VenueRise works</div>
           <h2 className="font-display text-[40px] sm:text-[52px] font-bold text-[#0A0A1A] leading-[1.05] tracking-[-0.02em] mb-6">
-            From audit to automation
-            <span className="block text-gradient">in four steps.</span>
+            A revenue loop that{' '}
+            <span className="text-gradient">sits on top of your tools.</span>
           </h2>
-          <p className="text-[#475569] text-[18px] leading-[1.6]">
-            We handle the complexity so your team can focus on what they do best — hosting unforgettable events.
+          <p className="text-[#475569] text-[18px] leading-[1.6] max-w-[640px]">
+            VenueRise doesn&rsquo;t replace your CRM, your event-management
+            software, or your inbox. It connects around them so your team
+            can see what&rsquo;s slipping and act on it.
           </p>
         </div>
 
-        <div ref={containerRef} className="relative">
-          {/* Connector line — desktop */}
-          <div className="hidden lg:block absolute top-[26px] left-[calc(12.5%+26px)] right-[calc(12.5%+26px)] h-[2px] bg-black/[0.06] rounded-full overflow-hidden">
-            <motion.div
-              style={{ width: lineProgress }}
-              className="h-full bg-gradient-to-r from-[#1A6FFF] to-[#5591FF] rounded-full"
-            />
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-10 lg:gap-6">
-            {steps.map((step, i) => {
-              const Icon = step.icon
-              return (
-                <motion.div
-                  key={step.number}
-                  initial={{ opacity: 0, y: 24 }}
-                  animate={isInView ? { opacity: 1, y: 0 } : {}}
-                  transition={{ duration: 0.6, delay: i * 0.1, ease: [0.22, 1, 0.36, 1] }}
-                  className="flex flex-col items-start lg:items-center text-left lg:text-center"
-                >
-                  <div className="relative mb-6">
-                    <div className="w-[54px] h-[54px] rounded-full bg-white border-[2px] border-[#1A6FFF]/30 flex items-center justify-center relative z-10 shadow-[0_0_0_8px_rgba(26,111,255,0.05)]">
-                      <Icon className="w-5 h-5 text-[#1A6FFF]" strokeWidth={1.85} />
-                    </div>
-                  </div>
-
-                  <span className="text-[11px] font-bold text-[#1A6FFF]/65 uppercase tracking-[0.14em] mb-2">
-                    Step {step.number}
+        <motion.div
+          ref={ref}
+          variants={containerVariants}
+          initial="hidden"
+          animate={isInView ? 'visible' : 'hidden'}
+          className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5"
+        >
+          {steps.map((step) => {
+            const Icon = step.icon
+            return (
+              <motion.div
+                key={step.number}
+                variants={itemVariants}
+                whileHover={{ y: -4 }}
+                transition={{ type: 'spring', stiffness: 280, damping: 22 }}
+                className="card-glass p-6 flex flex-col"
+              >
+                <div className="flex items-center gap-2.5 mb-4">
+                  <span className="text-[11px] font-bold text-[#1A6FFF] tabular-nums tracking-[0.16em]">
+                    {step.number}
                   </span>
-
-                  <h3 className="font-display text-[20px] font-semibold text-[#0A0A1A] mb-3 leading-snug tracking-[-0.01em] max-w-[260px]">
-                    {step.title}
-                  </h3>
-
-                  <p className="text-[14.5px] text-[#475569] leading-[1.6] mb-5 max-w-[280px]">
-                    {step.description}
-                  </p>
-
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#1A6FFF] uppercase tracking-[0.12em] border border-[#1A6FFF]/20 rounded-full px-3 py-1.5 bg-[#1A6FFF]/[0.04]">
-                    <span className="w-1 h-1 rounded-full bg-[#1A6FFF]" />
-                    {step.detail}
-                  </span>
-                </motion.div>
-              )
-            })}
-          </div>
-        </div>
+                  <div className="h-px flex-1 bg-[#E2E8F0]" />
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-[#EFF6FF] text-[#1D4ED8] flex items-center justify-center mb-4">
+                  <Icon className="w-5 h-5" strokeWidth={2} />
+                </div>
+                <h3 className="font-display text-[18px] font-semibold text-[#0A0A1A] mb-2.5 leading-snug tracking-[-0.01em]">
+                  {step.title}
+                </h3>
+                <p className="text-[13.5px] text-[#475569] leading-[1.6] mb-3">
+                  {step.description}
+                </p>
+                <ul className="mt-auto space-y-1.5">
+                  {step.bullets.map((b) => (
+                    <li
+                      key={b}
+                      className="text-[12px] text-[#64748B] flex items-start gap-1.5"
+                    >
+                      <span className="text-[#1A6FFF] mt-1 leading-none">·</span>
+                      <span>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            )
+          })}
+        </motion.div>
       </div>
     </section>
   )

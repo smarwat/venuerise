@@ -42,6 +42,12 @@ export interface Database {
           is_active: boolean
           created_at: string
           updated_at: string
+          // Phase 8AQ — Revenue OS settings live here (migration 023).
+          // Defaults to '{}'::jsonb at the DB level so existing rows
+          // don't need a backfill; readers go through
+          // lib/revenue-os/settings.ts which clamps + falls back to
+          // DEFAULT_REVENUE_OS_SETTINGS when missing/malformed.
+          metadata: Json
         }
         Insert: Omit<Database['public']['Tables']['venues']['Row'], 'id' | 'created_at' | 'updated_at'>
         Update: Partial<Database['public']['Tables']['venues']['Insert']>
@@ -62,6 +68,11 @@ export interface Database {
           source: string
           ai_active: boolean
           notes: string | null
+          // Phase 8BD — opaque per-lead jsonb. The known sub-key
+          // today is `metadata.lost_reason` (see
+          // `lib/revenue-os/reactivation.ts`). Future phases may
+          // add other namespaces under the same column.
+          metadata: Json
           created_at: string
           updated_at: string
         }
@@ -144,6 +155,17 @@ export interface Database {
           success: boolean
           error_message: string | null
           created_at: string
+          // Phase 8AJ — operator rejection markers (migration 020).
+          // Nullable; populated by PATCH /api/ai/actions/[id]/reject
+          // from the LeadDetailDrawer Reject button.
+          rejected_at: string | null
+          rejected_by: string | null
+          // Phase 8AM — variant memory (migration 021). Defaults to
+          // '{}'::jsonb at the DB level so existing rows don't need a
+          // backfill. /api/ai/draft writes
+          // { variant_count, variants_offered[], selected_by_default,
+          //   instruction } here on successful regeneration.
+          metadata: Json
         }
         Insert: Omit<Database['public']['Tables']['ai_actions']['Row'], 'id' | 'created_at'>
         Update: Partial<Database['public']['Tables']['ai_actions']['Insert']>

@@ -2,149 +2,221 @@
 
 import { motion, useInView } from 'framer-motion'
 import { useRef } from 'react'
-import { Mail, BrainCircuit, CalendarCheck, MessageSquare, Database } from 'lucide-react'
+import Link from 'next/link'
+import {
+  AlertTriangle,
+  ArrowRight,
+  Calendar,
+  MessageSquare,
+  RefreshCw,
+  Sparkles,
+  TrendingUp,
+} from 'lucide-react'
 
-const steps = [
-  {
-    icon: Mail,
-    label: 'Inquiry received',
-    sub: 'Sarah & James · June 2026',
-    color: 'text-sky-600',
-    bg: 'bg-sky-50',
-    border: 'border-sky-200',
-  },
-  {
-    icon: BrainCircuit,
-    label: 'Lead qualified',
-    sub: 'Budget · Date · Guest count',
-    color: 'text-violet-600',
-    bg: 'bg-violet-50',
-    border: 'border-violet-200',
-  },
-  {
-    icon: CalendarCheck,
-    label: 'Tour booked',
-    sub: 'Sat March 22 · 2:00 PM',
-    color: 'text-emerald-600',
-    bg: 'bg-emerald-50',
-    border: 'border-emerald-200',
-  },
+/**
+ * GTM-0B — Demo dashboard preview section.
+ *
+ * Static marketing mock of the Revenue OS dashboard. Numbers are
+ * illustrative — they match the GTM-0A demo seed so a buyer who
+ * lands in a real demo sees the same shape.
+ *
+ * Hard rule: this section MUST NOT call the database. It's a
+ * public marketing surface; no fetch, no auth, no Supabase.
+ */
+
+const leakBuckets = [
   {
     icon: MessageSquare,
-    label: 'Follow-up sent',
-    sub: '7-day nurture sequence',
-    color: 'text-amber-600',
-    bg: 'bg-amber-50',
-    border: 'border-amber-200',
+    label: 'Slow replies',
+    count: 5,
+    helper: 'Inquiries waiting > 1 hour',
+    tone: 'amber',
   },
   {
-    icon: Database,
-    label: 'CRM updated',
-    sub: 'Pipeline · Stage · Notes',
-    color: 'text-[#1A6FFF]',
-    bg: 'bg-[#EEF4FF]',
-    border: 'border-[#1A6FFF]/25',
+    icon: AlertTriangle,
+    label: 'Qualified, no tour',
+    count: 3,
+    helper: 'High-fit leads needing a tour invite',
+    tone: 'rose',
   },
-]
+  {
+    icon: RefreshCw,
+    label: 'Recovery candidates',
+    count: 4,
+    helper: 'Warm leads that went quiet',
+    tone: 'violet',
+  },
+  {
+    icon: Calendar,
+    label: 'Tours to confirm',
+    count: 2,
+    helper: 'Scheduled, still unconfirmed',
+    tone: 'blue',
+  },
+] as const
+
+const sourceRows = [
+  { label: 'Google Ads',  booked: '$42k', leads: 6 },
+  { label: 'The Knot',    booked: '$27k', leads: 4 },
+  { label: 'Referral',    booked: '$21k', leads: 3 },
+  { label: 'Instagram',   booked: '—',    leads: 5 },
+  { label: 'WeddingWire', booked: '—',    leads: 3 },
+] as const
+
+const TONE_CLASSES: Record<'amber' | 'rose' | 'violet' | 'blue', string> = {
+  amber: 'bg-amber-50 text-amber-700 border-amber-200',
+  rose: 'bg-rose-50 text-rose-700 border-rose-200',
+  violet: 'bg-violet-50 text-violet-700 border-violet-200',
+  blue: 'bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE]',
+}
 
 export default function DemoPreview() {
   const ref = useRef(null)
   const isInView = useInView(ref, { once: true, margin: '-80px' })
 
   return (
-    <section className="relative py-24 lg:py-32 bg-white overflow-hidden">
+    <section id="demo-preview" className="relative py-24 lg:py-32 bg-white overflow-hidden">
       <div className="noise-layer" />
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-black/[0.06] to-transparent" />
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-2xl mx-auto mb-16">
-          <div className="section-label mx-auto w-fit">See It In Action</div>
-          <h2 className="font-display text-[40px] sm:text-[52px] font-bold text-[#0A0A1A] leading-[1.05] tracking-[-0.02em] mb-6">
-            From inquiry to booked tour —
-            <span className="block text-gradient">fully automated.</span>
-          </h2>
-          <p className="text-[#475569] text-[18px] leading-[1.6]">
-            Watch how a single inquiry flows through the VenueRise system without a manual action from your team.
-          </p>
-        </div>
-
-        <div ref={ref} className="relative">
-          {/* Desktop: horizontal */}
-          <div className="hidden lg:flex items-start justify-between gap-3 relative">
-            <div className="absolute top-[26px] left-[8%] right-[8%] h-[2px] bg-black/[0.06] rounded-full" />
-            <motion.div
-              initial={{ scaleX: 0 }}
-              animate={isInView ? { scaleX: 1 } : {}}
-              transition={{ duration: 1.5, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              style={{ transformOrigin: 'left' }}
-              className="absolute top-[26px] left-[8%] right-[8%] h-[2px] bg-gradient-to-r from-sky-400 via-emerald-400 to-[#1A6FFF] rounded-full"
-            />
-
-            {steps.map((step, i) => {
-              const Icon = step.icon
-              return (
-                <div key={step.label} className="flex flex-col items-center text-center flex-1">
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.65 }}
-                    animate={isInView ? { opacity: 1, scale: 1 } : {}}
-                    transition={{ duration: 0.5, delay: 0.4 + i * 0.14, ease: [0.22, 1, 0.36, 1] }}
-                    className={`relative w-[54px] h-[54px] rounded-full ${step.bg} border ${step.border} flex items-center justify-center mb-5 z-10 shadow-md`}
-                  >
-                    <Icon className={`w-5 h-5 ${step.color}`} strokeWidth={1.85} />
-                  </motion.div>
-
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={isInView ? { opacity: 1, y: 0 } : {}}
-                    transition={{ duration: 0.45, delay: 0.55 + i * 0.14 }}
-                  >
-                    <p className={`text-[14px] font-semibold ${step.color} mb-1`}>{step.label}</p>
-                    <p className="text-[12px] text-[#94A3B8]">{step.sub}</p>
-                  </motion.div>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Mobile: vertical */}
-          <div className="flex lg:hidden flex-col gap-0">
-            {steps.map((step, i) => {
-              const Icon = step.icon
-              return (
-                <div key={step.label}>
-                  <motion.div
-                    initial={{ opacity: 0, x: -14 }}
-                    animate={isInView ? { opacity: 1, x: 0 } : {}}
-                    transition={{ duration: 0.5, delay: i * 0.1 }}
-                    className="flex items-center gap-4 py-4"
-                  >
-                    <div
-                      className={`flex-shrink-0 w-12 h-12 rounded-full ${step.bg} border ${step.border} flex items-center justify-center shadow-sm`}
-                    >
-                      <Icon className={`w-5 h-5 ${step.color}`} strokeWidth={1.85} />
-                    </div>
-                    <div>
-                      <p className={`text-[14px] font-semibold ${step.color}`}>{step.label}</p>
-                      <p className="text-[12px] text-[#94A3B8]">{step.sub}</p>
-                    </div>
-                  </motion.div>
-                  {i < steps.length - 1 && <div className="w-px h-6 bg-black/[0.07] ml-[23px]" />}
-                </div>
-              )
-            })}
-          </div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={isInView ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.6, delay: 1.1 }}
-            className="mt-14 card-blue p-7 lg:p-8 text-center bg-white"
-          >
-            <p className="text-[15px] text-[#475569] leading-relaxed max-w-3xl mx-auto">
-              All of this happens{' '}
-              <span className="text-[#1A6FFF] font-semibold">automatically</span> — while your team
-              focuses on tours, vendors, and creating the kind of weddings that get talked about for years.
+        <div className="grid lg:grid-cols-[1fr_1.2fr] gap-12 items-start">
+          {/* Left — narrative */}
+          <div>
+            <div className="section-label">A real demo</div>
+            <h2 className="font-display text-[40px] sm:text-[52px] font-bold text-[#0A0A1A] leading-[1.05] tracking-[-0.02em] mb-6">
+              See exactly where{' '}
+              <span className="text-gradient">your revenue is leaking.</span>
+            </h2>
+            <p className="text-[#475569] text-[18px] leading-[1.6] mb-6 max-w-[520px]">
+              In a demo, we load a realistic wedding venue pipeline and
+              show exactly which leads are slipping, what they&rsquo;re
+              worth, and what your team should do next.
             </p>
+            <p className="text-[14px] text-[#64748B] leading-[1.6] mb-8 max-w-[520px]">
+              The numbers below mirror the demo dataset we walk through
+              live. Yours look different — your sources, your stages,
+              your dollars — but the gaps are usually the same.
+            </p>
+            <Link
+              href="/demo"
+              className="inline-flex items-center gap-2 px-5 py-3 bg-[#1A6FFF] text-white text-[14px] font-semibold rounded-xl hover:bg-[#1058D6] transition-all duration-200 hover:shadow-[0_6px_24px_rgba(26,111,255,0.45)]"
+            >
+              Book a walkthrough
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+
+          {/* Right — mock dashboard panel */}
+          <motion.div
+            ref={ref}
+            initial={{ opacity: 0, y: 20 }}
+            animate={isInView ? { opacity: 1, y: 0 } : {}}
+            transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+            className="relative rounded-3xl border border-[#E2E8F0] bg-[#F8FAFC] shadow-[0_30px_80px_-20px_rgba(15,23,42,0.18)] overflow-hidden"
+          >
+            <div className="px-5 py-3 border-b border-[#E2E8F0] bg-white flex items-center gap-2 text-[11px] text-[#94A3B8]">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="ml-2 font-medium text-[#475569]">
+                /dashboard · Revenue OS demo
+              </span>
+              <span className="ml-auto uppercase tracking-wider text-[10px] font-bold text-[#94A3B8]">
+                Static preview
+              </span>
+            </div>
+            <div className="p-6 space-y-5">
+              {/* Pipeline at risk hero number */}
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-4 h-4 text-[#B45309]" />
+                  <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#94A3B8]">
+                    Pipeline at risk
+                  </p>
+                </div>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-[36px] font-bold text-[#0A0A1A] tracking-[-0.02em] tabular-nums leading-none">
+                    $124k
+                  </span>
+                  <span className="text-[13px] text-[#475569]">
+                    est. at-risk pipeline this month
+                  </span>
+                </div>
+              </div>
+
+              {/* Leak buckets */}
+              <div className="grid grid-cols-2 gap-3">
+                {leakBuckets.map(({ icon: Icon, label, count, helper, tone }) => (
+                  <div
+                    key={label}
+                    className="rounded-xl border border-[#E2E8F0] bg-white p-3.5"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div
+                        className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${TONE_CLASSES[tone]}`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-[#94A3B8]">
+                          {label}
+                        </p>
+                        <p className="text-[19px] font-bold text-[#0A0A1A] tabular-nums leading-none mt-1">
+                          {count}
+                        </p>
+                        <p className="text-[11px] text-[#475569] mt-1 leading-snug">
+                          {helper}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Booked revenue by source */}
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-emerald-600" />
+                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#94A3B8]">
+                      Booked revenue by source
+                    </p>
+                  </div>
+                  <span className="text-[11px] text-[#94A3B8] tabular-nums">
+                    Top 5
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {sourceRows.map((r) => (
+                    <div
+                      key={r.label}
+                      className="flex items-center justify-between text-[13px]"
+                    >
+                      <span className="text-[#0A0A1A]">{r.label}</span>
+                      <div className="flex items-baseline gap-3">
+                        <span className="text-[11.5px] text-[#94A3B8] tabular-nums">
+                          {r.leads} leads
+                        </span>
+                        <span
+                          className={`font-semibold tabular-nums ${
+                            r.booked === '—'
+                              ? 'text-[#CBD5E1]'
+                              : 'text-[#047857]'
+                          }`}
+                        >
+                          {r.booked}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 pt-3 border-t border-[#F1F5F9] text-[11px] text-[#94A3B8] italic leading-relaxed">
+                  Not ROAS. Estimated from operator-entered budgets. Ad
+                  spend is not connected.
+                </p>
+              </div>
+            </div>
           </motion.div>
         </div>
       </div>

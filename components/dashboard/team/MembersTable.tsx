@@ -97,6 +97,7 @@ export default function MembersTable({
     }
     const label = member.email || member.user_id
     if (
+      // UI_INTERACTION_EXEMPT: admin-only team member removal — native confirm is intentional friction.
       !window.confirm(
         `Remove ${label} from this workspace? They’ll lose access immediately.`
       )

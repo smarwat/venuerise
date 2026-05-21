@@ -1,0 +1,16 @@
+id,category,display_name,sensitivity,retention_basis,default_retention,exportable,deletable,correction_supported,control_status,vendor_ids,known_limitation_count
+account-identity,account_identity,Operator account identity,moderate,operational,Until tenant ends subscription + 30-day grace.,true,true,true,implemented,supabase,1
+venue-profile,venue_profile,Venue profile + settings,low,operational,For the lifetime of the tenant.,true,true,true,implemented,supabase,0
+lead-contact,lead_contact,Lead contact identity,high,operational,Until the operator marks the lead lost + the reactivation window closes (default 90 days). Lead-level PII redaction is operator-triggered.,true,true,true,partial,supabase|anthropic,2
+lead-event-details,lead_event_details,Lead event details,moderate,operational,Mirrors lead_contact retention.,true,true,true,partial,supabase|anthropic,1
+conversation-content,conversation_content,Conversation messages,high,operational,For the lifetime of the lead row; redaction is operator-triggered and CURRENTLY lead-level only (no conversation-level redaction yet).,true,false,false,partial,supabase|anthropic|resend,3
+tour-scheduling,tour_scheduling,Tour scheduling data,moderate,operational,Mirrors lead retention; tokens auto-expire.,true,true,true,implemented,supabase|resend,0
+billing-metadata,billing_metadata,Billing + subscription metadata,moderate,billing,For the lifetime of the subscription + applicable financial/tax retention requirements.,true,false,false,implemented,stripe|supabase,1
+auth-security-metadata,auth_security_metadata,Authentication + session metadata,restricted,security,For the duration of the active session / invitation window. Tokens are single-use or short-lived.,false,false,false,implemented,supabase,1
+audit-metadata,audit_metadata,Audit event log,restricted,security,365 days target; deletion is restricted because the log may be required for security or legal review.,false,false,false,implemented,supabase,2
+abuse-security-metadata,abuse_security_metadata,Abuse event log,restricted,security,365 days target; deletion restricted.,false,false,false,implemented,supabase|upstash,1
+sso-security-metadata,sso_security_metadata,SSO login event log,restricted,security,365 days target; deletion restricted.,false,false,false,implemented,supabase,1
+incident-metadata,incident_metadata,Incident records + timeline + alert deliveries,restricted,security,365 days target; deletion restricted.,false,false,false,implemented,supabase,1
+vendor-metadata,vendor_metadata,Vendor risk registry,low,operational,For the lifetime of the vendor relationship.,true,false,true,implemented,,0
+support-metadata,support_metadata,Email + digest preferences + suppressions,moderate,customer_request,Suppression rows retained as long as needed to honor opt-out. Digest rows: 365 days target; audit retention sweep (Phase 8AA) prunes older rows.,true,false,true,partial,resend|supabase,1
+system-logs,system_logs,Application + infrastructure logs,restricted,security,Sentry + Vercel governed by vendor retention policy (downloaded per cadence). Application pino logs are stream-only and not persisted by VenueRise.,false,false,false,partial,sentry|deployment-host,2

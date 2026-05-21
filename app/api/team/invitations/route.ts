@@ -13,6 +13,8 @@ import { ADMIN_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { createInvitation, listInvitations, TeamError } from '@/lib/team/team-service'
 import { InviteTeamMemberSchema } from '@/lib/team/team-schema'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 
 /**
  * POST /api/team/invitations — owner/admin invites a teammate.
@@ -89,6 +91,32 @@ export async function POST(request: NextRequest) {
       venueName,
       supabase,
       requestId,
+    })
+    // Phase 9B — enterprise audit. Team RBAC writes are
+    // security-relevant. The raw email is recorded MASKED — the
+    // invite recipient's address is the operator's deliberate
+    // input, so the masked form is enough for "who invited whom"
+    // forensics without storing PII verbatim.
+    void recordAuditEvent({
+      venueId: venue.venueId,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/team/invitations',
+      action: AUDIT_ACTIONS.TEAM_INVITATION_CREATE,
+      targetTable: 'team_invitations',
+      targetId: result.invitation_id,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      metadata: {
+        invited_email_masked: parsed.data.email.replace(
+          /^(.).+(@.+)$/,
+          '$1***$2'
+        ),
+        role: parsed.data.role,
+        email_sent: result.email_sent,
+        rotated_existing: result.rotated,
+      },
     })
     return respond(
       NextResponse.json(

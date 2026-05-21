@@ -10,6 +10,21 @@ interface FunnelStage {
 export default function FunnelChart({ stages }: { stages: FunnelStage[] }) {
   const maxCount = Math.max(...stages.map((s) => s.count), 1)
 
+  // Phase 8AK — empty-state copy. A funnel of all zeros renders as a
+  // wall of "0" rows; replace with a clear "no data" panel that matches
+  // the LeadsOverTimeChart empty state's voice.
+  const totalCount = stages.reduce((s, st) => s + st.count, 0)
+  if (totalCount === 0) {
+    return (
+      <div className="h-48 flex flex-col items-center justify-center text-center px-4 gap-1">
+        <p className="text-[13px] font-semibold text-[#0F172A]">Not enough data yet.</p>
+        <p className="text-[11.5px] text-[#64748B] max-w-[260px]">
+          New lead activity will appear here once inquiries come in.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3">
       {stages.map((stage, i) => {

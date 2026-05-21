@@ -1,0 +1,9 @@
+{
+  "generatedAt": "2026-05-20T18:40:39.612Z",
+  "disclaimer": "This register tracks operator-recorded commitments. It is not legal advice and does not prove contractual compliance. Commitments are operator-recorded and operator-reviewed; the platform does NOT autonomously parse contracts and does NOT auto-create commitments from uploaded documents.",
+  "supportPostureRows": 9,
+  "byStatus": {
+    "partial": 8,
+    "not_supported": 1
+  }
+}

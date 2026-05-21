@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-05-20T18:29:52.737Z",
+  "disclaimer": "The compliance operations calendar tracks operator-initiated reviews of internal controls. It does NOT prove continuous compliance. It does NOT auto-rotate secrets, auto-refresh trust artifacts, or send external alerts. Completion is operator-marked; waivers carry an explicit reason. Stale-flagging is a soft signal, not a control failure.",
+  "counts": {
+    "totalPolicyItems": 17,
+    "byCadence": {
+      "quarterly": 8,
+      "semiannual": 2,
+      "monthly": 7
+    },
+    "byArea": {
+      "vendor_risk": 1,
+      "subprocessors": 1,
+      "privacy_dsr": 1,
+      "retention_policy": 1,
+      "data_lifecycle": 1,
+      "disaster_recovery": 1,
+      "backup_posture": 1,
+      "incident_response": 1,
+      "trust_center": 2,
+      "security_questionnaire": 1,
+      "evidence_pack": 1,
+      "sso_readiness": 1,
+      "audit_coverage": 1,
+      "rate_limit_coverage": 1,
+      "access_control": 1,
+      "security_headers": 1
+    }
+  }
+}

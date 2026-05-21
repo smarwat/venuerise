@@ -7,6 +7,8 @@ import { captureApiError } from '@/lib/observability/sentry'
 import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
 import { SALES_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 import { z } from 'zod'
 
 const CreateLeadSchema = z.object({
@@ -105,6 +107,41 @@ export async function POST(request: NextRequest) {
     captureApiError(error, { requestId, route: '/api/leads', userId: user.id, venueId: venue.venueId })
     return respond(NextResponse.json({ error: error.message }, { status: 500 }))
   }
+
+  // Phase 9B — enterprise audit. The lead row was created by the
+  // operator from the dashboard (distinct from /api/widget intake,
+  // which is a public actor-less endpoint). Email is masked; phone
+  // is not echoed at all — both columns live on the leads table
+  // for follow-up but don't need to be re-stored in the audit
+  // feed for "who created which lead, when."
+  const created = data as { id: string; email: string | null }
+  void recordAuditEvent({
+    venueId: venue.venueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/leads',
+    action: AUDIT_ACTIONS.LEAD_CREATE,
+    targetTable: 'leads',
+    targetId: created.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    after: {
+      stage: parsed.data.stage,
+      urgency: parsed.data.urgency,
+      source: parsed.data.source,
+      event_date: parsed.data.event_date ?? null,
+    },
+    metadata: {
+      email_masked: created.email
+        ? created.email.replace(/^(.).+(@.+)$/, '$1***$2')
+        : null,
+      has_phone: Boolean(parsed.data.phone),
+      has_event_date: Boolean(parsed.data.event_date),
+      has_guest_count: typeof parsed.data.guest_count === 'number',
+      has_budget: typeof parsed.data.budget === 'number',
+    },
+  })
 
   return respond(NextResponse.json(data, { status: 201 }))
 }

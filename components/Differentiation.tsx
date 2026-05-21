@@ -2,54 +2,57 @@
 
 import { motion, useInView } from 'framer-motion'
 import { useRef } from 'react'
-import { CheckCircle2, X, Mic2, Eye, TrendingUp, Building2, Workflow } from 'lucide-react'
+import {
+  BookOpen,
+  CheckCircle2,
+  Eye,
+  HandMetal,
+  ShieldCheck,
+} from 'lucide-react'
 
-const differentiators = [
+/**
+ * GTM-0B — Operator-control / safety section.
+ *
+ * Wedding-venue buyers worry about three things when "AI" enters the
+ * conversation:
+ *   1. AI sounding robotic in front of brides.
+ *   2. AI sending something dumb to a real lead.
+ *   3. Losing the human relationship that closes weddings.
+ *
+ * This section answers all three head-on. It is also the section that
+ * keeps VenueRise's honesty contract on the public page:
+ *
+ *   - Manual-required channels (Instagram, The Knot, WeddingWire, Meta)
+ *     stay operator-sent.
+ *   - No autonomous sending by default.
+ *   - Brand voice + knowledge base guide every draft.
+ */
+
+const guarantees = [
   {
-    icon: Building2,
-    title: 'Built for venue revenue operations',
+    icon: HandMetal,
+    title: 'Your team is always in the loop',
     description:
-      'Inquiry cycles, tour scheduling, deposit timing, seasonal pacing. We speak venue sales, not generic SaaS.',
+      'AI drafts. Your team reads, edits, and clicks send. The dashboard makes it obvious which reply is suggested and why.',
   },
   {
-    icon: Workflow,
-    title: 'Handles qualification and booking flow',
+    icon: ShieldCheck,
+    title: 'No autonomous sending',
     description:
-      'Not just replies — full sequence ownership from first message to confirmed tour to recovered cold lead.',
+      'VenueRise does not push messages on its own. Manual-required channels — Instagram, The Knot, WeddingWire, Meta Ads — stay operator-sent until you verify a direct integration.',
   },
   {
-    icon: Mic2,
-    title: 'Designed to protect your brand voice',
+    icon: BookOpen,
+    title: 'Brand voice + knowledge base guide drafts',
     description:
-      'Every template hand-tuned to your venue. No corporate phrasing, no robotic sign-offs, no off-brand language.',
+      'Your tone, your policies, your packages. Drafts reflect what you actually offer, not a generic SaaS template. Keep it on-brand, keep it accurate.',
   },
   {
     icon: Eye,
-    title: 'Visibility into lost-lead recovery',
+    title: 'Full audit trail of every action',
     description:
-      "Owners can see exactly which inquiries the system saved that would have otherwise gone quiet. The numbers are unambiguous.",
+      'Every draft generated, every reply sent, every status change is logged. Owners see what the team did and what AI suggested. No black boxes.',
   },
-  {
-    icon: TrendingUp,
-    title: 'An operating system, not a widget',
-    description:
-      'VenueRise sits across your inquiry stack as infrastructure. It does not bolt on, it operates.',
-  },
-]
-
-const notThis = [
-  'A generic AI chatbot on your site',
-  'A one-size-fits-all CRM',
-  'A widget that answers FAQs',
-  'A standalone email autoresponder',
-  'An impersonal canned reply tool',
-]
-const butThis = [
-  'A complete revenue operations system',
-  'Built around venue sales workflows',
-  'Responds, qualifies, books, and nurtures',
-  'Coordinated multi-channel follow-up',
-  'On-brand and personalized every time',
 ]
 
 export default function Differentiation() {
@@ -64,85 +67,60 @@ export default function Differentiation() {
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="max-w-2xl mb-16">
-          <div className="section-label">The Difference</div>
+          <div className="section-label">Operator control</div>
           <h2 className="font-display text-[40px] sm:text-[52px] font-bold text-[#0A0A1A] leading-[1.05] tracking-[-0.02em] mb-6">
-            Not another chatbot.
-            <span className="block text-gradient">An operating system.</span>
+            AI helps your team move faster.{' '}
+            <span className="text-gradient">It does not replace their judgment.</span>
           </h2>
-          <p className="text-[#475569] text-[18px] leading-[1.6]">
-            There is no shortage of AI tools. VenueRise is the only one designed end-to-end around how wedding venue sales actually work.
+          <p className="text-[#475569] text-[18px] leading-[1.6] max-w-[640px]">
+            Wedding venue sales is a high-trust, high-stakes
+            conversation. We built VenueRise so AI can do the heavy
+            lifting on drafts and detection — and your team stays in
+            charge of every word that goes to a couple.
           </p>
         </div>
 
-        <div ref={ref} className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-start">
-          {/* Left: Comparison table */}
-          <motion.div
-            initial={{ opacity: 0, x: -20 }}
-            animate={isInView ? { opacity: 1, x: 0 } : {}}
-            transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <div className="card-glass overflow-hidden bg-white">
-              <div className="grid grid-cols-2 border-b border-black/[0.06] bg-[#F8FAFF]">
-                <div className="px-5 py-4 flex items-center gap-2 border-r border-black/[0.06]">
-                  <X className="w-4 h-4 text-red-400" />
-                  <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-[0.14em]">
-                    Generic tools
-                  </span>
-                </div>
-                <div className="px-5 py-4 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-[#1A6FFF]" />
-                  <span className="text-[11px] font-bold text-[#1A6FFF] uppercase tracking-[0.14em]">
-                    VenueRise
-                  </span>
-                </div>
-              </div>
-
-              {notThis.map((not, i) => (
-                <div
-                  key={not}
-                  className={`grid grid-cols-2 ${i < notThis.length - 1 ? 'border-b border-black/[0.04]' : ''}`}
-                >
-                  <div className="px-5 py-4 flex items-start gap-3 border-r border-black/[0.04]">
-                    <X className="w-3.5 h-3.5 text-red-400/70 flex-shrink-0 mt-0.5" />
-                    <span className="text-[14px] text-[#64748B]">{not}</span>
-                  </div>
-                  <div className="px-5 py-4 flex items-start gap-3">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/85 flex-shrink-0 mt-0.5" />
-                    <span className="text-[14px] text-[#0A0A1A] font-medium">{butThis[i]}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Right: Differentiator cards */}
-          <div className="space-y-3.5">
-            {differentiators.map((item, i) => {
-              const Icon = item.icon
-              return (
-                <motion.div
-                  key={item.title}
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={isInView ? { opacity: 1, x: 0 } : {}}
-                  transition={{ duration: 0.55, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }}
-                  whileHover={{ x: 4 }}
-                  className="group flex gap-4 p-5 card-blue bg-white"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-[#1A6FFF]/8 border border-[#1A6FFF]/15 flex items-center justify-center flex-shrink-0 mt-0.5 group-hover:bg-[#1A6FFF]/12 transition-colors">
-                    <Icon className="w-4.5 h-4.5 text-[#1A6FFF]" strokeWidth={1.85} />
+        <div ref={ref} className="grid sm:grid-cols-2 gap-4">
+          {guarantees.map((g, i) => {
+            const Icon = g.icon
+            return (
+              <motion.div
+                key={g.title}
+                initial={{ opacity: 0, y: 18 }}
+                animate={isInView ? { opacity: 1, y: 0 } : {}}
+                transition={{
+                  duration: 0.55,
+                  delay: i * 0.08,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+                className="card-glass p-6"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#EFF6FF] text-[#1D4ED8] flex items-center justify-center shrink-0 mt-0.5">
+                    <Icon className="w-5 h-5" strokeWidth={2} />
                   </div>
                   <div>
-                    <h3 className="font-display text-[16px] font-semibold text-[#0A0A1A] mb-1.5 tracking-[-0.005em]">
-                      {item.title}
+                    <h3 className="font-display text-[18px] font-semibold text-[#0A0A1A] mb-1.5 tracking-[-0.005em]">
+                      {g.title}
                     </h3>
-                    <p className="text-[14px] text-[#475569] leading-[1.55]">
-                      {item.description}
+                    <p className="text-[14px] text-[#475569] leading-[1.6]">
+                      {g.description}
                     </p>
                   </div>
-                </motion.div>
-              )
-            })}
-          </div>
+                </div>
+              </motion.div>
+            )
+          })}
+        </div>
+
+        <div className="mt-10 inline-flex items-center gap-2 px-4 py-2.5 rounded-full border border-[#1A6FFF]/20 bg-white text-[12.5px] text-[#475569]">
+          <CheckCircle2 className="w-3.5 h-3.5 text-[#1D4ED8]" />
+          <span>
+            <strong className="text-[#0A0A1A]">Honest scope:</strong>{' '}
+            we don&rsquo;t claim SOC 2, GDPR, or PCI today. Trust
+            posture lives in the security questionnaire we share with
+            procurement-heavy buyers.
+          </span>
         </div>
       </div>
     </section>

@@ -6,10 +6,10 @@ import { CheckCircle } from 'lucide-react'
 import AuditForm from './AuditForm'
 
 const includes = [
-  'Full inquiry flow audit',
-  'Custom automation blueprint',
-  'Lost-revenue gap analysis',
-  'Zero commitment required',
+  'Walk through the Revenue OS dashboard with your team',
+  'Map your current lead sources + identify the leakage gaps',
+  'Talk pilot scope, brand voice, and integration fit',
+  'No commitment — conversation first',
 ]
 
 export default function FinalCTA() {
@@ -17,7 +17,7 @@ export default function FinalCTA() {
   const isInView = useInView(ref, { once: true, margin: '-80px' })
 
   return (
-    <section id="audit" className="relative py-24 lg:py-32 overflow-hidden">
+    <section id="apply" className="relative py-24 lg:py-32 overflow-hidden">
       {/* Gradient blue background */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#1A6FFF] via-[#1058D6] to-[#0A46BF]" />
       <div
@@ -46,18 +46,19 @@ export default function FinalCTA() {
         >
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/25 bg-white/10 text-white/95 text-[11px] font-bold uppercase tracking-[0.14em] mb-7">
             <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-            Free Venue Audit
+            Apply for a pilot
           </div>
 
           <h2 className="font-display text-[44px] sm:text-[56px] lg:text-[64px] font-bold text-white leading-[1.04] tracking-[-0.02em] mb-6">
-            Stop losing
-            <span className="block">high-intent</span>
-            <span className="block text-white/85">wedding leads.</span>
+            Let&rsquo;s see exactly
+            <span className="block">where revenue is</span>
+            <span className="block text-white/85">leaking at your venue.</span>
           </h2>
 
           <p className="text-[19px] text-white/70 leading-[1.55] mb-9 max-w-[520px]">
-            Every week without a structured inquiry system is another round of hot leads going cold.
-            Get a free audit of your current pipeline and see exactly where revenue is slipping through.
+            We&rsquo;ll walk a Revenue OS demo with you, map your real
+            lead sources, and talk pilot scope. 30 minutes. No
+            obligation. Bring your current setup.
           </p>
 
           <div className="flex flex-col gap-2.5 max-w-[420px]">

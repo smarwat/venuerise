@@ -14,6 +14,51 @@
 
   var APP_URL = 'https://app.venuerise.com';
 
+  // ---- Phase 8BH attribution capture ----
+  //
+  // Read UTM params + click ids + referrer + landing page from
+  // the PARENT page (not the iframe — the iframe is a same-app
+  // surface and has no useful URL of its own). Forward to the
+  // iframe via query params so the embedded widget page can
+  // include them in the intake POST.
+  //
+  // Best-effort. If `window.location` or `document.referrer`
+  // is unreadable (very locked-down embeds), the iframe still
+  // renders and the form still submits — attribution just
+  // arrives as Unknown.
+  function captureAttribution() {
+    var out = {};
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var keys = [
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+        'gclid', 'fbclid', 'msclkid', 'ttclid'
+      ];
+      for (var i = 0; i < keys.length; i++) {
+        var v = params.get(keys[i]);
+        if (v) out[keys[i]] = v.slice(0, 500);
+      }
+      out.landing_page = (window.location.origin + window.location.pathname).slice(0, 500);
+    } catch (e) { /* swallow — attribution is optional */ }
+    try {
+      if (document.referrer) out.referrer = String(document.referrer).slice(0, 500);
+    } catch (e) { /* same */ }
+    try {
+      out.captured_at = new Date().toISOString();
+    } catch (e) { /* same */ }
+    return out;
+  }
+  var attribution = captureAttribution();
+  var attributionQuery = '';
+  try {
+    var q = new URLSearchParams();
+    Object.keys(attribution).forEach(function (k) {
+      if (attribution[k]) q.set(k, attribution[k]);
+    });
+    var s = q.toString();
+    if (s.length > 0) attributionQuery = '?' + s;
+  } catch (e) { /* swallow */ }
+
   // ---- Styles ----
   var style = document.createElement('style');
   style.textContent = [
@@ -36,7 +81,10 @@
   // ---- iFrame ----
   var frame = document.createElement('iframe');
   frame.id = 'vr-widget-frame';
-  frame.src = APP_URL + '/widget/' + venueId;
+  // Phase 8BH — attribution rides as query params on the
+  // iframe URL so the embedded widget page can read it
+  // without an extra postMessage handshake.
+  frame.src = APP_URL + '/widget/' + venueId + attributionQuery;
   frame.title = 'VenueRise Chat';
   document.body.appendChild(frame);
 

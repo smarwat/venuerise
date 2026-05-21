@@ -1,3 +1,9 @@
+// webhook route — Resend-initiated callback. Outbound delivery
+// state lives on `outbound_messages.status` (provider mutation);
+// suppressions write `email_suppressions`. The webhook's own
+// pino structured logs are the forensic trail. Per Phase 9A
+// "don't touch webhooks" rule, this stays out of `audit_events`.
+// Documented in docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase/service'

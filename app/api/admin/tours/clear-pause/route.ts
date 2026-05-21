@@ -8,6 +8,7 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 
 /**
  * POST /api/admin/tours/clear-pause  (Phase 8I)
@@ -211,6 +212,36 @@ export async function POST(request: NextRequest) {
     },
     'admin.tours_clear_pause.completed'
   )
+
+  // Phase 9A — enterprise audit. before captures the active pause
+  // scalars we just stripped; after captures the forensic clear keys
+  // we just stamped. The full `tour_pause_history` array is preserved
+  // and not duplicated here.
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/tours/clear-pause',
+    action: 'tours_pause_clear',
+    targetTable: 'subscriptions',
+    targetId: sub.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    before: {
+      tours_paused_at: metadata.tours_paused_at ?? null,
+      tours_paused_reason: metadata.tours_paused_reason ?? null,
+      tours_paused_count: metadata.tours_paused_count ?? null,
+      tours_resumed_at: metadata.tours_resumed_at ?? null,
+      tours_resumed_reason: metadata.tours_resumed_reason ?? null,
+    },
+    after: {
+      tours_pause_cleared_at: next.tours_pause_cleared_at,
+      tours_pause_cleared_by: next.tours_pause_cleared_by,
+      tours_pause_cleared_reason: next.tours_pause_cleared_reason ?? null,
+    },
+    metadata: { had_operator_reason: Boolean(reason) },
+  })
 
   return respond(
     NextResponse.json({

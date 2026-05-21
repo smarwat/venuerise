@@ -10,6 +10,8 @@ import { captureApiError } from '@/lib/observability/sentry'
 import { stripe, BillingNotConfiguredError } from '@/lib/billing/stripe'
 import { dispatchStripeEvent } from '@/lib/billing/stripe-event-dispatcher'
 import { markStripeEventHandled } from '@/lib/billing/billing-events-log'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 import { z } from 'zod'
 
 /**
@@ -232,6 +234,34 @@ export async function POST(
     },
     'billing.replay.completed'
   )
+
+  // Phase 9B — enterprise audit. The Stripe event payload is NOT
+  // included in the snapshot — payloads can carry customer email +
+  // raw line items + idempotency keys we don't want in a generic
+  // audit feed. The dedicated `billing_events_log` row is the
+  // forensic source of truth for payload contents; this audit row
+  // captures operator intent.
+  void recordAuditEvent({
+    venueId: row.venue_id,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/billing-events/[id]/replay',
+    action: AUDIT_ACTIONS.BILLING_EVENT_REPLAY,
+    targetTable: 'billing_events_log',
+    targetId: row.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      stripe_event_id: event.id,
+      stripe_event_type: event.type,
+      dispatched: result.handled,
+      dispatch_ignored: result.ignored,
+      handler_error: result.handlerError ?? null,
+      had_previous_error: row.handler_error !== null,
+      replay_count: newReplayCount,
+    },
+  })
 
   return respond(
     NextResponse.json({

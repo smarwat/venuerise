@@ -1,3 +1,9 @@
+// AUDIT_EXEMPT: diagnostic probe — issues a 1-token Anthropic
+// completion to verify the API key + retry path. Reads no
+// customer data, mutates no rows. Operator hits this routinely
+// during incident triage; an audit row per probe would create
+// pure noise. Pino logs capture invocation. Documented in
+// docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth/require-admin'
 import { anthropic, MODEL } from '@/lib/anthropic'

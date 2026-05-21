@@ -6,6 +6,10 @@ import MessageComposer from '@/components/dashboard/MessageComposer'
 import TourLifecycleStrip from '@/components/dashboard/inbox/TourLifecycleStrip'
 import { Badge } from '@/components/dashboard/ui/Badge'
 import { MoreHorizontal, Star, Share2 } from 'lucide-react'
+// Phase 8BE-2 — per-conversation channel metadata join. Same
+// helper as the inbox index page; populates `conv.channel_type`
+// so the sidebar badge lights up here too.
+import { loadInboxChannelMap } from '@/lib/integrations/channels/inbox-channels'
 
 /**
  * Phase 8F — pick the most relevant tour for a lead.
@@ -57,7 +61,26 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
     supabase.from('leads').select('*').eq('id', leadId).maybeSingle(),
   ])
 
-  const conversations = conversationsRes.data ?? []
+  const conversationsRawList = conversationsRes.data ?? []
+  // Phase 8BE-2 — join channel posture across all sidebar rows so
+  // the badge renders on every conversation, not just the active
+  // one. Empty input is a no-op.
+  const channelMap = await loadInboxChannelMap(
+    venueId,
+    (conversationsRawList as Array<{ id: string }>).map((c) => c.id)
+  )
+  const conversations = (conversationsRawList as Array<Record<string, unknown> & { id: string }>).map(
+    (c) => {
+      const meta = channelMap.get(c.id)
+      return {
+        ...c,
+        channel_type: meta?.channelType ?? null,
+        manual_reply_required: meta?.manualReplyRequired ?? false,
+        // Phase 8BG — parse-review warning dot signal.
+        parse_needs_review: meta?.parseNeedsReview ?? false,
+      }
+    }
+  ) as unknown as typeof conversationsRawList
   const lead = leadRes.data as Record<string, unknown> | null
   if (!lead) notFound()
 
@@ -87,8 +110,19 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
     : []
 
   return (
+    // Phase 8AK — left-rail orientation. ConversationList sits on the
+    // left, thread occupies center/right on lg+. On smaller screens the
+    // list collapses (single-column) so the active thread owns the
+    // viewport — operators on phones land directly in the conversation
+    // they tapped from /dashboard/inbox.
     <div className="flex h-[calc(100vh-60px)] min-h-[640px] animate-fade-in bg-[#F4F7FB]">
-      <div className="flex-1 flex flex-col bg-white border-r border-[#E6E8EF]">
+      <div className="hidden lg:flex">
+        <ConversationList
+          conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
+          activeLeadId={leadId}
+        />
+      </div>
+      <div className="flex-1 flex flex-col bg-white">
         <div className="flex items-center gap-3 px-6 py-4 border-b border-[#E6E8EF]">
           <div className="relative shrink-0">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#1E293B] to-[#0F172A] flex items-center justify-center text-white text-[13px] font-bold">
@@ -163,11 +197,6 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
           </div>
         )}
       </div>
-
-      <ConversationList
-        conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
-        activeLeadId={leadId}
-      />
     </div>
   )
 }

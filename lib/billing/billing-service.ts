@@ -41,6 +41,10 @@ export type BillingErrorCode =
   | 'billing_not_configured'
   | 'billing_customer_not_found'
   | 'price_id_missing'
+  // Phase 9R — plan-specific failure codes. Same `BillingError`
+  // envelope; route translates to the HTTP shape.
+  | 'stripe_price_not_configured'
+  | 'enterprise_contact_required'
   | 'venue_not_found'
   | 'stripe_failed'
   | 'sync_failed'
@@ -48,7 +52,7 @@ export type BillingErrorCode =
 export class BillingError extends Error {
   constructor(
     public readonly code: BillingErrorCode,
-    public readonly status: 400 | 404 | 500 | 503,
+    public readonly status: 400 | 404 | 422 | 500 | 503,
     public readonly detail?: unknown
   ) {
     super(code)
@@ -154,6 +158,13 @@ export interface CreateCheckoutArgs {
   userEmail: string | null
   venueId: string
   priceId: string | null | undefined
+  /** Phase 9R — when the caller resolved the price from a plan
+   *  catalog entry, the plan id + interval are propagated into the
+   *  Stripe session + subscription metadata so the webhook /
+   *  SubscriptionPlansCard can map back to the right tier without
+   *  guessing from `stripe_price_id`. */
+  planId?: string | null
+  interval?: 'monthly' | 'annual' | null
   requestId?: string
 }
 
@@ -189,6 +200,14 @@ export async function createCheckoutSession(
   const successUrl = `${appUrl}/dashboard/settings?billing=success`
   const cancelUrl = `${appUrl}/dashboard/settings?billing=cancelled`
 
+  // Phase 9R — extend Stripe metadata with plan_id + interval when
+  // provided. Stripe accepts string-only metadata; null/undefined
+  // values are skipped via the conditional spread so we don't write
+  // empty strings into the subscription record.
+  const planMeta: Record<string, string> = {}
+  if (args.planId) planMeta.plan_id = String(args.planId)
+  if (args.interval) planMeta.interval = String(args.interval)
+
   let session: Stripe.Checkout.Session
   try {
     session = await stripe().checkout.sessions.create({
@@ -198,11 +217,14 @@ export async function createCheckoutSession(
       success_url: successUrl,
       cancel_url: cancelUrl,
       // Top-level metadata makes the session itself searchable in Stripe.
-      metadata: { venue_id: venueId, user_id: userId },
+      metadata: { venue_id: venueId, user_id: userId, ...planMeta },
       // subscription_data.metadata propagates onto the resulting subscription
       // so the webhook can resolve venue_id even if billing_customers lags.
+      // Phase 9R: plan_id + interval ride along so the local
+      // subscriptions.metadata row carries the tier identity once the
+      // webhook upserts.
       subscription_data: {
-        metadata: { venue_id: venueId, user_id: userId },
+        metadata: { venue_id: venueId, user_id: userId, ...planMeta },
       },
       // Idempotency: include venue_id so a quick double-click doesn't create
       // two Stripe sessions. Date hour bucket keeps it from blocking legitimate

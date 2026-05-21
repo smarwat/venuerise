@@ -2,48 +2,58 @@
 
 import { motion, useInView } from 'framer-motion'
 import { useRef } from 'react'
-import { Clock, Ghost, Users, CalendarOff, BarChart2 } from 'lucide-react'
+import { Clock, Calendar, Ghost, CheckSquare, BarChart2 } from 'lucide-react'
+
+/**
+ * GTM-0B — "Revenue leaks" section.
+ *
+ * Five operator-language cards that name the exact gaps Revenue OS
+ * catches. Wording mirrors the dashboard surfaces (Slow first reply,
+ * Qualified no tour, Cold recovery, Tour Confirmation, Source
+ * leakage) so a buyer who lands on a demo immediately recognizes
+ * the pattern.
+ */
 
 const pains = [
   {
     icon: Clock,
-    title: 'Inquiries answered too late',
+    title: 'Slow replies',
     description:
-      "Couples contact four to six venues at once. If you don't respond within an hour, you've already lost. Manual handling costs you bookings before you've even seen the email.",
-    iconColor: 'text-orange-600',
-    iconBg: 'bg-orange-50',
+      'A strong inquiry sits unanswered while the couple books a tour at another venue. The clock matters and your team is in tastings.',
+    iconColor: 'text-amber-600',
+    iconBg: 'bg-amber-50',
   },
   {
-    icon: Ghost,
-    title: 'Leads that quietly disappear',
+    icon: CheckSquare,
+    title: 'Qualified, no tour',
     description:
-      'One follow-up. Maybe two. Then silence. Without a structured multi-touch sequence, hot leads cool off and your Saturday dates stay open.',
-    iconColor: 'text-violet-600',
-    iconBg: 'bg-violet-50',
-  },
-  {
-    icon: Users,
-    title: 'Coordinators stretched thin',
-    description:
-      'Your team is managing tours, tastings, vendors, and live events. Asking them to also chase every cold lead burns out your best people.',
+      'The couple is a fit — budget, date, guest count — but nobody pushes them to the next step. The conversation just stops.',
     iconColor: 'text-rose-600',
     iconBg: 'bg-rose-50',
   },
   {
-    icon: CalendarOff,
-    title: 'Empty dates you can never refill',
+    icon: Ghost,
+    title: 'Cold follow-up',
     description:
-      'Every unbooked Saturday is revenue you cannot recover next quarter. Your calendar should not depend on perfect manual follow-up.',
-    iconColor: 'text-red-600',
-    iconBg: 'bg-red-50',
+      'A warm lead ghosts. Without a thoughtful recovery message at the right moment, they pick whoever circled back.',
+    iconColor: 'text-violet-600',
+    iconBg: 'bg-violet-50',
+  },
+  {
+    icon: Calendar,
+    title: 'Unconfirmed tours',
+    description:
+      'The tour is on the calendar, but nobody confirms, reminds, or recovers the no-show. Your weekend slots burn anyway.',
+    iconColor: 'text-blue-600',
+    iconBg: 'bg-blue-50',
   },
   {
     icon: BarChart2,
-    title: 'No visibility into the pipeline',
+    title: 'Source blind spots',
     description:
-      "You cannot forecast revenue when every deal lives in someone's inbox. Owners deserve a real view of lead status and recovery.",
-    iconColor: 'text-amber-600',
-    iconBg: 'bg-amber-50',
+      "You know how many leads came in. You don't know which sources became booked weddings. The Knot? Instagram? Google? You're guessing.",
+    iconColor: 'text-emerald-600',
+    iconBg: 'bg-emerald-50',
   },
 ]
 
@@ -62,20 +72,22 @@ export default function PainPoints() {
   const isInView = useInView(ref, { once: true, margin: '-80px' })
 
   return (
-    <section id="pain" className="relative py-24 lg:py-32 bg-white overflow-hidden">
+    <section id="leaks" className="relative py-24 lg:py-32 bg-white overflow-hidden">
       <div className="noise-layer" />
       <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-black/[0.06] to-transparent" />
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="max-w-2xl mb-16">
-          <div className="section-label">The Problem</div>
+          <div className="section-label">Where revenue leaks</div>
           <h2 className="font-display text-[40px] sm:text-[52px] font-bold text-[#0A0A1A] leading-[1.05] tracking-[-0.02em] mb-6">
-            Revenue is leaking{' '}
-            <span className="text-gradient">at the inquiry stage.</span>
+            Five gaps that quietly{' '}
+            <span className="text-gradient">cost you weddings.</span>
           </h2>
-          <p className="text-[#475569] text-[18px] leading-[1.6] max-w-[560px]">
-            Your venue is built to host unforgettable events. But the system that turns a first
-            email into a signed contract is usually a coordinator, a shared inbox, and good intentions.
+          <p className="text-[#475569] text-[18px] leading-[1.6] max-w-[640px]">
+            Your venue is built to host unforgettable events. But the
+            system that turns a first email into a signed contract is
+            usually a coordinator, a shared inbox, and good intentions.
+            That&rsquo;s where the money slips.
           </p>
         </div>
 

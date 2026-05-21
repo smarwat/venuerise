@@ -210,8 +210,11 @@ export default function TourLifecycleStrip({ lead, tour }: TourLifecycleStripPro
 
   return (
     <>
-      <div className="border-b border-[#F1F5F9] bg-[#F8FAFC] px-6 py-3 flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-white border border-[#E2E8F0] flex items-center justify-center shrink-0">
+      {/* Phase 8AJ — restyled lifecycle strip: uppercase eyebrow,
+          editorial spacing, navy primary action, softer borders that
+          match the dashboard card vocabulary. */}
+      <div className="border-b border-[#E6E8EF] bg-white px-6 py-3 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-[10px] bg-[#F8FAFC] border border-[#E6E8EF] flex items-center justify-center shrink-0">
           {hasUpcoming ? (
             <CalendarCheck className="w-4 h-4 text-[#1D4ED8]" />
           ) : (
@@ -219,33 +222,37 @@ export default function TourLifecycleStrip({ lead, tour }: TourLifecycleStripPro
           )}
         </div>
 
-        <div className="flex-1 min-w-0 flex items-center gap-2.5 text-[12px]">
-          {hasUpcoming && tour ? (
-            <>
-              <span className="text-[#475569] inline-flex items-center gap-1">
-                <Clock className="w-3 h-3 text-[#94A3B8]" />
-                {format(new Date(tour.scheduled_at), 'EEE MMM d • h:mm a')}
-              </span>
-              <Badge variant={STATUS_VARIANT[tour.status ?? 'scheduled'] ?? 'default'}>
-                {STATUS_LABEL[tour.status ?? 'scheduled'] ?? tour.status}
-              </Badge>
-              {tour.duration_minutes ? (
-                <span className="text-[#94A3B8]">{tour.duration_minutes}m</span>
-              ) : null}
-            </>
-          ) : tour ? (
-            <>
-              <span className="text-[#475569]">Last tour</span>
-              <Badge variant={STATUS_VARIANT[tour.status ?? 'cancelled'] ?? 'default'}>
-                {STATUS_LABEL[tour.status ?? 'cancelled'] ?? tour.status}
-              </Badge>
-              <span className="text-[#94A3B8]">
-                {format(new Date(tour.scheduled_at), 'MMM d, yyyy')}
-              </span>
-            </>
-          ) : (
-            <span className="text-[#475569]">No tour scheduled yet.</span>
-          )}
+        <div className="flex-1 min-w-0">
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#94A3B8] font-semibold">
+            {hasUpcoming ? 'Next tour' : tour ? 'Last tour' : 'Tour status'}
+          </div>
+          <div className="mt-1 flex items-center gap-2.5 text-[12.5px] flex-wrap">
+            {hasUpcoming && tour ? (
+              <>
+                <span className="text-[#0F172A] font-medium inline-flex items-center gap-1.5">
+                  <Clock className="w-3 h-3 text-[#94A3B8]" />
+                  {format(new Date(tour.scheduled_at), 'EEE MMM d • h:mm a')}
+                </span>
+                <Badge variant={STATUS_VARIANT[tour.status ?? 'scheduled'] ?? 'default'}>
+                  {STATUS_LABEL[tour.status ?? 'scheduled'] ?? tour.status}
+                </Badge>
+                {tour.duration_minutes ? (
+                  <span className="text-[#94A3B8]">{tour.duration_minutes}m</span>
+                ) : null}
+              </>
+            ) : tour ? (
+              <>
+                <Badge variant={STATUS_VARIANT[tour.status ?? 'cancelled'] ?? 'default'}>
+                  {STATUS_LABEL[tour.status ?? 'cancelled'] ?? tour.status}
+                </Badge>
+                <span className="text-[#475569]">
+                  {format(new Date(tour.scheduled_at), 'MMM d, yyyy')}
+                </span>
+              </>
+            ) : (
+              <span className="text-[#475569]">No tour scheduled yet.</span>
+            )}
+          </div>
         </div>
 
         <div className="shrink-0 flex items-center gap-2">

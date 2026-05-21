@@ -127,6 +127,222 @@ interface HealthBody {
     operator_digest_send_url_state: 'mounted'
     operator_digest_audit_drawer: 'mounted'
     operator_digest_cron_audit_dedupe: 'mounted'
+    operator_lead_drawer_approve_send: 'mounted'
+    operator_lead_drawer_reject_persist: 'mounted'
+    operator_command_palette: 'mounted'
+    operator_ai_draft_regenerate: 'mounted'
+    operator_command_palette_quick_actions: 'mounted'
+    operator_inbox_left_rail: 'mounted'
+    operator_tours_calendar_polish: 'mounted'
+    operator_analytics_retheme: 'mounted'
+    operator_lead_drawer_realtime: 'mounted'
+    operator_command_palette_search: 'mounted'
+    operator_lead_drawer_draft_stale_guard: 'mounted'
+    operator_ai_draft_variants: 'mounted'
+    operator_command_palette_message_search: 'mounted'
+    operator_lead_drawer_lead_reply_guard: 'mounted'
+    operator_ai_draft_variant_memory: 'mounted'
+    operator_variant_replay_drawer: 'mounted'
+    operator_message_similarity_search: 'mounted'
+    operator_ai_draft_audit_card: 'mounted'
+    operator_inbox_message_search: 'mounted'
+    operator_ai_draft_audit_realtime: 'mounted'
+    operator_ai_draft_audit_pagination: 'mounted'
+    operator_ai_draft_audit_csv: 'mounted'
+    revenue_os_product_thesis: 'mounted'
+    agentic_workflow_map: 'mounted'
+    revenue_leakage_brief: 'mounted'
+    revenue_os_settings: 'mounted'
+    revenue_leakage_scoring: 'mounted'
+    speed_to_lead_score: 'mounted'
+    leakage_leads_filter: 'mounted'
+    speed_to_lead_rollup: 'mounted'
+    cold_lead_baseline_fix: 'mounted'
+    kanban_speed_to_lead_chip: 'mounted'
+    follow_up_recovery_queue: 'mounted'
+    lead_recovery_explainer: 'mounted'
+    recovery_suggested_actions: 'mounted'
+    recovery_leads_filter: 'mounted'
+    tour_booking_agent_surfaces: 'mounted'
+    tour_readiness_panel: 'mounted'
+    tour_confirmation_queue: 'mounted'
+    tour_conversion_rollup: 'mounted'
+    tour_booking_leads_filter: 'mounted'
+    revenue_os_digest_summary: 'mounted'
+    operator_digest_revenue_reframe: 'mounted'
+    digest_speed_to_lead_section: 'mounted'
+    digest_recovery_section: 'mounted'
+    digest_tour_booking_section: 'mounted'
+    brand_voice_confidence_score: 'mounted'
+    brand_voice_escalation_gate: 'mounted'
+    brand_voice_settings: 'mounted'
+    ai_draft_audit_low_confidence: 'mounted'
+    brand_voice_confidence_telemetry: 'mounted'
+    brand_voice_calibration_summary: 'mounted'
+    brand_voice_operator_outcomes: 'mounted'
+    brand_voice_overconfidence_signal: 'mounted'
+    brand_voice_autopilot_guardrails: 'mounted'
+    draft_risk_detection: 'mounted'
+    lead_drawer_autopilot_decision: 'mounted'
+    draft_audit_autopilot_breakdown: 'mounted'
+    autonomous_sending_still_disabled: 'mounted'
+    autopilot_simulation_mode: 'mounted'
+    autopilot_simulation_summary: 'mounted'
+    autopilot_operator_alignment: 'mounted'
+    autopilot_simulation_panel: 'mounted'
+    autopilot_review_queue: 'mounted'
+    autopilot_review_labels: 'mounted'
+    autopilot_rule_signal_summary: 'mounted'
+    autopilot_shadow_evaluation: 'mounted'
+    autopilot_safety_scorecard: 'mounted'
+    per_venue_autonomy_readiness_gate: 'mounted'
+    autonomy_eligibility_signal: 'mounted'
+    tour_slot_suggestions: 'mounted'
+    venue_tour_duration_setting: 'mounted'
+    venue_tour_buffer_setting: 'mounted'
+    tour_blackout_dates: 'mounted'
+    tour_suggestion_timezone_awareness: 'mounted'
+    lost_reason_taxonomy: 'mounted'
+    reactivation_queue: 'mounted'
+    reactivation_leads_filter: 'mounted'
+    reactivation_digest_section: 'mounted'
+    enterprise_audit_log: 'mounted'
+    enterprise_audit_events_card: 'mounted'
+    rbac_documentation_pass: 'mounted'
+    request_context_baseline: 'mounted'
+    enterprise_audit_coverage_matrix: 'mounted'
+    enterprise_rbac_matrix: 'mounted'
+    enterprise_audit_coverage_check: 'mounted'
+    enterprise_audit_detail_drawer: 'mounted'
+    enterprise_audit_mirror: 'mounted'
+    enterprise_audit_mirror_best_effort: 'mounted'
+    enterprise_data_export: 'mounted'
+    lead_pii_redaction: 'mounted'
+    data_lifecycle_card: 'mounted'
+    retention_posture_visible: 'mounted'
+    security_headers_report_only: 'mounted'
+    csp_report_endpoint: 'mounted'
+    hsts_header: 'mounted'
+    permissions_policy_header: 'mounted'
+    secrets_rotation_runbook: 'mounted'
+    rate_limit_catalog: 'mounted'
+    rate_limit_coverage_check: 'mounted'
+    abuse_monitoring: 'mounted'
+    abuse_monitor_card: 'mounted'
+    public_route_throttles: 'mounted'
+    sso_readiness: 'mounted'
+    sso_connections_table: 'mounted'
+    sso_login_events: 'mounted'
+    sso_admin_endpoints: 'mounted'
+    sso_provider_abstraction: 'mounted'
+    backup_posture: 'mounted'
+    disaster_recovery_runbook: 'mounted'
+    restore_intent_audit: 'mounted'
+    backup_posture_card: 'mounted'
+    backup_posture_check: 'mounted'
+    security_evidence_center: 'mounted'
+    evidence_report_api: 'mounted'
+    evidence_pack_generator: 'mounted'
+    soc2_evidence_map: 'mounted'
+    evidence_packaging_check: 'mounted'
+    security_questionnaire_generator: 'mounted'
+    buyer_security_summary: 'mounted'
+    demo_mode_foundation: 'mounted'
+    enterprise_readiness_checklist: 'mounted'
+    sales_readiness_exports: 'mounted'
+    vendor_risk_registry: 'mounted'
+    subprocessor_disclosure: 'mounted'
+    vendor_risk_exports: 'mounted'
+    vendor_risk_cards: 'mounted'
+    vendor_risk_check: 'mounted'
+    incident_response_records: 'mounted'
+    incident_detection_candidates: 'mounted'
+    incident_alert_routing: 'mounted'
+    incident_response_card: 'mounted'
+    incident_response_pack: 'mounted'
+    privacy_data_inventory: 'mounted'
+    privacy_retention_policy: 'mounted'
+    dsr_request_tracking: 'mounted'
+    dsr_non_destructive_reviews: 'mounted'
+    privacy_readiness_pack: 'mounted'
+    trust_center_public_summary: 'mounted'
+    trust_center_gated_packets: 'mounted'
+    trust_access_tracking: 'mounted'
+    trust_center_admin_cards: 'mounted'
+    trust_center_pack: 'mounted'
+    compliance_calendar: 'mounted'
+    compliance_freshness_tracking: 'mounted'
+    compliance_review_workflow: 'mounted'
+    compliance_calendar_card: 'mounted'
+    compliance_ops_pack: 'mounted'
+    contract_commitments_register: 'mounted'
+    commitments_readiness: 'mounted'
+    unsupported_commitment_warnings: 'mounted'
+    commitments_pack: 'mounted'
+    omnichannel_channel_registry: 'mounted'
+    channel_connection_admin: 'mounted'
+    external_conversation_mapping: 'mounted'
+    inbound_channel_normalization: 'mounted'
+    manual_required_reply_workflow: 'mounted'
+    inbox_channel_badges: 'mounted'
+    omnichannel_inbox_loader_channels: 'mounted'
+    manual_reply_banner_mounted: 'mounted'
+    manual_channel_reply_confirmation_ui: 'mounted'
+    lead_forwarding_parser: 'mounted'
+    the_knot_forwarding_parser: 'mounted'
+    weddingwire_forwarding_parser: 'mounted'
+    parse_confidence_review: 'mounted'
+    lead_forwarding_test_parse: 'mounted'
+    meta_webhook_signature_verification: 'mounted'
+    instagram_inbound_connector: 'mounted'
+    facebook_inbound_connector: 'mounted'
+    meta_lead_ads_placeholder: 'mounted'
+    meta_channel_connection_metadata: 'mounted'
+    meta_outbound_still_manual: 'mounted'
+    meta_webhook_test_parse: 'mounted'
+    website_attribution_capture: 'mounted'
+    lead_attribution_metadata: 'mounted'
+    lead_drawer_attribution_panel: 'mounted'
+    attribution_performance_card: 'mounted'
+    analytics_attribution_breakdown: 'mounted'
+    booked_revenue_attribution: 'mounted'
+    attribution_revenue_helper: 'mounted'
+    booked_revenue_attribution_card: 'mounted'
+    analytics_booked_revenue_by_source: 'mounted'
+    source_leakage_summary: 'mounted'
+    source_leakage_overview_card: 'mounted'
+    leads_source_filter: 'mounted'
+    analytics_source_leakage_breakdown: 'mounted'
+    payment_methods_card: 'mounted'
+    stripe_billing_portal_access: 'mounted'
+    billing_portal_audit_event: 'mounted'
+    subscription_plan_catalog: 'mounted'
+    subscription_plans_card: 'mounted'
+    stripe_plan_checkout: 'mounted'
+    billing_plan_gates_foundation: 'mounted'
+    ui_interaction_audit: 'mounted'
+    ui_interaction_scanner: 'mounted'
+    dead_button_fix_pass: 'mounted'
+    fetch_route_mismatch_check: 'mounted'
+    knowledge_base_crud: 'mounted'
+    knowledge_base_audit: 'mounted'
+    knowledge_base_rate_limit: 'mounted'
+    runtime_interaction_qa: 'mounted'
+    playwright_core_workflows: 'mounted'
+    knowledge_base_runtime_qa: 'mounted'
+    availability_runtime_qa: 'mounted'
+    revenue_recovery_demo_seed: 'mounted'
+    demo_revenue_leak_dataset: 'mounted'
+    demo_channel_attribution_dataset: 'mounted'
+    demo_pipeline_recovery_dataset: 'mounted'
+    gtm_revenue_recovery_positioning: 'mounted'
+    marketing_revenue_os_homepage: 'mounted'
+    demo_loop_cta: 'mounted'
+    operator_control_messaging: 'mounted'
+    revenue_recovery_load_seed: 'mounted'
+    demo_load_250_leads: 'mounted'
+    demo_load_source_distribution: 'mounted'
+    demo_load_leakage_distribution: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -160,8 +376,110 @@ interface HealthBody {
  *   - Phase 8AA: 26 (added digest/suppressions/remove)
  *   - Phase 8AB: 28 (added digest/cron-health + digest/suppressions/remove-all)
  *   - Phase 8AC: 29 (added digest/audit-events)
+ *   - Phase 8AO: 30 (added ai/draft-audit — AI Draft Activity card
+ *     CSV + JSON pagination source)
+ *   - Phase 8AQ: 31 (added revenue-os/settings — per-venue thresholds
+ *     for Revenue Leakage Watch + Speed-to-Lead scoring)
+ *   - Phase 8AY: 32 (added ai/autopilot-simulation — dedicated
+ *     simulation roll-up for the AutopilotSimulationPanel)
+ *   - Phase 8AZ: 34 (added ai/autopilot-reviews — queue + summary,
+ *     and ai/autopilot-reviews/[aiActionId] — label upsert)
+ *   - Phase 8BA: 35 (added ai/autopilot-readiness — per-venue
+ *     read-only eligibility scorecard)
+ *   - Phase 8BD: 36 (added leads/reactivation-queue — top-N
+ *     reactivation candidate roll-up)
+ *   - Phase 9A: 37 (added audit-events — enterprise audit log GET
+ *     endpoint backing the EnterpriseAuditEventsCard)
+ *   - Phase 9D: 39 (added data-export + leads/[leadId]/redact-pii —
+ *     venue-scoped JSON export + soft PII redaction for individual
+ *     leads while preserving operational + audit history)
+ *   - Phase 9F: 40 (added security/abuse-events — admin read for
+ *     rate-limit blocks per venue, backing the AbuseMonitorCard)
+ *   - Phase 9G: 43 (added security/sso-connections,
+ *     security/sso-connections/[id], security/sso-login-events —
+ *     SSO connection management + login event feed; vendor adapter
+ *     is a placeholder, no real auth exchange yet)
+ *   - Phase 9H: 45 (added security/backup-posture +
+ *     security/restore-intents — read-only DR posture card + audit-
+ *     only restore intent recorder; product NEVER executes a
+ *     restore)
+ *   - Phase 9I: 46 (added security/evidence-report — consolidated
+ *     SOC 2-style evidence report backing the SecurityEvidenceCenter
+ *     card; JSON / markdown / CSV export; not a certification claim)
+ *   - Phase 9J: 49 (added security/questionnaire-response,
+ *     security/buyer-security-summary, security/demo-mode —
+ *     sales-facing questionnaire generator + buyer security summary
+ *     export + owner-only demo mode toggle; demo mode is a visual
+ *     marker only, NOT data anonymization; questionnaire/summary
+ *     are buyer-ready drafts that REQUIRE review before sending)
+ *   - Phase 9K: 51 (added security/vendor-risk-report +
+ *     security/subprocessor-disclosure — admin vendor risk
+ *     registry export + buyer-safe subprocessor disclosure;
+ *     DPA/SCC/SOC 2 status defaults to manual_review_required;
+ *     buyer-facing disclosure is reviewed before sharing
+ *     externally)
+ *   - Phase 9L: 55 (added security/incidents [GET+POST],
+ *     security/incidents/[id] [GET+PATCH],
+ *     security/incidents/detect [POST],
+ *     security/incidents/[id]/alert [POST] — first-class
+ *     incident records + conservative operator-triggered
+ *     detectors + env-gated alert routing to Slack / PagerDuty
+ *     / Sentry. No autonomous remediation; no auto-resolve;
+ *     customer notification requires legal/operator review.)
+ *   - Phase 9M: 60 (added privacy/readiness [GET],
+ *     privacy/dsr-requests [GET+POST],
+ *     privacy/dsr-requests/[id] [GET+PATCH],
+ *     privacy/dsr-requests/[id]/export-preview [POST],
+ *     privacy/dsr-requests/[id]/deletion-review [POST] —
+ *     static data inventory + retention policy + DSR workflow.
+ *     Export preview is metadata-only; deletion review is
+ *     non-destructive. We do NOT claim GDPR/CCPA compliance
+ *     and DSRs are NEVER auto-fulfilled.)
+ *   - Phase 9N: 64 (added security/trust-center/grants
+ *     [GET+POST], security/trust-center/grants/[id] [PATCH],
+ *     security/trust-center/access-events [GET],
+ *     security/trust-center/packet [GET] — Trust Center
+ *     foundation with bearer-token grants + access log. Public
+ *     /trust page + /trust/access/[token] gated page are not
+ *     counted in ADMIN_ENDPOINT_COUNT — those are public/gated
+ *     routes outside /api/admin/*.)
+ *   - Phase 9O: 67 (added security/compliance/calendar
+ *     [GET+POST], security/compliance/calendar/[id] [PATCH],
+ *     security/compliance/freshness [GET] — compliance
+ *     operations calendar + evidence freshness tracking.
+ *     Operator-controlled — does NOT prove continuous
+ *     compliance; no autonomous rotation; no external
+ *     alerting.)
+ *   - Phase 9P: 70 (added security/commitments [GET+POST],
+ *     security/commitments/[id] [GET+PATCH],
+ *     security/commitments/readiness [GET] — operator-
+ *     recorded customer-specific contractual commitments
+ *     register + readiness summary with unsupported-risk
+ *     warnings. NOT legal advice; NOT contractual proof; no
+ *     autonomous contract parsing.)
+ *   - Phase 8BE: 72 (added integrations/channels [GET+POST],
+ *     integrations/channels/[id] [PATCH] — omnichannel inbox
+ *     connector foundation. Channel posture + capability
+ *     matrix only; NO real OAuth, NO Meta Send API call, NO
+ *     autonomous sending. Manual-required channels keyed to
+ *     the new /api/conversations/[id]/mark-sent-manually
+ *     operator-confirm route — note that route lives outside
+ *     /api/admin/* and is NOT counted here.)
+ *   - Phase 8BG: 73 (added integrations/lead-forwarding/
+ *     test-parse [POST] — admin QA endpoint that runs the
+ *     deterministic forwarding parser without creating a
+ *     lead. PII-light audit metadata; raw body never logged.
+ *     The public lead-forwarding routes are unchanged in
+ *     count and live outside /api/admin/*.)
+ *   - Phase 8BF: 74 (added integrations/meta/test-parse
+ *     [POST] — admin Meta webhook payload QA endpoint. Pure
+ *     parser run, no DB write, no signature verification
+ *     required. The public Meta webhook (GET+POST) is
+ *     unchanged in count — it lives outside /api/admin/*.
+ *     Signature verification + payload normalization replace
+ *     the 8BE placeholder behaviour without adding routes.)
  */
-const ADMIN_ENDPOINT_COUNT = 29
+const ADMIN_ENDPOINT_COUNT = 76
 
 const startedAt = Date.now()
 
@@ -742,6 +1060,1294 @@ export async function GET(request: Request) {
       // continues. Belt-and-suspenders against duplicate
       // digest_send_cron rows from cron retries.
       operator_digest_cron_audit_dedupe: 'mounted',
+      // 8AJ — POST /api/conversations/[id]/messages.
+      // LeadDetailDrawer "Approve & send" inserts an operator-
+      // authored `human`-role message. SALES_ROLES gate + billing
+      // gate + per-user-per-conversation rate-limit. NOT counted
+      // in ADMIN_ENDPOINT_COUNT — route lives outside /api/admin/*.
+      operator_lead_drawer_approve_send: 'mounted',
+      // 8AJ — PATCH /api/ai/actions/[id]/reject. LeadDetailDrawer
+      // Reject button persists via migration 020's
+      // ai_actions.rejected_at + rejected_by columns. Idempotent;
+      // SALES_ROLES gate; cross-tenant 403 → 404. NOT counted in
+      // ADMIN_ENDPOINT_COUNT (also outside /api/admin/*).
+      operator_lead_drawer_reject_persist: 'mounted',
+      // 8AJ — Global ⌘K / Ctrl+K command palette. Opens from the
+      // DashboardTopBar search pill click OR the keyboard
+      // shortcut. Static command set today (Overview / Leads /
+      // Inbox / Tours / Analytics / Settings / Billing + three
+      // route-redirect quick actions). No backend search.
+      operator_command_palette: 'mounted',
+      // 8AK — POST /api/ai/draft. LeadDetailDrawer "Regenerate"
+      // button rewrites the current draft via a narrow Anthropic
+      // prompt with optional adjustment instruction (Warmer /
+      // More concise / Add pricing / Mention dietary). Writes a
+      // single `ai_actions` row (agent='venuerise',
+      // action='draft_regenerate'); the returned id becomes the
+      // new active draft so a subsequent Reject targets the right
+      // row. Rate-limited per user + lead. Humanized error vocab:
+      // unauthorized | forbidden | subscription_required |
+      // lead_not_found | validation_failed | rate_limited |
+      // generation_failed. NOT counted in ADMIN_ENDPOINT_COUNT —
+      // the route lives outside /api/admin/*.
+      operator_ai_draft_regenerate: 'mounted',
+      // 8AK — CommandPalette quick actions now open real surfaces.
+      // "New lead" → /dashboard/leads?new_lead=1 +
+      // `venuerise:open-new-lead-modal` event (KanbanBoard
+      // listens). "Schedule tour" → /dashboard/tours?schedule_tour=1
+      // + `venuerise:open-schedule-tour` event
+      // (TourSchedulingClient listens). "Send sample digest" →
+      // /dashboard/settings/billing?digest_action=sample;
+      // DigestPreferencesCard scrolls into view + applies a
+      // short-lived highlight ring. Each consumer strips the query
+      // param via history.replaceState after consuming so a
+      // refresh doesn't re-trigger. None of the three auto-fires
+      // a backend write — operators still confirm via the in-page
+      // CTA.
+      operator_command_palette_quick_actions: 'mounted',
+      // 8AK — Inbox orientation flipped: ConversationList sits on
+      // the LEFT on lg+, thread on center/right (matches mailbox
+      // conventions). On mobile, the active thread takes the full
+      // viewport and the list collapses; on the inbox index, the
+      // list takes the viewport and the empty-state panel hides
+      // until a conversation is picked. CSS/grid-only — no data
+      // or route changes.
+      operator_inbox_left_rail: 'mounted',
+      // 8AK — Tours calendar polish. Weekday strip now has a
+      // subtle bottom separator and an inline navy dot on today's
+      // column header so the eye lands on the active column.
+      // Calendar cells show "h:mma · FirstName" on the first row
+      // even on single-tour days (previously the lead name only
+      // appeared on multi-tour days).
+      operator_tours_calendar_polish: 'mounted',
+      // 8AK — Analytics chart re-theme.
+      // `LeadsOverTimeChart`: navy primary line (#0F172A) with a
+      // low-opacity navy gradient fill + slate #EEF2F7 grid +
+      // calmer "Not enough data yet." empty-state copy.
+      // `FunnelChart`: drops the amber `negotiation` color in
+      // favor of slate-700; restricted to slate/blue/emerald only.
+      // Both charts share the same empty-state shape.
+      operator_analytics_retheme: 'mounted',
+      // 8AK — LeadDetailDrawer subscribes to `messages` realtime
+      // for the active conversation while the drawer is open.
+      // INSERTs append to the local thread (deduped by id so the
+      // optimistic Approve-and-send append doesn't end up
+      // double-rendered when the realtime echo arrives). Cleans
+      // up on unmount / conversation change.
+      operator_lead_drawer_realtime: 'mounted',
+      // 8AL — GET /api/dashboard/search. Backend search powering the
+      // CommandPalette's LEADS / CONVERSATIONS / TOURS groups.
+      // Auth + SALES_ROLES + venue resolution + rate-limit
+      // (`dashboard-search:{userId}`). Per-table caps (8/5/5) +
+      // hard cap 18. Sub-2-char queries short-circuit to empty.
+      // Cross-tenant access collapses to empty items, not 403.
+      // NOT counted in ADMIN_ENDPOINT_COUNT (non-admin route).
+      operator_command_palette_search: 'mounted',
+      // 8AL — LeadDetailDrawer staleness guard. When a teammate's
+      // `human`-role message arrives via the messages realtime
+      // subscription, the visible AI draft is flagged stale; Approve
+      // & send is disabled; an amber inline notice surfaces. Save
+      // edit softens the flag to 'edited_after_teammate' (Approve
+      // re-enabled, soft notice persists). Regenerate clears the
+      // flag entirely. Self-sends are deduped by id + a pending-self
+      // bridge ref so the operator's own optimistic append never
+      // triggers the guard against itself.
+      operator_lead_drawer_draft_stale_guard: 'mounted',
+      // 8AL — /api/ai/draft accepts `variant_count` (1-3, default 1)
+      // and returns `drafts[]` alongside the primary `draft` (kept
+      // for backward compat). Single Anthropic call asks for "---"-
+      // separated variants; `parseVariants` strips "Variant N:"
+      // labels defensively. One ai_actions row per call with a
+      // compact multi-variant `output_summary`. Drawer renders a
+      // pill selector (Option 1 / Option 2 / Option 3); picking a
+      // pill swaps `draftBody` so Approve sends the chosen variant.
+      operator_ai_draft_variants: 'mounted',
+      // 8AM — message-body search in the CommandPalette MESSAGES
+      // group. Backed by the pg_trgm GIN index on `messages.content`
+      // (migration 021). Lead-joined for the title; snippet centered
+      // on the query hit via `buildSnippet`, capped at 110 chars.
+      // Deep-link href is /dashboard/inbox/<lead>?message=<id>;
+      // ConversationThread scrolls the matching bubble into view +
+      // flashes a pale blue ring for ~2.6s on arrival, then strips
+      // the param via history.replaceState. Per-table cap 5; total
+      // cap raised to 23.
+      operator_command_palette_message_search: 'mounted',
+      // 8AM — lead-reply stale guard in LeadDetailDrawer. When a
+      // `role='lead'` message arrives via the messages realtime
+      // subscription while an AI draft is visible, the drawer
+      // transitions to draftStaleReason='lead_replied' (blue, not
+      // amber): Approve & send STAYS enabled because the operator's
+      // drafted reply is usually still valid, but a soft "lead
+      // replied — Regenerate to include their latest message"
+      // notice surfaces. Save edit transitions to
+      // 'edited_after_lead'. The stronger 'teammate' guard
+      // unconditionally trumps lead_replied (so a teammate send
+      // after a lead reply re-blocks Approve).
+      operator_lead_drawer_lead_reply_guard: 'mounted',
+      // 8AM — variant audit memory. /api/ai/draft persists the full
+      // variant set into `ai_actions.metadata` (jsonb column added
+      // in migration 021) as
+      // { variant_count, variants_offered[], selected_by_default,
+      //   instruction }. Each stored variant capped at 2000 chars;
+      // no raw lead PII or current_draft is stored. The drawer's
+      // Approve & send POST includes an allowlisted metadata block
+      // { source, ai_action_id, selected_variant_index,
+      //   variant_count } that lands on the `messages.metadata`
+      // column; the route's Zod schema uses `.strict()` so any
+      // non-allowlisted client field is dropped on the floor.
+      operator_ai_draft_variant_memory: 'mounted',
+      // 8AN — Variant replay drawer. Sparkles affordance on
+      // human-role message bubbles whose metadata carries
+      // ai_action_id + selected_variant_index + variant_count.
+      // Opens a right-side drawer that fetches the matching
+      // ai_actions row via the browser client (RLS-scoped) and
+      // renders: sent option, alternatives from
+      // metadata.variants_offered, instruction, agent + latency,
+      // copy-audit-summary button. Read-only.
+      operator_variant_replay_drawer: 'mounted',
+      // 8AN — Similarity-ranked message search via SECURITY DEFINER
+      // RPC search_messages_for_dashboard (migration 022). Replaces
+      // the Phase 8AM ILIKE-by-recency path on the messages branch
+      // of /api/dashboard/search; leads/conversations/tours stay on
+      // their PostgREST chains. Orders by similarity(content, q)
+      // DESC, then created_at DESC. Function REVOKE'd from public
+      // and GRANT'd only to service_role; the route invokes it via
+      // the service client AFTER auth + SALES_ROLES + venue
+      // resolution. p_q is bind-parameterized; hard WHERE on
+      // p_venue_id provides defense-in-depth against route bypass.
+      operator_message_similarity_search: 'mounted',
+      // 8AN — Admin-only AI Draft Activity card on
+      // /dashboard/settings/billing. Shows the last 25 ai_actions
+      // rows where agent='venuerise' AND action='draft_regenerate'
+      // with All/Successful/Failed filter chips + free-text search
+      // over lead name / email / instruction. For each row, joins
+      // messages.metadata.ai_action_id back to show whether the
+      // operator accepted a variant and which index.
+      operator_ai_draft_audit_card: 'mounted',
+      // 8AO — Inbox left-rail ConversationList now surfaces
+      // message-body hits under a "MESSAGES" eyebrow when the
+      // operator types 2+ chars. Reuses the Phase 8AN similarity
+      // RPC via /api/dashboard/search; clicking a result routes to
+      // /dashboard/inbox/<lead>?message=<id> and the Phase 8AM
+      // highlight kicks in.
+      operator_inbox_message_search: 'mounted',
+      // 8AO — RealtimeAIDraftAuditLayer (non-rendering) subscribes
+      // to `ai_actions` INSERTs filtered by venue, narrows client-
+      // side to agent='venuerise' AND action='draft_regenerate',
+      // and dispatches `venuerise:ai-draft-audit-fired` on a 1s
+      // trailing debounce. The AIDraftAuditCard listens and shows
+      // an inline "New draft activity recorded" notice. Requires
+      // `ai_actions` in the supabase_realtime publication:
+      //   alter publication supabase_realtime add table public.ai_actions;
+      // If the publication is missing, manual Refresh still works.
+      operator_ai_draft_audit_realtime: 'mounted',
+      // 8AO — AIDraftAuditCard "Load older" button paginates via
+      // `?occurred_before=<created_at>` strict-less-than cursor.
+      // Page size 25; rows append (deduped by id); current filter
+      // chip + search persist across pages. Errors localize to the
+      // button so the rest of the card stays usable.
+      operator_ai_draft_audit_pagination: 'mounted',
+      // 8AO — CSV export from the AIDraftAuditCard via
+      // /api/admin/ai/draft-audit?format=csv. Allowlisted columns
+      // only (id, venue_id, lead_id, lead_name, lead_email_masked,
+      // success, instruction, variant_count,
+      // accepted_variant_index, latency_ms, error, created_at).
+      // Emails masked server-side BEFORE leaving the route; full
+      // variant text never appears in CSV (replay stays inside
+      // VariantReplayDrawer). UTF-8 BOM for Excel; content type
+      // text/csv; Content-Disposition attachment with
+      // ai-draft-audit-YYYY-MM-DD.csv.
+      operator_ai_draft_audit_csv: 'mounted',
+      // 8AP — Product thesis layer.
+      //   - PRODUCT-THESIS.md positions VenueRise as an AI Revenue
+      //     Operating System for wedding venues, not a generic CRM
+      //     or AI chatbot. Defines the 5 core promises + the high-
+      //     ticket justification (one extra booked wedding covers
+      //     12+ months of SaaS).
+      //   - AGENTIC-WORKFLOW-MAP.md defines 7 cooperating agents
+      //     (Speed-to-Lead, Qualification, Tour Booking, Follow-Up
+      //     Recovery, Revenue Leakage, Operator Accountability,
+      //     Brand Voice). Future phases pick an agent first, code
+      //     second.
+      //   - RevenueLeakageBrief renders the live leakage card on
+      //     /dashboard so the Overview tells the operator what's at
+      //     RISK now, not just what's done.
+      // None of the three adds a runtime dependency, an admin
+      // route, or a migration. They steer phase planning.
+      revenue_os_product_thesis: 'mounted',
+      agentic_workflow_map: 'mounted',
+      revenue_leakage_brief: 'mounted',
+      // 8AQ — Per-venue Revenue OS settings: first-reply SLA, high-
+      // fit threshold, stale high-fit window, cold-lead window.
+      // Stored under venues.metadata.revenue_os (migration 023);
+      // read/written via lib/revenue-os/settings.ts (clamped) and
+      // GET/POST /api/admin/revenue-os/settings (admin-gated,
+      // cross-tenant 403→404). Surfaced in the admin "Revenue OS
+      // thresholds" card on /dashboard/settings/billing.
+      revenue_os_settings: 'mounted',
+      // 8AQ — Pure scoring helper at lib/revenue-os/leakage.ts.
+      // `computeRevenueLeakage` powers the Overview brief AND the
+      // leads-board filter; `computeLeadSpeedToLeadScores` powers
+      // the per-lead chip. No Supabase client inside the helper —
+      // each consumer fetches its own narrow input slice.
+      revenue_leakage_scoring: 'mounted',
+      // 8AQ — Per-lead Speed-to-Lead chip in LeadDetailDrawer.
+      // Bands: 100 (met), 70 (within 2x SLA), 40 (missed), 60
+      // (pending healthy), 20 (pending overdue), 0 (malformed).
+      // Best-effort fetch; the chip silently stays hidden on any
+      // probe failure.
+      speed_to_lead_score: 'mounted',
+      // 8AQ — KanbanBoard `?leakage=` filter. Recognized keys:
+      // slow_first_reply | high_fit_idle | no_tour_booked |
+      // cold_lead_recovery. Drag-and-drop suppressed while a filter
+      // is active (mixing a partial view with stage DnD would let
+      // operators drop into a hidden-row column without context).
+      // Auxiliary tours/inbound fetches lazy-load only when the
+      // matching filter is selected.
+      leakage_leads_filter: 'mounted',
+      // 8AR — Owner-facing Speed-to-Lead roll-up. Server-rendered
+      // SpeedToLeadRollupCard on /dashboard/settings/billing reads
+      // leads + outbound message activity for the last 7 days and
+      // hands them to `computeSpeedToLeadRollup`
+      // (`lib/revenue-os/sla-rollup.ts`). Median + p90 first-reply,
+      // SLA met rate (decided leads only), overdue count, stacked
+      // sparkline by created-day. No new tables, no cron — derived
+      // each render. Pending leads excluded from the met-rate
+      // denominator so the metric doesn't whiplash on new inquiries.
+      speed_to_lead_rollup: 'mounted',
+      // 8AR — Cold-lead baseline fix in
+      // `computeRevenueLeakage`. Some intake paths create a lead
+      // without an inbound `messages.role='lead'` row; the helper
+      // now uses `lead.created_at` as the baseline when no inbound
+      // exists, so the cold-lead tile no longer over-counts.
+      // KanbanBoard `cold_lead_recovery` filter mirrors the same
+      // baseline.
+      cold_lead_baseline_fix: 'mounted',
+      // 8AR — KanbanCard at-a-glance Speed-to-Lead chip on
+      // `new_inquiry` leads. Pure age-vs-SLA approximation; no per-
+      // card DB fetches. KanbanBoard threads the venue's
+      // `firstReplySlaMinutes` down to each card; the drawer's
+      // precise chip (Phase 8AQ) is the authoritative version.
+      kanban_speed_to_lead_chip: 'mounted',
+      // 8AS — RecoveryQueueCard on /dashboard + RecoveryRollupCard
+      // on /dashboard/settings/billing. Both server-rendered, both
+      // backed by `computeRecoverySignals`. Read-only — operator
+      // stays in control of any actual send.
+      follow_up_recovery_queue: 'mounted',
+      // 8AS — LeadDetailDrawer "Why this lead is slipping" panel.
+      // Renders inline beneath the badge row when the recovery
+      // helper resolved a signal for the open lead; lists reason
+      // chips + human-language helper + the suggested action.
+      lead_recovery_explainer: 'mounted',
+      // 8AS — "Use suggestion in draft" CTA. Clicking pre-fills the
+      // regenerate instruction with the static suggested-action
+      // string + switches to the Conversation tab. NEVER calls AI
+      // automatically; the operator must click Regenerate +
+      // Approve. The pending suggestion is consumed on a successful
+      // regenerate (and is cleared on lead change).
+      recovery_suggested_actions: 'mounted',
+      // 8AS — KanbanBoard `?leakage=follow_up_recovery` filter.
+      // Lazy-fetches the recovery input set + calls the helper;
+      // pill displays "Recovery queue"; drag-and-drop suppressed
+      // while active (consistent with the other leakage filters).
+      recovery_leads_filter: 'mounted',
+      // 8AT — Tour Booking Agent scoring layer.
+      // `lib/revenue-os/tour-booking.ts` exports the five-signal
+      // helper (`qualified_no_tour`,
+      // `tour_scheduled_unconfirmed`, `tour_today`,
+      // `tour_completed_no_next_step`,
+      // `tour_no_show_recovery`) + a static suggested-action
+      // catalog. Pure; reused by every Tour Booking surface so the
+      // numbers agree across the dashboard.
+      tour_booking_agent_surfaces: 'mounted',
+      // 8AT — LeadDetailDrawer "Tour Booking Agent" panel.
+      // Renders ABOVE the recovery explainer because tour booking
+      // is the more revenue-proximate action. The Schedule CTA
+      // reuses the existing ScheduleTourDrawer (no new drawer
+      // surface); the Use-suggestion CTA pre-fills the regenerate
+      // instruction (no AI call).
+      tour_readiness_panel: 'mounted',
+      // 8AT — TourConfirmationQueueCard on /dashboard. Server-
+      // rendered; surfaces up to 5 future scheduled-unconfirmed
+      // tours with lead context + a one-click "Open lead" deep-
+      // link to the drawer.
+      tour_confirmation_queue: 'mounted',
+      // 8AT — TourConversionRollupCard on
+      // /dashboard/settings/billing. Derived 30-day counts +
+      // scheduled-rate + confirmed-rate. Includes `booked` in the
+      // qualified-or-later denominator so fast converters aren't
+      // penalized.
+      tour_conversion_rollup: 'mounted',
+      // 8AT — KanbanBoard `?leakage=tour_booking` filter. Lazy-
+      // fetches tours + calls `computeTourBookingSignals`; pill
+      // displays "Tour Booking queue"; drag-and-drop suppressed.
+      tour_booking_leads_filter: 'mounted',
+      // 8AU — Revenue OS digest summary composer at
+      // `lib/revenue-os/digest-summary.ts`. Pure helper that runs
+      // the speed-to-lead rollup, recovery signals, tour booking
+      // signals, and revenue leakage helpers + returns one owner-
+      // readable shape. Used by the cron + preview + manual send
+      // routes so all three render the same content.
+      revenue_os_digest_summary: 'mounted',
+      // 8AU — operator-activity-digest reframe. Subject becomes
+      // "Your VenueRise Revenue OS summary"; body LEADS with
+      // leakage / speed-to-lead / recovery / tour booking and
+      // demotes the raw tour_status_events log to a "log" section
+      // lower in the email. Falls back to the legacy template when
+      // the Revenue OS probe fails so a single bad fetch never
+      // breaks the digest.
+      operator_digest_revenue_reframe: 'mounted',
+      // 8AU — explicit per-section flags so the readiness probe
+      // can confirm each Revenue OS section is rendered.
+      digest_speed_to_lead_section: 'mounted',
+      digest_recovery_section: 'mounted',
+      digest_tour_booking_section: 'mounted',
+      // 8AV — Brand Voice confidence + escalation.
+      //   - `brand_voice_confidence_score`: per-variant confidence
+      //     persisted on every successful /api/ai/draft call.
+      //     Originates from the model's CONFIDENCE: <0-100> line;
+      //     falls back to a text heuristic when the model forgot
+      //     the line.
+      //   - `brand_voice_escalation_gate`: LeadDetailDrawer shows a
+      //     "Low confidence" chip + amber/red status line + soft/
+      //     hard-blocks Approve & send based on the venue's
+      //     `brandVoiceEscalationMode` (`off`/`warn`/`block`).
+      //   - `brand_voice_settings`: floor + mode admin-tunable on
+      //     RevenueOsSettingsCard. Stored under
+      //     `venues.metadata.revenue_os` (same shape as the other
+      //     Phase 8AQ settings).
+      //   - `ai_draft_audit_low_confidence`: AIDraftAuditCard
+      //     surfaces a "Low confidence" filter chip + per-row
+      //     badge. The admin /api/admin/ai/draft-audit route
+      //     returns `min_confidence` + `low_confidence` per row +
+      //     accepts `?low_confidence=true` to filter the slice.
+      brand_voice_confidence_score: 'mounted',
+      brand_voice_escalation_gate: 'mounted',
+      brand_voice_settings: 'mounted',
+      ai_draft_audit_low_confidence: 'mounted',
+      // 8AW — Brand Voice calibration telemetry. Builds on the
+      // 8AV confidence gate; ships before any autonomy so we can
+      // measure whether the gate is trustworthy.
+      //   - `brand_voice_confidence_telemetry`: /api/ai/draft now
+      //     persists the raw model self-rating + heuristic score +
+      //     adjustment delta + `confidence_source` alongside the
+      //     existing `variant_confidences` array. Backward
+      //     compatible (kept `variant_confidences` as the FINAL
+      //     scores so 8AV readers don't need to change).
+      //   - `brand_voice_calibration_summary`: the admin
+      //     /api/admin/ai/draft-audit JSON branch now returns a
+      //     `page_summary` block via
+      //     `computeCalibrationPageSummary`. Powers the
+      //     BrandVoiceCalibrationPanel tiles + signal cards on
+      //     /dashboard/settings/billing.
+      //   - `brand_voice_operator_outcomes`: messages POST stamps
+      //     `operator_outcome`+`edit_distance_bucket` onto the
+      //     source ai_actions row when an operator approves & sends;
+      //     /api/ai/draft stamps `regenerated` on the prior row when
+      //     the operator regenerates without sending. Best-effort,
+      //     terminal-once.
+      //   - `brand_voice_overconfidence_signal`: panel surfaces a
+      //     low/medium/high signal derived from avg adjustment delta
+      //     + regenerate rate. Operator-friendly copy
+      //     ("Overconfidence signal: Watch") — no ML jargon.
+      brand_voice_confidence_telemetry: 'mounted',
+      brand_voice_calibration_summary: 'mounted',
+      brand_voice_operator_outcomes: 'mounted',
+      brand_voice_overconfidence_signal: 'mounted',
+      // 8AX — Safe Autopilot Guardrails + Draft Approval Mode.
+      // Builds on the 8AW calibration layer; ships BEFORE any
+      // autonomous sending. The autonomy gate (8AY simulation
+      // mode, 8AZ+ real autopilot) is still closed.
+      //   - `brand_voice_autopilot_guardrails`: pure helper at
+      //     lib/revenue-os/autopilot-guardrails.ts. Three modes
+      //     (eligible / review_required / blocked), stable reason
+      //     codes; every regenerate now persists a per-variant
+      //     decision into ai_actions.metadata.autopilot_decisions.
+      //   - `draft_risk_detection`: deterministic keyword scan
+      //     for pricing / policy / availability surfaces. Hard-
+      //     blocker tier in the decision helper.
+      //   - `lead_drawer_autopilot_decision`: LeadDetailDrawer
+      //     renders the decision pill + operator-readable helper
+      //     under the existing confidence chip. The pill updates
+      //     as the operator switches variants. NO auto-send
+      //     button was added; Approve & send is still manual.
+      //   - `draft_audit_autopilot_breakdown`: admin audit route
+      //     returns autopilot_mode + risk_flags per row + an
+      //     autopilot_breakdown over the page slice. The
+      //     BrandVoiceCalibrationPanel renders the readiness
+      //     breakdown; the AIDraftAuditCard appends the decision
+      //     to the per-row detail line.
+      //   - `autonomous_sending_still_disabled`: explicit flag so
+      //     a monitor can assert the safety posture has NOT
+      //     regressed. Will stay 'mounted' until Phase 8AY ships
+      //     simulation mode + we know the system can be trusted.
+      brand_voice_autopilot_guardrails: 'mounted',
+      draft_risk_detection: 'mounted',
+      lead_drawer_autopilot_decision: 'mounted',
+      draft_audit_autopilot_breakdown: 'mounted',
+      autonomous_sending_still_disabled: 'mounted',
+      // 8AY — Autopilot Simulation Mode. Observation-only layer
+      // that proves whether the 8AX guardrails are calibrated
+      // well enough that future autonomy would be safe. NEVER
+      // sends a message; the `autonomous_sending_still_disabled`
+      // flag above is the explicit assertion that this posture
+      // hasn't regressed.
+      //   - `autopilot_simulation_mode`: per-row simulation
+      //     projection (`would_send` / `would_require_review` /
+      //     `would_block`) on the admin draft-audit route + a
+      //     dedicated `/api/admin/ai/autopilot-simulation`
+      //     endpoint over a 1–90 day window (default 30).
+      //   - `autopilot_simulation_summary`: roll-up block
+      //     emitted by both endpoints — counts, time-saved
+      //     estimate, and a readiness signal
+      //     (`not_ready` / `watch` / `promising`).
+      //   - `autopilot_operator_alignment`: per-row alignment
+      //     classification (aligned / operator_more_conservative
+      //     / operator_less_conservative / unknown). Surfaces
+      //     dangerous mismatches (operator overrode a Blocked
+      //     decision by sending as-is) in red.
+      //   - `autopilot_simulation_panel`: AutopilotSimulationPanel
+      //     mounted between BrandVoiceCalibrationPanel and
+      //     AIDraftAuditCard on /dashboard/settings/billing.
+      //     Renders tiles, readiness card, bucket section, and
+      //     up to 5 recent mismatches with lead deep-links.
+      autopilot_simulation_mode: 'mounted',
+      autopilot_simulation_summary: 'mounted',
+      autopilot_operator_alignment: 'mounted',
+      autopilot_simulation_panel: 'mounted',
+      // 8AZ — Autopilot Shadow Evaluation + False Positive
+      // Review Queue. Builds on the 8AY simulation; adds an
+      // operator-labelled disagreement queue + per-rule false-
+      // positive signals. Still observation only — the
+      // `autonomous_sending_still_disabled` flag (set in 8AX,
+      // carried through 8AY, carried through 8AZ) remains the
+      // explicit assertion that no autonomy was introduced.
+      //   - `autopilot_review_queue`: GET /api/admin/ai/
+      //     autopilot-reviews returns the disagreement queue
+      //     (operator_more_conservative + operator_less_
+      //     conservative rows) joined with ai_action_reviews,
+      //     plus a summary block + rule_signals.
+      //   - `autopilot_review_labels`: POST /api/admin/ai/
+      //     autopilot-reviews/[aiActionId] upserts the
+      //     operator's verdict (confirmed_guardrail_too_strict
+      //     / confirmed_guardrail_correct /
+      //     confirmed_operator_error / deferred). Unique on
+      //     ai_action_id (migration 024) — relabeling updates,
+      //     never duplicates.
+      //   - `autopilot_rule_signal_summary`: simulation +
+      //     review queue endpoints surface a `rule_signals`
+      //     array (per-rule reviewed counts, confirmed-too-
+      //     strict counts, false-positive rate). Powers the
+      //     RuleSignalsCard on AutopilotSimulationPanel.
+      //   - `autopilot_shadow_evaluation`: AutopilotReviewQueue
+      //     UI mounted on /dashboard/settings/billing between
+      //     the simulation panel and the audit card. Labels are
+      //     calibration evidence; they DO NOT auto-tune any
+      //     guardrail, DO NOT block any operator, DO NOT enable
+      //     autonomy.
+      autopilot_review_queue: 'mounted',
+      autopilot_review_labels: 'mounted',
+      autopilot_rule_signal_summary: 'mounted',
+      autopilot_shadow_evaluation: 'mounted',
+      // 8BA — Autopilot Safety Scorecard + Per-Venue Autonomy
+      // Readiness Gate. The final read-only safety surface
+      // before any opt-in autonomy phase. Closes the loop on
+      // the 8AV–8AZ telemetry stack by producing a single
+      // verdict (`not_eligible` / `watch` / `eligible`) per
+      // venue. The `autonomous_sending_still_disabled` flag
+      // (set in 8AX, carried through 8AY/8AZ/8BA) remains
+      // explicit so monitors can assert that the safety
+      // posture hasn't regressed.
+      //   - `autopilot_safety_scorecard`: GET /api/admin/ai/
+      //     autopilot-readiness returns the verdict + gate
+      //     list + raw inputs over a 1–90 day window
+      //     (default 30). Pure helper at lib/revenue-os/
+      //     autopilot-readiness.ts. No draft body / variants
+      //     / lead emails / message content exposed.
+      //   - `per_venue_autonomy_readiness_gate`: six gates
+      //     (simulation_readiness_promising, min_scored_rows,
+      //     min_reviewed_disagreements_pct,
+      //     max_false_positive_rate_per_rule,
+      //     zero_operator_less_conservative_unreviewed,
+      //     min_window_days_with_data) — four blocking, two
+      //     warning. Verdict requires every blocker passing.
+      //   - `autonomy_eligibility_signal`:
+      //     AutopilotReadinessScorecard mounted ABOVE the
+      //     simulation panel on /dashboard/settings/billing.
+      //     Verdict banner, gate checklist with current value
+      //     + threshold + next-step copy, eligible-state
+      //     emerald caveat reinforcing "autonomy is still
+      //     disabled." NO toggle. NO action button.
+      autopilot_safety_scorecard: 'mounted',
+      per_venue_autonomy_readiness_gate: 'mounted',
+      autonomy_eligibility_signal: 'mounted',
+      // 8BB — Tour Slot Suggestions from Availability. The
+      // TourReadinessPanel on the lead detail drawer renders
+      // up to 2 clickable chips derived from the venue's saved
+      // `tour_availability` windows + existing tour calendar.
+      // Clicking a chip pre-fills the existing
+      // ScheduleTourDrawer (via the Phase 8I
+      // `defaultScheduledAt` prop). NO autonomous scheduling
+      // — the operator still confirms inside the drawer.
+      tour_slot_suggestions: 'mounted',
+      // 8BC — Venue Availability Intelligence. Per-venue tour
+      // duration + buffer settings (RevenueOsSettings extension),
+      // operator-managed blackout dates (migration 025 +
+      // /api/venues/[id]/tour-blackouts routes), and timezone-
+      // aware slot suggestion labels (`venue.timezone` threaded
+      // into `suggestTourSlots`). Still operator-confirmed —
+      // chips pre-fill the existing ScheduleTourDrawer; no
+      // autonomous scheduling.
+      venue_tour_duration_setting: 'mounted',
+      venue_tour_buffer_setting: 'mounted',
+      tour_blackout_dates: 'mounted',
+      tour_suggestion_timezone_awareness: 'mounted',
+      // 8BD — Reactivation Outreach Cadence + Won/Lost Reason
+      // Library. Operator-supplied lost reasons + the
+      // reactivation helper turn lost leads into actionable
+      // candidates without any autonomous outreach. Migration
+      // 026 added `leads.metadata`; the lost-reason taxonomy
+      // lives at `metadata.lost_reason`. The
+      // `autonomous_sending_still_disabled` flag stays mounted
+      // — every reactivation draft still flows through the
+      // existing 8AV–8BA brand voice / autopilot safety stack
+      // and the operator clicks Approve & send.
+      lost_reason_taxonomy: 'mounted',
+      reactivation_queue: 'mounted',
+      reactivation_leads_filter: 'mounted',
+      reactivation_digest_section: 'mounted',
+      // 9A — Enterprise Audit Log + RBAC Sweep + Observability
+      // Baseline. Migration 027 added `public.audit_events` with
+      // RLS gated to owner/admin via `has_venue_role`. The helper
+      // `lib/enterprise/audit-events.ts` writes through service-
+      // role best-effort (never throws, never blocks the original
+      // business action). High-risk routes — leads PATCH/DELETE,
+      // tours create/update/bulk-cancel, settings, venues,
+      // availability, blackouts, AI safety review/reject,
+      // operator message send, digest preferences/manual send,
+      // digest suppression remove/remove-all, tours clear-pause —
+      // emit one audit row per write with sanitized snapshots.
+      // The `autonomous_sending_still_disabled` flag from 8AX
+      // stays mounted: this phase ONLY adds observability; no
+      // autonomous sending, no autopilot toggle, no decision
+      // logic change.
+      enterprise_audit_log: 'mounted',
+      enterprise_audit_events_card: 'mounted',
+      rbac_documentation_pass: 'mounted',
+      request_context_baseline: 'mounted',
+      // 9B — Audit Coverage Completion + RBAC Hardening Matrix.
+      // Completed the audit instrumentation pass started in 9A
+      // (billing, team RBAC, leads create, onboarding, demo,
+      // test-send, digest preview); added `lib/enterprise/audit-actions.ts`
+      // string constants; documented the per-route coverage and
+      // RBAC posture in docs/AUDIT-COVERAGE.md +
+      // docs/RBAC-MATRIX.md; added the
+      // `scripts/check-audit-coverage.mjs` regression guard wired
+      // into `npm run verify`; polished the
+      // EnterpriseAuditEventsCard drawer (collapsed JSON, copy
+      // buttons for audit id + request id + actor user + target
+      // id). No autonomous sending, no autopilot toggle.
+      enterprise_audit_coverage_matrix: 'mounted',
+      enterprise_rbac_matrix: 'mounted',
+      enterprise_audit_coverage_check: 'mounted',
+      enterprise_audit_detail_drawer: 'mounted',
+      // 9C — Audit immutability mirror + cross-tenant probe.
+      // Migration 028 added `public.audit_event_mirror` with
+      // owner-only SELECT and NO write policies; all inserts go
+      // through `lib/enterprise/audit-mirror.ts#mirrorAuditEvent`
+      // via service role. `recordAuditEvent` fires the mirror
+      // best-effort after the primary insert succeeds — failures
+      // are logged + Sentry-captured but never block the business
+      // action. Gated by `AUDIT_MIRROR_ENABLED=1` (default OFF;
+      // code path is always mounted). The
+      // `scripts/check-cross-tenant-rbac.mjs` smoke harness
+      // probes a representative set of admin + resource routes
+      // for the 403→404 collapse posture; documented in
+      // docs/RUNBOOK.md and runs via `npm run check:cross-tenant-rbac`.
+      // No autonomous sending, no autopilot toggle.
+      enterprise_audit_mirror: 'mounted',
+      enterprise_audit_mirror_best_effort: 'mounted',
+      // 9D — Data export, PII redaction, retention controls.
+      // `/api/admin/data-export` returns a venue-scoped JSON
+      // snapshot (cap MAX_EXPORT_BYTES=8 MB, 413 with pointer to
+      // future async path when exceeded);
+      // `/api/admin/leads/[leadId]/redact-pii` soft-redacts a
+      // single lead's name/email/phone/notes + PII metadata while
+      // preserving conversations / tours / ai_actions /
+      // audit_events. Both routes emit `audit_events` rows
+      // (`data_export_requested`, `lead_pii_redacted`); audit
+      // metadata records counts + reasons, NEVER the full export
+      // payload. DataLifecycleCard on /dashboard/settings/billing
+      // surfaces export + redaction info + a retention posture
+      // summary (audit mirror state, digest retention, audit log
+      // retention, PII redaction availability). The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      enterprise_data_export: 'mounted',
+      lead_pii_redaction: 'mounted',
+      data_lifecycle_card: 'mounted',
+      retention_posture_visible: 'mounted',
+      // 9E — Security headers, CSP report-only telemetry, secrets
+      // rotation runbook. next.config.js ships HSTS (prod-only),
+      // X-Content-Type-Options, Referrer-Policy, Permissions-Policy
+      // (powerful APIs disabled including bluetooth), X-Frame-Options
+      // SAMEORIGIN with /widget/* exception, an ENFORCED
+      // Content-Security-Policy with frame-ancestors only, and a
+      // SEPARATE Content-Security-Policy-Report-Only with the fuller
+      // aspirational directive set pointing at /api/security/csp-report.
+      // The report endpoint is anonymous + per-IP rate-limited
+      // (rateLimitCspReport, 60/min). Secrets rotation cadence +
+      // blast radius documented in docs/RUNBOOK.md (the
+      // `secrets_rotation_runbook` flag is doc-presence only). No
+      // autonomous sending, no agent prompt changes, no Stripe
+      // webhook changes, no widget-intake changes. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      security_headers_report_only: 'mounted',
+      csp_report_endpoint: 'mounted',
+      hsts_header: 'mounted',
+      permissions_policy_header: 'mounted',
+      secrets_rotation_runbook: 'mounted',
+      // 9F — Rate-limit normalization + abuse monitoring.
+      // `lib/rate-limit-catalog.ts` is the typed source of truth for
+      // every limiter key prefix. `scripts/check-rate-limit-coverage.mjs`
+      // scans app/api for routes lacking a rateLimit*/RATE_LIMIT_EXEMPT/
+      // public route/webhook route marker (65 routes currently clean).
+      // Every rate-limit wrapper accepts an optional abuseContext arg;
+      // on block it fires a fire-and-forget `recordAbuseEvent`
+      // (lib/enterprise/abuse-events.ts) into `public.abuse_events`
+      // (migration 029). The AbuseMonitorCard on
+      // /dashboard/settings/billing reads
+      // `/api/admin/security/abuse-events` (admin/owner only,
+      // venue-scoped) and surfaces top routes/reasons/limiter keys +
+      // a recent-rows table. Public-route blocks (widget, CSP) are
+      // stored with venue_id NULL and intentionally NOT surfaced
+      // through the venue card — operators inspect via SQL editor.
+      // The `autonomous_sending_still_disabled` flag stays mounted.
+      rate_limit_catalog: 'mounted',
+      rate_limit_coverage_check: 'mounted',
+      abuse_monitoring: 'mounted',
+      abuse_monitor_card: 'mounted',
+      public_route_throttles: 'mounted',
+      // 9G — Enterprise SSO readiness. Migration 030 added
+      // `public.sso_connections` (owner-only mutations, admin
+      // SELECT) and `public.sso_login_events` (service-role
+      // insert via lib/enterprise/sso/audit.ts;
+      // owner/admin SELECT scoped to venue). The vendor adapter
+      // resolves to the `notConfiguredAdapter` placeholder for
+      // every provider — initiate + callback return structured
+      // SSO_* error codes without performing any real handshake.
+      // Public auth routes (/api/auth/sso/{initiate,callback})
+      // are rate-limited via the new `vr:sso` Upstash prefix
+      // (10/min/IP+domain on initiate, 10/min/IP on callback).
+      // Admin connection management lives at
+      // /api/admin/security/sso-connections{,/[id]} (owner-only
+      // for POST/PATCH/DELETE) + /api/admin/security/sso-login-events
+      // (admin/owner GET). The SsoConnectionsCard +
+      // SsoLoginEventsCard on /dashboard/settings/billing surface
+      // the operator-facing view. No real SAML/OIDC exchange, no
+      // SCIM, no JIT user creation, no secrets stored. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      sso_readiness: 'mounted',
+      sso_connections_table: 'mounted',
+      sso_login_events: 'mounted',
+      sso_admin_endpoints: 'mounted',
+      sso_provider_abstraction: 'mounted',
+      // 9H — Backup posture + disaster recovery readiness.
+      // `lib/enterprise/disaster-recovery/*` provides the typed
+      // policy (RTO 4h, RPO 24h, retention 7d floor, quarterly
+      // dry-runs), the server-only Management API smoke probe
+      // (degrades to status='unknown' when env is unset), and
+      // the restore-intent audit helper that routes through
+      // `recordAuditEvent`. The
+      // `/api/admin/security/backup-posture` endpoint is
+      // read-only; `/api/admin/security/restore-intents` is
+      // owner-only + audit-only — the product NEVER executes a
+      // restore. Real restores happen via the Supabase
+      // dashboard / support runbook per
+      // docs/DISASTER-RECOVERY.md. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      backup_posture: 'mounted',
+      disaster_recovery_runbook: 'mounted',
+      restore_intent_audit: 'mounted',
+      backup_posture_card: 'mounted',
+      backup_posture_check: 'mounted',
+      // 9I — SOC 2 / enterprise evidence packaging.
+      // `lib/enterprise/evidence/*` consolidates the existing
+      // platform controls into a single typed catalog +
+      // markdown/CSV renderers. `/api/admin/security/evidence-report`
+      // surfaces the live report (admin/owner; JSON refresh +
+      // markdown/CSV download). The SecurityEvidenceCenter card
+      // on /dashboard/settings/billing surfaces it in-product.
+      // `scripts/build-evidence-pack.mjs` produces a static pack
+      // at `artifacts/evidence/` without any Supabase creds.
+      // `docs/SOC2-EVIDENCE-MAP.md` carries the TSC mapping +
+      // certification disclaimer + known gaps. THIS IS NOT a SOC 2
+      // attestation; formal SOC 2 requires an auditor +
+      // observation period. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      security_evidence_center: 'mounted',
+      evidence_report_api: 'mounted',
+      evidence_pack_generator: 'mounted',
+      soc2_evidence_map: 'mounted',
+      evidence_packaging_check: 'mounted',
+      // 9J — Enterprise sales readiness + questionnaire automation.
+      // `lib/enterprise/evidence/questionnaire-{types,map,report}.ts`
+      // generates buyer-ready security questionnaire responses
+      // (generic / CAIQ-Lite / SIG-Lite / VSAQ-Lite) by cross-
+      // referencing each answer to the Phase 9I EVIDENCE_CONTROLS
+      // map. `lib/enterprise/evidence/security-summary.ts` produces
+      // the buyer-facing security summary with explicit known
+      // limitations + planned improvements.
+      // `lib/enterprise/evidence/readiness-checklist.ts` is a
+      // server-only internal scoreboard surfaced on
+      // /dashboard/settings/billing. Three admin routes back the
+      // new cards: `/api/admin/security/questionnaire-response`,
+      // `/api/admin/security/buyer-security-summary`, and
+      // `/api/admin/security/demo-mode` (PATCH is owner-only).
+      // `DemoModeBanner` is a VISUAL marker only — NOT data
+      // anonymization. Every buyer-facing output carries the
+      // "REVIEW BEFORE SENDING" disclaimer. We continue to NOT
+      // claim SOC 2 certification and NOT claim real SAML/OIDC or
+      // SCIM is live. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      security_questionnaire_generator: 'mounted',
+      buyer_security_summary: 'mounted',
+      demo_mode_foundation: 'mounted',
+      enterprise_readiness_checklist: 'mounted',
+      sales_readiness_exports: 'mounted',
+      // 9K — Vendor risk + subprocessor disclosure pack.
+      // `lib/enterprise/vendor-risk/vendor-registry.ts` is the
+      // single source of truth for every third-party processor.
+      // `/api/admin/security/vendor-risk-report` (admin/owner;
+      // JSON / markdown / CSV) renders the full admin view;
+      // `/api/admin/security/subprocessor-disclosure` (admin/owner;
+      // JSON / markdown / CSV) renders the buyer-safe filtered
+      // view (only vendors with disclosureStatus === 'public';
+      // evidence references stripped). VendorRiskCard +
+      // SubprocessorDisclosureCard surface them in-product on
+      // /dashboard/settings/billing. Markdown + CSV exports
+      // audit (vendor_risk_report_exported /
+      // subprocessor_disclosure_exported); JSON refreshes don't.
+      // `scripts/build-vendor-risk-pack.mjs` produces a static
+      // pack at `artifacts/evidence/vendor-risk/` without any
+      // Supabase creds. `scripts/check-vendor-risk.mjs` asserts
+      // the scaffolding stays in place + cross-checks the
+      // registry against known production packages.
+      // `docs/VENDOR-RISK.md` documents the registry process,
+      // DPA/SCC/SOC 2 review workflow, and what NOT to claim.
+      // Phase 9K does NOT claim DPA / SCC / SOC 2 verification
+      // for any vendor; every row defaults to
+      // assuranceStatus="manual_review_required" until evidence
+      // is confirmed by legal. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      vendor_risk_registry: 'mounted',
+      subprocessor_disclosure: 'mounted',
+      vendor_risk_exports: 'mounted',
+      vendor_risk_cards: 'mounted',
+      vendor_risk_check: 'mounted',
+      // 9L — Incident response automation + alert routing.
+      // `lib/enterprise/incidents/*` ships first-class incident
+      // records (public.incidents + public.incident_timeline_events
+      // + public.incident_alert_deliveries — migration 032),
+      // conservative operator-triggered detectors over
+      // abuse_events / sso_login_events / backup_posture /
+      // health_check, and env-gated alert routing helpers for
+      // Slack / PagerDuty / Sentry. Four admin routes back the
+      // surface: GET+POST /api/admin/security/incidents,
+      // GET+PATCH /api/admin/security/incidents/[id], POST
+      // /api/admin/security/incidents/detect, POST
+      // /api/admin/security/incidents/[id]/alert (all
+      // admin/owner). IncidentResponseCard surfaces them
+      // in-product. `scripts/build-incident-response-pack.mjs`
+      // produces a static runbook + PIR template + severity CSV
+      // for off-line review. Alert routing is env-gated
+      // (INCIDENT_ALERTS_ENABLED + INCIDENT_SLACK_WEBHOOK_URL +
+      // INCIDENT_PAGERDUTY_ROUTING_KEY); helpers return
+      // skipped_disabled / skipped_unconfigured when absent and
+      // never throw. Webhook URLs + routing keys NEVER appear in
+      // logs, responses, or audit metadata. NO autonomous
+      // remediation; NO auto-resolve; customer notification
+      // requires legal/operator review. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      incident_response_records: 'mounted',
+      incident_detection_candidates: 'mounted',
+      incident_alert_routing: 'mounted',
+      incident_response_card: 'mounted',
+      incident_response_pack: 'mounted',
+      // 9M — Data privacy + DSR readiness. lib/enterprise/privacy/*
+      // ships a static data inventory (15 categories) + retention
+      // policy + a first-class DSR workflow (public.dsr_requests +
+      // public.dsr_timeline_events — migration 033). Five admin
+      // routes back the surface (readiness GET, dsr-requests
+      // GET+POST, dsr-requests/[id] GET+PATCH,
+      // dsr-requests/[id]/export-preview POST,
+      // dsr-requests/[id]/deletion-review POST — all admin/owner;
+      // mutating routes additionally require requireVenueRole
+      // ['owner','admin']). PrivacyReadinessCard +
+      // DsrRequestsCard surface the layer in-product.
+      // Export preview is metadata-only; deletion review is
+      // non-destructive — real exports and deletions are
+      // operator + legal reviewed. We do NOT claim GDPR / CCPA /
+      // LGPD compliance and DSRs are NEVER auto-fulfilled. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      privacy_data_inventory: 'mounted',
+      privacy_retention_policy: 'mounted',
+      dsr_request_tracking: 'mounted',
+      dsr_non_destructive_reviews: 'mounted',
+      privacy_readiness_pack: 'mounted',
+      // 9N — Trust Center foundation. lib/enterprise/trust-center/*
+      // ships a public buyer-facing /trust page (curated copy +
+      // public subprocessor list) + gated bearer-token grants for
+      // packets at three scopes (summary_only / standard_packet /
+      // full_packet). Migration 034 adds public.trust_access_grants
+      // (token stored as salted-SHA-256 hash) + public.trust_access_events
+      // (every grant_created / revoked / accessed / artifact_downloaded
+      // / expired / access_denied logged with fingerprinted IP +
+      // user-agent). Four admin routes (grants GET+POST,
+      // grants/[id] PATCH, access-events GET, packet GET) +
+      // public+gated pages + gated artifact route. TrustCenterCard
+      // + TrustAccessGrantsCard mount on billing page. Internal-only
+      // artifacts NEVER emit even on full_packet. Bearer tokens are
+      // short-lived (default 14d, max 90d) and revocable.
+      // `scripts/build-trust-center-pack.mjs` produces a static
+      // pack for offline review. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      trust_center_public_summary: 'mounted',
+      trust_center_gated_packets: 'mounted',
+      trust_access_tracking: 'mounted',
+      trust_center_admin_cards: 'mounted',
+      trust_center_pack: 'mounted',
+      // 9O — Compliance operations calendar + evidence freshness.
+      // lib/enterprise/compliance-ops/{types,policy,calendar,freshness}.ts
+      // back a 17-row static policy spanning every readiness area
+      // shipped in 9I-9N. Migration 035 adds public.compliance_review_events
+      // (CHECK on area/cadence/status/source, partial unique index on
+      // active (venue,policy,due_at), owner/admin RLS). Three admin
+      // routes (calendar GET+POST, calendar/[id] PATCH, freshness
+      // GET) all admin/owner-gated; mutating routes additionally
+      // require requireVenueRole(['owner','admin']). Typed audit
+      // actions cover every lifecycle step (seeded / created /
+      // completed / waived / updated / exported).
+      // ComplianceCalendarCard surfaces it inline with seed +
+      // custom + complete + waive + CSV/MD exports.
+      // build-compliance-ops-pack ships a static policy + cadence
+      // CSV + freshness template for offline review.
+      // The calendar tracks OPERATOR-INITIATED reviews — does NOT
+      // prove continuous compliance, does NOT auto-rotate secrets,
+      // does NOT send external alerts. The
+      // `autonomous_sending_still_disabled` flag stays mounted.
+      compliance_calendar: 'mounted',
+      compliance_freshness_tracking: 'mounted',
+      compliance_review_workflow: 'mounted',
+      compliance_calendar_card: 'mounted',
+      compliance_ops_pack: 'mounted',
+      // 9P — Contract commitments register. lib/enterprise/commitments/*
+      // ships an operator-recorded register for customer-specific
+      // contractual / security / privacy commitments. Migration
+      // 036 adds public.contract_commitments + contract_commitment_events
+      // with CHECK on source_type / area / status / risk_level /
+      // event_type, owner/admin RLS. Three admin routes
+      // (commitments GET+POST, commitments/[id] GET+PATCH,
+      // commitments/readiness GET) all admin/owner-gated;
+      // mutating routes additionally require requireVenueRole.
+      // Typed audit actions per lifecycle step (created /
+      // updated / status_changed / fulfilled / reviewed /
+      // exported / readiness_exported). CommitmentsRegisterCard
+      // + CommitmentsReadinessCard surface them inline. The
+      // unsupported-risk detector flags commitments referencing
+      // capabilities the product does not fully support today
+      // (SCIM, real SSO, 24/7 monitoring, automated DSR
+      // fulfilment, AI-vendor training-use claims). Operators
+      // are NOT blocked from recording — the warning exists so
+      // the gap can be rectified with the buyer.
+      // build-commitments-pack ships a static support-posture
+      // pack for offline review.
+      // This is a tracking / readiness workflow ONLY — NOT
+      // legal advice, NOT contractual compliance proof, NO
+      // autonomous contract parsing, NO auto-promise generation.
+      // autonomous_sending_still_disabled flag stays mounted.
+      contract_commitments_register: 'mounted',
+      commitments_readiness: 'mounted',
+      unsupported_commitment_warnings: 'mounted',
+      commitments_pack: 'mounted',
+      // Phase 8BE — Omnichannel inbox connector foundation.
+      //   - omnichannel_channel_registry: capability matrix +
+      //     CHANNEL_TYPES vocabulary (lib/integrations/channels/*).
+      //   - channel_connection_admin: GET/POST/PATCH admin routes
+      //     under /api/admin/integrations/channels.
+      //   - external_conversation_mapping: external_conversations
+      //     + external_messages tables (migration 037) hold the
+      //     external thread → internal lead/conversation/message
+      //     mapping + idempotency.
+      //   - inbound_channel_normalization: public inbound routes
+      //     (/api/integrations/website/message,
+      //     /api/integrations/lead-forwarding/the-knot,
+      //     /api/integrations/lead-forwarding/weddingwire,
+      //     /api/integrations/meta/webhook PLACEHOLDER) all funnel
+      //     through normalizeInboundChannelMessage.
+      //   - manual_required_reply_workflow:
+      //     POST /api/conversations/[id]/mark-sent-manually +
+      //     ManualChannelReplyBanner component. Records human
+      //     message + external_messages 'marked_sent_manually'
+      //     status — operator confirms after sending out-of-band.
+      //   - inbox_channel_badges: ChannelSourceBadge rendered in
+      //     ConversationList + ConversationThread message bubbles.
+      //   - Honesty: NO real Meta / Gmail / WeddingWire / The Knot
+      //     OAuth or Send API. NO autonomous sending. Manual-
+      //     required channels surface an explicit copy + mark
+      //     workflow. autonomous_sending_still_disabled stays
+      //     mounted under the demo block above.
+      omnichannel_channel_registry: 'mounted',
+      channel_connection_admin: 'mounted',
+      external_conversation_mapping: 'mounted',
+      inbound_channel_normalization: 'mounted',
+      manual_required_reply_workflow: 'mounted',
+      inbox_channel_badges: 'mounted',
+      // Phase 8BE-2 — Omnichannel inbox activation patch.
+      //   - omnichannel_inbox_loader_channels: inbox + lead pages
+      //     now join external_conversations (with messages.metadata
+      //     fallback) via lib/integrations/channels/inbox-channels.ts
+      //     so ConversationList rows light up the channel source
+      //     badge for normalized conversations.
+      //   - manual_reply_banner_mounted: ManualChannelReplyBanner is
+      //     mounted in the LeadDetailDrawer draft footer when the
+      //     resolved conversation channel reports
+      //     manualReplyRequired=true. The Approve & send button is
+      //     gated on those channels so VenueRise never claims to
+      //     have delivered the reply.
+      //   - manual_channel_reply_confirmation_ui: Copy reply + Mark
+      //     sent manually controls call /api/conversations/[id]/
+      //     mark-sent-manually, which writes a `human` message +
+      //     stamps external_messages with `marked_sent_manually`.
+      //     `manual_reply_marked_by` lands in messages.metadata so
+      //     ConversationThread can render the "Sent manually" pill.
+      omnichannel_inbox_loader_channels: 'mounted',
+      manual_reply_banner_mounted: 'mounted',
+      manual_channel_reply_confirmation_ui: 'mounted',
+      // Phase 8BG — WeddingWire / The Knot lead-forwarding parser.
+      //   - lead_forwarding_parser: deterministic regex-first
+      //     parser in lib/integrations/channels/lead-forwarding-parser.ts.
+      //     Accepts structured JSON payloads OR raw forwarded
+      //     bodies; returns confidence + needs-review flag.
+      //   - the_knot_forwarding_parser / weddingwire_forwarding_parser:
+      //     the public lead-forwarding routes funnel through the
+      //     parser before normalization. Outbound stays
+      //     manual-required.
+      //   - parse_confidence_review: ParseReviewBadge in
+      //     ConversationThread + ConversationList warning dot +
+      //     "Source parse review" panel in LeadDetailDrawer.
+      //   - lead_forwarding_test_parse: admin-only QA endpoint
+      //     POST /api/admin/integrations/lead-forwarding/test-parse.
+      //     Pure parse — no DB write.
+      //   - Honesty: NO model parser. NO raw body logging. NO
+      //     real outbound API to The Knot or WeddingWire.
+      lead_forwarding_parser: 'mounted',
+      the_knot_forwarding_parser: 'mounted',
+      weddingwire_forwarding_parser: 'mounted',
+      parse_confidence_review: 'mounted',
+      lead_forwarding_test_parse: 'mounted',
+      // Phase 8BF — Meta / Instagram / Facebook connector +
+      // verified webhook. Replaces the 8BE placeholder.
+      //   - meta_webhook_signature_verification: HMAC-SHA256
+      //     verification via lib/integrations/channels/meta-signature.ts.
+      //     Requires META_APP_SECRET; missing-env returns 503.
+      //   - instagram_inbound_connector / facebook_inbound_connector:
+      //     parsed messaging events route through
+      //     normalizeInboundChannelMessage when a venue
+      //     connection matches on instagram_business_account_id
+      //     or meta_page_id.
+      //   - meta_lead_ads_placeholder: leadgen events create a
+      //     placeholder message with
+      //     requires_graph_hydration=true and
+      //     parse_needs_review=true. NO Graph API call.
+      //   - meta_channel_connection_metadata: Meta-family
+      //     channels accept the allowlisted identifier keys
+      //     (page id / IG business / ad account / app id) only.
+      //     Token / secret keys are rejected server-side.
+      //   - meta_outbound_still_manual: capability matrix keeps
+      //     outbound: false. Approve & send stays gated by the
+      //     manual-required banner.
+      //   - meta_webhook_test_parse: POST /api/admin/integrations/
+      //     meta/test-parse runs the parser without normalizing.
+      //   - Honesty: NO Meta OAuth, NO Send API, NO Graph
+      //     hydration, NO token storage. autonomous_sending_
+      //     still_disabled stays mounted.
+      meta_webhook_signature_verification: 'mounted',
+      instagram_inbound_connector: 'mounted',
+      facebook_inbound_connector: 'mounted',
+      meta_lead_ads_placeholder: 'mounted',
+      meta_channel_connection_metadata: 'mounted',
+      meta_outbound_still_manual: 'mounted',
+      meta_webhook_test_parse: 'mounted',
+      // Phase 8BH — Website + ads attribution pipeline.
+      //   - website_attribution_capture: widget.js captures
+      //     UTM params + click ids + referrer + landing page
+      //     from the parent page and forwards via iframe
+      //     query params; the embedded widget page passes
+      //     them to /api/widget alongside the lead intake.
+      //   - lead_attribution_metadata: every new lead
+      //     (widget + omnichannel) lands with
+      //     `metadata.attribution` parsed via
+      //     parseLeadAttribution. Legacy leads stay safe.
+      //   - lead_drawer_attribution_panel: LeadDetailDrawer
+      //     renders source label, campaign, landing page,
+      //     referrer, and click-id presence badges when
+      //     metadata.attribution is set.
+      //   - attribution_performance_card: Overview groups
+      //     leads + tours by SourceLabel; estimated pipeline
+      //     is summed from `leads.budget` and clearly NOT
+      //     ROAS — ad spend is not connected.
+      //   - analytics_attribution_breakdown: analytics page
+      //     renders the same summary as a simple table.
+      //   - Honesty: no pixel, no ad-platform API, no token
+      //     storage, no multi-touch.
+      website_attribution_capture: 'mounted',
+      lead_attribution_metadata: 'mounted',
+      lead_drawer_attribution_panel: 'mounted',
+      attribution_performance_card: 'mounted',
+      analytics_attribution_breakdown: 'mounted',
+      // Phase 8BI — Booked revenue attribution + ROI proxy.
+      //   - booked_revenue_attribution: per-source rollup of
+      //     leads / tours / booked / estimated pipeline /
+      //     estimated booked value via
+      //     lib/enterprise/attribution/revenue.ts.
+      //   - attribution_revenue_helper: pure helper. No DB
+      //     access. Never throws.
+      //   - booked_revenue_attribution_card: Overview card
+      //     below AttributionPerformanceCard. Honest empty
+      //     state when no booked leads exist yet.
+      //   - analytics_booked_revenue_by_source: analytics
+      //     page section with leads / tours / booked /
+      //     estimated pipeline / estimated booked / L→Tour
+      //     / L→Booked rates.
+      //   - Honesty: NOT ROAS. Ad spend not connected. Booked
+      //     value estimated from `leads.budget`.
+      booked_revenue_attribution: 'mounted',
+      attribution_revenue_helper: 'mounted',
+      booked_revenue_attribution_card: 'mounted',
+      analytics_booked_revenue_by_source: 'mounted',
+      // Phase 8BJ — Source-level revenue leakage drilldowns.
+      //   - source_leakage_summary: pure helper at
+      //     lib/enterprise/attribution/leakage.ts. Composes the
+      //     existing Revenue OS signals (slow first reply, no
+      //     tour, recovery, tour booking, reactivation, lost)
+      //     and groups every signal by the lead's attribution
+      //     source label. No DB access, never throws.
+      //   - source_leakage_overview_card: Overview card
+      //     `SourceRevenueLeakageCard` renders the top 5
+      //     sources by at-risk lead count + a CTA into the
+      //     leads board pre-filtered to that source + leakage.
+      //   - leads_source_filter: `KanbanBoard` reads `?source=`
+      //     and composes on top of `?leakage=` so the same URL
+      //     produces a deterministic slice.
+      //   - analytics_source_leakage_breakdown: analytics page
+      //     table with Slow reply / No tour / Recovery /
+      //     Reactivation / Top leak / At-risk per source.
+      //   - Honesty: NOT ROAS. No ad-platform API calls. Ad
+      //     spend not connected. Booked / pipeline values are
+      //     estimated from `leads.budget`. Attribution is the
+      //     intake-time signal — multi-touch not supported.
+      //     Source leakage is an operator prioritization lens,
+      //     not an accounting report.
+      source_leakage_summary: 'mounted',
+      source_leakage_overview_card: 'mounted',
+      leads_source_filter: 'mounted',
+      analytics_source_leakage_breakdown: 'mounted',
+      // Phase 9Q — Payment methods + Stripe Billing Portal access.
+      //   - payment_methods_card: PaymentMethodsCard mounted on
+      //     /dashboard/settings/billing for all roles; non-admins
+      //     see disabled CTAs + inline notice (no 403 round-trip).
+      //   - stripe_billing_portal_access: POST /api/billing/portal
+      //     remains the only path to manage cards. ADMIN_ROLES
+      //     gated, user-scoped rate-limit, returns Stripe-hosted
+      //     URL only. VenueRise never renders a card form.
+      //   - billing_portal_audit_event: every portal session
+      //     creation writes BILLING_PORTAL_SESSION_CREATE to
+      //     `public.audit_events` with `source`,
+      //     `subscription_status`, and a boolean
+      //     `stripe_customer_present` — no card number, no
+      //     payment method id, no Stripe raw payload.
+      //   - Honesty: we DO NOT claim PCI compliance / Stripe
+      //     certification / "fully secure". Copy says "processed
+      //     by Stripe" + "full card details are not stored in
+      //     VenueRise" + "billing actions are audited" only.
+      payment_methods_card: 'mounted',
+      stripe_billing_portal_access: 'mounted',
+      billing_portal_audit_event: 'mounted',
+      // Phase 9R — Subscription plans + pricing tiers.
+      //   - subscription_plan_catalog: pure catalog at
+      //     lib/billing/plans.ts. 4 tiers (Starter, Growth, Elite,
+      //     Enterprise). Stripe price ids resolve from env vars,
+      //     never inlined. Enterprise is contact-sales (no price).
+      //   - subscription_plans_card: SubscriptionPlansCard mounted
+      //     on /dashboard/settings/billing for all roles;
+      //     non-admins see disabled CTAs + inline notice.
+      //   - stripe_plan_checkout: POST /api/billing/checkout
+      //     accepts `{ plan_id, interval, source }` in addition to
+      //     the legacy `{ price_id }`. Plan id wins over price id.
+      //     Enterprise returns 400 `enterprise_contact_required`;
+      //     missing env var returns 422 `stripe_price_not_configured`.
+      //   - billing_plan_gates_foundation: lib/billing/plan-gates.ts
+      //     exports canUseFeature / getUpgradeTargetForFeature /
+      //     getFeatureGateCopy + FEATURE_LABEL. Used by the card
+      //     only — NOT wired as hard enforcement anywhere; existing
+      //     users keep their current access.
+      //   - Honesty: plan limits are product controls, not legal /
+      //     compliance guarantees. We DO NOT claim SOC 2, GDPR,
+      //     HIPAA, PCI, real SSO, SCIM, or 24/7 monitoring.
+      subscription_plan_catalog: 'mounted',
+      subscription_plans_card: 'mounted',
+      stripe_plan_checkout: 'mounted',
+      billing_plan_gates_foundation: 'mounted',
+      // Phase 9S — Full UI interaction audit + dead-button fix
+      // pass.
+      //   - ui_interaction_audit: docs/UI-INTERACTION-AUDIT.md
+      //     is the per-surface inventory + verification table.
+      //   - ui_interaction_scanner: scripts/check-ui-interactions
+      //     .mjs catches placeholder hrefs, empty onClick, alert /
+      //     confirm outside admin destructive flows, browser-side
+      //     `console` calls in client code, and JSX placeholder
+      //     text. Exemptions via // UI_INTERACTION_EXEMPT: <reason>.
+      //   - dead_button_fix_pass: P0 / P1 dead buttons removed or
+      //     honestly disabled. See AUDIT doc for the full list.
+      //   - fetch_route_mismatch_check: scripts/check-fetch-routes
+      //     .mjs walks client fetch() calls and verifies the URL
+      //     resolves to an on-disk app/api/.../route.ts.
+      //   - Honesty: plan limits, SSO, restore intent, trust packet,
+      //     payment methods, autopilot copy is verified by 9S to
+      //     match shipped posture; no compliance / autonomy
+      //     overclaims.
+      ui_interaction_audit: 'mounted',
+      ui_interaction_scanner: 'mounted',
+      dead_button_fix_pass: 'mounted',
+      fetch_route_mismatch_check: 'mounted',
+      // Phase 9T-alt — Knowledge Base CRUD foundation.
+      //   - knowledge_base_crud: GET/POST at
+      //     /api/venues/[id]/knowledge + PATCH/DELETE at
+      //     /api/venues/[id]/knowledge/[knowledgeId]. SALES_ROLES
+      //     gate on writes; any venue member can read. Cross-tenant
+      //     forbidden collapses to 404. Zod validation: title 1–160,
+      //     content 1–8000, category ≤80, priority 0–100.
+      //   - knowledge_base_audit: every mutation writes one of
+      //     KNOWLEDGE_ENTRY_CREATED / _UPDATED / _DELETED /
+      //     _TOGGLED. Audit metadata captures title / category /
+      //     priority / is_active / content_length — full content
+      //     is NOT mirrored to the audit feed.
+      //   - knowledge_base_rate_limit: user-scoped buckets at
+      //     `venues:knowledge:{list|create|update|delete}:<userId>`.
+      //   - Honesty: knowledge entries influence AI replies via the
+      //     existing orchestrator KB read; no agent prompt changes.
+      //     Operators are warned via UI copy to keep secrets out of
+      //     entries.
+      knowledge_base_crud: 'mounted',
+      knowledge_base_audit: 'mounted',
+      knowledge_base_rate_limit: 'mounted',
+      // Phase 9T — Playwright runtime QA suite.
+      //   - runtime_interaction_qa: tests/e2e/ contains specs
+      //     covering core operator workflows; runs in browser via
+      //     `npm run test:e2e`. Static UI scan from 9S still
+      //     ships — runtime adds the load/error/redirect coverage
+      //     scanners can't see.
+      //   - playwright_core_workflows: lead create + drawer +
+      //     command palette covered in core-dashboard.spec.ts.
+      //   - knowledge_base_runtime_qa: full CRUD (add / edit /
+      //     toggle / delete) covered in settings-knowledge.spec.ts.
+      //   - availability_runtime_qa: tab render + blackout add /
+      //     delete covered in settings-availability.spec.ts.
+      //   - Honesty: tests assume a manually-generated storageState
+      //     at `.auth/admin.json`; we did NOT add a test-auth API
+      //     route to production. Stripe checkout is gated behind
+      //     `E2E_ALLOW_STRIPE=1` and skipped by default.
+      runtime_interaction_qa: 'mounted',
+      playwright_core_workflows: 'mounted',
+      knowledge_base_runtime_qa: 'mounted',
+      availability_runtime_qa: 'mounted',
+      // GTM-0A — Revenue Recovery Demo seed (sales / pilot setup).
+      //   - revenue_recovery_demo_seed: POST /api/admin/demo/
+      //     revenue-recovery-seed mounted. ADMIN_ROLES gated;
+      //     audit row `revenue_recovery_demo_seeded` per call;
+      //     `metadata.demo_seed=true` lets reset clean only its
+      //     own rows. ADMIN_ENDPOINT_COUNT bumped 74 → 75.
+      //   - demo_revenue_leak_dataset: 24-lead fixture spans
+      //     every Revenue OS leakage signal at least once (slow
+      //     first reply, qualified no tour, unconfirmed tour,
+      //     stale negotiation, cold ghost, reactivation).
+      //   - demo_channel_attribution_dataset: leads carry
+      //     `metadata.attribution` with source_label across
+      //     Google Ads / Meta Ads / Instagram / The Knot /
+      //     WeddingWire / Website / Referral / Unknown.
+      //   - demo_pipeline_recovery_dataset: lost rows with
+      //     `lost_reason.reason` covering ghosted / priced_out /
+      //     picked_competitor so Reactivation surfaces light up.
+      //   - Honesty: no external API calls, no autonomous
+      //     sending, no production-data deletion. Reset only
+      //     touches `metadata->>demo_seed = 'true'`.
+      revenue_recovery_demo_seed: 'mounted',
+      demo_revenue_leak_dataset: 'mounted',
+      demo_channel_attribution_dataset: 'mounted',
+      demo_pipeline_recovery_dataset: 'mounted',
+      // GTM-0B — Public marketing reposition + demo loop.
+      //   - gtm_revenue_recovery_positioning: homepage rewritten
+      //     around "Stop losing weddings in the follow-up gap"
+      //     wedge. Anti-positioning vs CRMs / generic AI SaaS /
+      //     autonomous agents codified on the public page.
+      //   - marketing_revenue_os_homepage: new section order
+      //     (Hero → Leaks → How → Demo preview → Operator
+      //     control → Pilot → FAQ → Apply). Old SocialProof
+      //     "Trusted by top venues nationwide", Solution generic
+      //     6-feature grid, and Trust shield-icon section are
+      //     no longer mounted; copy that overclaimed autonomy
+      //     ("24/7 sales coordinator", "responds in under 60
+      //     seconds") removed.
+      //   - demo_loop_cta: /demo route mounted. Reuses the
+      //     existing AuditForm (already writes to audit_leads
+      //     on submit). Navbar + Footer + Hero CTAs all point
+      //     at real anchors or /demo; no #audit dead links.
+      //   - operator_control_messaging: dedicated Operator
+      //     Control section ("AI helps your team move faster.
+      //     It does not replace their judgment.") + microcopy
+      //     under hero ("AI drafts. Your team approves. No
+      //     autonomous sending."). FAQ "Does AI send
+      //     automatically?" answers the same question for
+      //     skim-readers.
+      //   - Honesty: no SOC 2 / GDPR / PCI claims; no
+      //     guaranteed revenue; no fake testimonials or partner
+      //     logos. Pilot pricing deliberately stays behind a
+      //     conversation.
+      //   - ADMIN_ENDPOINT_COUNT unchanged — no new admin
+      //     routes; only marketing pages.
+      gtm_revenue_recovery_positioning: 'mounted',
+      marketing_revenue_os_homepage: 'mounted',
+      demo_loop_cta: 'mounted',
+      operator_control_messaging: 'mounted',
+      // GTM-0A.2 — Revenue Recovery LOAD / Stress Demo seed.
+      //   - revenue_recovery_load_seed: POST /api/admin/demo/
+      //     revenue-recovery-load-seed mounted. ADMIN_ROLES gated;
+      //     audit row `revenue_recovery_load_demo_seeded` per call;
+      //     reset matches BOTH `demo_seed_type = 'load'` AND
+      //     `demo_seed_version = 'gtm_0a_2'` so it never touches
+      //     the GTM-0A hand-crafted 24-lead demo dataset. Rate
+      //     limit catalog key `adminDemo.revenueRecoveryLoadSeed`.
+      //     ADMIN_ENDPOINT_COUNT bumped 75 → 76.
+      //   - demo_load_250_leads: default profile generates 250
+      //     leads + 60-75% with conversation threads + tour rows
+      //     for stage-eligible leads. Clamp bounds [25, 1000].
+      //     Four profiles: balanced / high_volume / messy_channels
+      //     / sales_demo.
+      //   - demo_load_source_distribution: leads carry
+      //     `metadata.attribution.source_label` spanning Google Ads
+      //     / Meta Ads / Instagram / The Knot / WeddingWire /
+      //     Website / Referral / Unknown per profile distribution.
+      //   - demo_load_leakage_distribution: stage + signal mix is
+      //     tuned per profile so RevenueLeakageBrief / Recovery /
+      //     TourConfirmation / Reactivation / Attribution cards
+      //     all light up at 250-lead scale.
+      //   - Honesty: no external API calls, no autonomous sending,
+      //     no real-customer-data deletion. `demo_seed_type='load'`
+      //     isolates this seed from the GTM-0A hand-crafted demo.
+      revenue_recovery_load_seed: 'mounted',
+      demo_load_250_leads: 'mounted',
+      demo_load_source_distribution: 'mounted',
+      demo_load_leakage_distribution: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

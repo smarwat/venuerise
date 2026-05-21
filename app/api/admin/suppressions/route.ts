@@ -6,6 +6,7 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 import { z } from 'zod'
 
 /**
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
   if (!admin.ok) {
     return respond(NextResponse.json({ error: admin.code }, { status: admin.status }))
   }
-  const { user } = admin
+  const { user, venueId: callerVenueId } = admin
 
   const rl = await rateLimitUserAction(request, `admin:suppressions:${user.id}`)
   if (!rl.allowed) {
@@ -120,6 +121,29 @@ export async function POST(request: NextRequest) {
   // `addSuppression` is idempotent — first reason wins (Phase 4B).
   await addSuppression(parsed.data.email, 'manual', parsed.data.source)
   reqLog.info({ userId: user.id, source: parsed.data.source }, 'admin.suppressions.added')
+
+  // Phase 9A — enterprise audit. Suppressions are global (not
+  // venue-scoped), so we attribute the audit row to the caller's
+  // primary venue and store the raw email here ONLY because manual
+  // suppression input is the operator's deliberate action on a
+  // specific address — the address IS the operator intent.
+  void recordAuditEvent({
+    venueId: callerVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/suppressions',
+    action: 'suppression_add_manual',
+    targetTable: 'email_suppressions',
+    targetId: null,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      email_masked: parsed.data.email.replace(/^(.).+(@.+)$/, '$1***$2'),
+      source: parsed.data.source,
+      reason: 'manual',
+    },
+  })
 
   return respond(NextResponse.json({ success: true }))
 }

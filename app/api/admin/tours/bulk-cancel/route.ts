@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireAdmin } from '@/lib/auth/require-admin'
 import { requireVenueRole, TenantAccessError } from '@/lib/auth/tenant-access'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 import { ADMIN_ROLES } from '@/lib/auth/roles'
 import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
@@ -427,6 +428,30 @@ export async function POST(request: NextRequest) {
     },
     'admin.tours_bulk_cancel.completed'
   )
+
+  // Phase 9A — single audit row summarizing the bulk op. We
+  // deliberately do NOT write one row per cancelled tour — the
+  // existing tour-status events table already carries per-row
+  // cancellation records (Phase 8M), and a thousand audit rows
+  // for one operator click would swamp the UI.
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/tours/bulk-cancel',
+    action: 'tours_bulk_cancel',
+    targetTable: 'tours',
+    targetId: null,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    before: null,
+    after: {
+      cancelled_count: cancelledCount,
+      from_date,
+      to_date,
+    },
+  })
 
   return respond(
     NextResponse.json({

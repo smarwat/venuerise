@@ -2,6 +2,7 @@ import 'server-only'
 import { Ratelimit } from '@upstash/ratelimit'
 import { Redis } from '@upstash/redis'
 import { log } from '@/lib/log'
+import { recordAbuseEvent } from '@/lib/enterprise/abuse-events'
 
 /**
  * Rate limiting — Upstash Redis sliding window with a safe local fallback.
@@ -103,6 +104,19 @@ export const RATE_LIMITS = {
   widget:      { tokens: 10, window: '1 m' as const, prefix: 'vr:widget' },
   ai:          { tokens: 60, window: '1 m' as const, prefix: 'vr:ai'     },
   userAction:  { tokens: 30, window: '1 m' as const, prefix: 'vr:action' },
+  // Phase 9E — anonymous CSP-report telemetry. Browsers can flood
+  // this endpoint when a violation cascade triggers (one bad
+  // resource → N reports per affected page-load). 60/min/IP is
+  // tight enough that a malicious flood gets cut off, loose enough
+  // that a legitimate burst from one client during a CSP rollout
+  // doesn't drop reports we'd want to see.
+  cspReport:   { tokens: 60, window: '1 m' as const, prefix: 'vr:csp'    },
+  // Phase 9G — anonymous SSO initiate / callback. A legitimate user
+  // attempting login retries 2-3 times max; 10/min/IP cuts off both
+  // credential-stuffing and accidental loops without dropping real
+  // attempts. Distinct bucket from widget so neither limiter starves
+  // the other under burst.
+  ssoAuth:     { tokens: 10, window: '1 m' as const, prefix: 'vr:sso'    },
 } as const
 
 // ---- Helpers ----------------------------------------------------------------
@@ -165,28 +179,143 @@ export function extractIp(req: Request): string {
 // ---- Public surface ---------------------------------------------------------
 
 /**
+ * Phase 9F — abuse context. Optional on every wrapper; when supplied
+ * AND the limiter says blocked, the wrapper fires a fire-and-forget
+ * `recordAbuseEvent` to populate the AbuseMonitorCard surface.
+ *
+ * The wrapper NEVER awaits the abuse write — the throttle decision
+ * has already happened and the caller deserves the result back
+ * synchronously. Failures land in pino + Sentry via the helper's
+ * own try/catch.
+ */
+export interface AbuseLogContext {
+  route: string
+  method: string
+  userId?: string | null
+  venueId?: string | null
+  requestId?: string | null
+  metadata?: Record<string, unknown> | null
+}
+
+/**
+ * Internal helper: fire a best-effort abuse row on block. Pulled
+ * out so every wrapper uses the same shape + the same `void`
+ * fire-and-forget pattern.
+ */
+function maybeRecordAbuse(
+  spec: LimiterSpec,
+  identifier: string,
+  result: RateLimitResult,
+  rawIp: string | null,
+  abuseContext: AbuseLogContext | undefined
+): void {
+  if (!abuseContext || result.allowed) return
+  void recordAbuseEvent({
+    route: abuseContext.route,
+    method: abuseContext.method,
+    limiterKey: `${spec.prefix}:${identifier}`,
+    ip: rawIp,
+    userId: abuseContext.userId ?? null,
+    venueId: abuseContext.venueId ?? null,
+    reason: 'rate_limited',
+    requestId: abuseContext.requestId ?? null,
+    metadata: {
+      ...(abuseContext.metadata ?? {}),
+      // Always-on structural context.
+      retry_after_ms: result.retryAfterMs ?? null,
+      limit: result.limit,
+      remaining: result.remaining,
+      reset: result.reset,
+      mode: result.mode,
+    },
+  })
+}
+
+/**
  * Rate limit a widget submission. Keyed on IP + (optional) venue so a
  * misbehaving site can't burn through every venue's budget.
  */
-export async function rateLimitWidget(req: Request, venueId?: string): Promise<RateLimitResult> {
+export async function rateLimitWidget(
+  req: Request,
+  venueId?: string,
+  abuseContext?: AbuseLogContext
+): Promise<RateLimitResult> {
   const ip = extractIp(req)
   const id = venueId ? `${ip}:${venueId}` : ip
-  return check(RATE_LIMITS.widget, id)
+  const result = await check(RATE_LIMITS.widget, id)
+  maybeRecordAbuse(RATE_LIMITS.widget, id, result, ip, abuseContext)
+  return result
 }
 
 /**
  * Rate limit an AI route. Caller supplies the identity key
  * (typically the user id, or for the chat thread `user:${userId}:conv:${convId}`).
  */
-export async function rateLimitAi(_req: Request, key: string): Promise<RateLimitResult> {
-  return check(RATE_LIMITS.ai, key)
+export async function rateLimitAi(
+  req: Request,
+  key: string,
+  abuseContext?: AbuseLogContext
+): Promise<RateLimitResult> {
+  const result = await check(RATE_LIMITS.ai, key)
+  maybeRecordAbuse(RATE_LIMITS.ai, key, result, extractIp(req), abuseContext)
+  return result
 }
 
 /**
  * Rate limit a user-initiated write action (lead create, etc.).
  */
-export async function rateLimitUserAction(_req: Request, key: string): Promise<RateLimitResult> {
-  return check(RATE_LIMITS.userAction, key)
+export async function rateLimitUserAction(
+  req: Request,
+  key: string,
+  abuseContext?: AbuseLogContext
+): Promise<RateLimitResult> {
+  const result = await check(RATE_LIMITS.userAction, key)
+  maybeRecordAbuse(
+    RATE_LIMITS.userAction,
+    key,
+    result,
+    extractIp(req),
+    abuseContext
+  )
+  return result
+}
+
+/**
+ * Rate limit a CSP-report POST (Phase 9E). Keyed on raw IP — the
+ * endpoint is anonymous, there's no user to attribute to. Browsers
+ * may fire several reports per page-load on a noisy CSP rollout;
+ * the 60/min ceiling matches.
+ */
+export async function rateLimitCspReport(
+  req: Request,
+  abuseContext?: AbuseLogContext
+): Promise<RateLimitResult> {
+  const ip = extractIp(req)
+  const result = await check(RATE_LIMITS.cspReport, ip)
+  maybeRecordAbuse(RATE_LIMITS.cspReport, ip, result, ip, abuseContext)
+  return result
+}
+
+/**
+ * Rate limit an SSO initiate / callback POST (Phase 9G). Keyed on
+ * `${ip}:${suffix}` where the suffix is typically the email
+ * domain (initiate) or a callback identifier. Anonymous endpoint
+ * — the user isn't authenticated yet, so IP is the only stable
+ * identity dimension.
+ *
+ * Suffix is optional; falls back to IP-only when the caller can't
+ * provide one (malformed callback before any identifier is parsed).
+ */
+export async function rateLimitSsoAuth(
+  req: Request,
+  suffix?: string,
+  abuseContext?: AbuseLogContext
+): Promise<RateLimitResult> {
+  const ip = extractIp(req)
+  const id = suffix ? `${ip}:${suffix}` : ip
+  const result = await check(RATE_LIMITS.ssoAuth, id)
+  maybeRecordAbuse(RATE_LIMITS.ssoAuth, id, result, ip, abuseContext)
+  return result
 }
 
 // ---- Health / introspection -------------------------------------------------

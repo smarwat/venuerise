@@ -5,6 +5,9 @@ import { captureApiError } from '@/lib/observability/sentry'
 import { requireVenueRole, TenantAccessError } from '@/lib/auth/tenant-access'
 import { ADMIN_ROLES } from '@/lib/auth/roles'
 import { z } from 'zod'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
 
 const UpdateVenueSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -60,6 +63,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     throw err
   }
 
+  // Phase 9F — per-user rate limit.
+  const rl = await rateLimitUserAction(
+    request,
+    `venues:update:${user.id}`,
+    {
+      route: '/api/venues/[id]',
+      method: 'PATCH',
+      userId: user.id,
+      venueId: id,
+      requestId,
+    }
+  )
+  if (!rl.allowed) {
+    log.warn(
+      { requestId, userId: user.id, retryMs: rl.retryAfterMs },
+      'rate_limit.blocked'
+    )
+    return respond(rateLimitedResponse(rl))
+  }
+
   const body = await request.json()
   const parsed = UpdateVenueSchema.safeParse(body)
   if (!parsed.success) return respond(NextResponse.json({ error: parsed.error.flatten() }, { status: 400 }))
@@ -75,5 +98,23 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     captureApiError(error, { requestId, route: '/api/venues/[id]', venueId: id, userId: user.id })
     return respond(NextResponse.json({ error: error.message }, { status: 500 }))
   }
+
+  // Phase 9A — best-effort audit row. Only the patched field
+  // names land in metadata; we don't echo the full venue row
+  // (would be PII-heavy).
+  void recordAuditEvent({
+    venueId: id,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/venues/[id]',
+    action: 'venue_update',
+    targetTable: 'venues',
+    targetId: id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: { fields: Object.keys(parsed.data) },
+  })
+
   return respond(NextResponse.json(data))
 }

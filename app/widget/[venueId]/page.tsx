@@ -1,8 +1,27 @@
 'use client'
 
-import { useState, use } from 'react'
+import { useMemo, useState, use } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ChevronRight, Check, Loader2, Sparkles, AlertCircle } from 'lucide-react'
+
+// Phase 8BH — keys the embedded widget reads off its own URL.
+// The widget.js loader stamps UTM params + click ids onto the
+// iframe URL so the embedded form can forward them with the
+// intake POST. Anything not in this list is ignored.
+const ATTRIBUTION_QUERY_KEYS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'gclid',
+  'fbclid',
+  'msclkid',
+  'ttclid',
+  'landing_page',
+  'referrer',
+  'captured_at',
+] as const
 
 type Step = 'name' | 'email' | 'phone' | 'date' | 'guests' | 'budget' | 'message' | 'success'
 
@@ -26,6 +45,34 @@ export default function WidgetPage({ params }: { params: Promise<{ venueId: stri
   const [values, setValues] = useState<Record<string, string>>({})
   const [current, setCurrent] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Phase 8BH — capture attribution off this iframe's URL ONCE
+  // on mount. Memoised so re-renders don't keep re-reading
+  // window.location. Returns an empty object during SSR; the
+  // intake API accepts that (lead lands as Website with no
+  // UTM context).
+  const attribution = useMemo<Record<string, string>>(() => {
+    if (typeof window === 'undefined') return {}
+    const out: Record<string, string> = {}
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      for (const key of ATTRIBUTION_QUERY_KEYS) {
+        const v = sp.get(key)
+        if (v && v.length > 0) out[key] = v.slice(0, 500)
+      }
+      if (!out.landing_page) {
+        out.landing_page = `${window.location.origin}${window.location.pathname}`.slice(
+          0,
+          500
+        )
+      }
+      if (!out.captured_at) out.captured_at = new Date().toISOString()
+    } catch {
+      // window.location may throw in sandboxed iframes — fine,
+      // we just submit with no attribution.
+    }
+    return out
+  }, [])
 
   const stepIndex = STEPS.indexOf(step)
   const progress = ((stepIndex + 1) / STEPS.length) * 100
@@ -55,6 +102,12 @@ export default function WidgetPage({ params }: { params: Promise<{ venueId: stri
             guest_count: newValues.guests ? parseInt(newValues.guests) : null,
             budget: budgetRaw ? parseFloat(budgetRaw) : null,
             message: newValues.message || null,
+            // Phase 8BH — forward parsed attribution context
+            // alongside the lead so the dashboard renders the
+            // correct source badge + the AttributionPerformance
+            // card groups under the right label.
+            attribution:
+              Object.keys(attribution).length > 0 ? attribution : null,
           }),
         })
 

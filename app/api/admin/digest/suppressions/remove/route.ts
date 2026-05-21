@@ -9,6 +9,7 @@ import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
 import { recordDigestAuditEvent } from '@/lib/billing/digest-audit-events'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 
 /**
  * POST /api/admin/digest/suppressions/remove  (Phase 8AA)
@@ -250,6 +251,30 @@ export async function POST(request: NextRequest): Promise<Response> {
       route: 'single',
     },
     requestId,
+  })
+
+  // Phase 9A — enterprise audit log (separate from the Phase 8AC
+  // digest-specific table). Cross-tenant audit visibility for security
+  // reviewers; never echoes the raw email — only the masked form +
+  // an optional operator-supplied reason.
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/digest/suppressions/remove',
+    action: removed ? 'digest_suppression_remove' : 'digest_suppression_remove_noop',
+    targetTable: 'email_suppressions',
+    targetId: targetUserId,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      removed,
+      removed_count: removedCount,
+      email_masked: emailMasked,
+      operator_reason: reason ?? null,
+      scope: 'single',
+    },
   })
 
   if (!removed) {

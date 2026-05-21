@@ -62,12 +62,12 @@ export default function AddLeadModal({ open, onClose, onCreated }: AddLeadModalP
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg" data-testid="add-lead-modal">
         <DialogHeader>
           <DialogTitle>Add New Lead</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="px-6 space-y-4">
+        <form onSubmit={handleSubmit} className="px-6 space-y-4" data-testid="add-lead-form">
           {error && (
             <div className="rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
               {error}
@@ -77,11 +77,11 @@ export default function AddLeadModal({ open, onClose, onCreated }: AddLeadModalP
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-[#8B949E] mb-1.5">Full name *</label>
-              <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Jordan Bennett" required />
+              <Input data-testid="lead-name-input" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Jordan Bennett" required />
             </div>
             <div>
               <label className="block text-xs font-medium text-[#8B949E] mb-1.5">Email *</label>
-              <Input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} placeholder="jordan@email.com" required />
+              <Input data-testid="lead-email-input" type="email" value={form.email} onChange={(e) => set('email', e.target.value)} placeholder="jordan@email.com" required />
             </div>
           </div>
 
@@ -92,18 +92,18 @@ export default function AddLeadModal({ open, onClose, onCreated }: AddLeadModalP
             </div>
             <div>
               <label className="block text-xs font-medium text-[#8B949E] mb-1.5">Event Date</label>
-              <Input type="date" value={form.event_date} onChange={(e) => set('event_date', e.target.value)} />
+              <Input data-testid="lead-event-date-input" type="date" value={form.event_date} onChange={(e) => set('event_date', e.target.value)} />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-[#8B949E] mb-1.5">Guest Count</label>
-              <Input type="number" value={form.guest_count} onChange={(e) => set('guest_count', e.target.value)} placeholder="150" min="1" />
+              <Input data-testid="lead-guest-count-input" type="number" value={form.guest_count} onChange={(e) => set('guest_count', e.target.value)} placeholder="150" min="1" />
             </div>
             <div>
               <label className="block text-xs font-medium text-[#8B949E] mb-1.5">Budget ($)</label>
-              <Input type="number" value={form.budget} onChange={(e) => set('budget', e.target.value)} placeholder="25000" min="0" />
+              <Input data-testid="lead-budget-input" type="number" value={form.budget} onChange={(e) => set('budget', e.target.value)} placeholder="25000" min="0" />
             </div>
           </div>
 
@@ -138,6 +138,7 @@ export default function AddLeadModal({ open, onClose, onCreated }: AddLeadModalP
           <div>
             <label className="block text-xs font-medium text-[#8B949E] mb-1.5">Notes</label>
             <textarea
+              data-testid="lead-notes-input"
               value={form.notes}
               onChange={(e) => set('notes', e.target.value)}
               placeholder="Any additional context about this lead…"
@@ -148,8 +149,8 @@ export default function AddLeadModal({ open, onClose, onCreated }: AddLeadModalP
         </form>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
-          <Button onClick={handleSubmit as unknown as React.MouseEventHandler} disabled={loading}>
+          <Button data-testid="lead-cancel-button" variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button data-testid="lead-submit-button" onClick={handleSubmit as unknown as React.MouseEventHandler} disabled={loading}>
             {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</> : 'Add Lead'}
           </Button>
         </DialogFooter>

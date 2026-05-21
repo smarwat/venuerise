@@ -2736,3 +2736,3533 @@ select count(*) as backfilled_rows
 from public.tour_status_events
 where actor_kind = 'system' and actor_id = 'backfill-8N';
 ```
+
+---
+
+## Product thesis: AI Revenue OS (Phase 8AP)
+
+VenueRise is positioned as an **AI Revenue Operating System** for
+wedding venues — not a CRM, not an AI chatbot, not a marketing
+automation tool. See `docs/PRODUCT-THESIS.md` for the full thesis and
+`docs/AGENTIC-WORKFLOW-MAP.md` for the seven cooperating agents the
+product is organized around.
+
+### Operational implication
+
+When evaluating future phases or feature requests, the operator should
+ask:
+
+1. Does this phase move one of the five core promises (more booked
+   tours, faster lead response, fewer leads slipping, clearer operator
+   accountability, on-brand AI follow-up)?
+2. Does it strengthen one of the seven agents in the workflow map?
+3. Does it surface revenue leakage instead of just status?
+
+If the answer to all three is no, the phase is probably building a
+generic CRM feature and should be reframed before any code is
+written.
+
+### Live surfaces that carry the thesis today
+
+| Surface                                  | What it protects                  |
+|------------------------------------------|-----------------------------------|
+| `RevenueLeakageBrief` on `/dashboard`    | Visibility of revenue at risk     |
+| `LeadDetailDrawer` multi-variant + stale | Speed + brand voice               |
+| `CommandPalette` message search          | Find the lead moment fast         |
+| `AIDraftAuditCard` + `VariantReplayDrawer` | Operator accountability         |
+| Operator activity digest (Phase 8R+)     | Owner visibility                  |
+| Tour status events + audit drawers       | Tour conversion + recovery        |
+
+Future operator-facing surfaces that don't map to a row above are a
+warning sign.
+
+### Optional alter publication for the AI draft audit realtime layer
+
+The Phase 8AO `RealtimeAIDraftAuditLayer` subscribes to
+`public.ai_actions` inserts. If your environment doesn't have
+`ai_actions` in the `supabase_realtime` publication, the layer is a
+silent no-op and the AIDraftAuditCard still works via manual Refresh.
+
+To enable the live "New draft activity recorded" banner:
+
+```sql
+alter publication supabase_realtime add table public.ai_actions;
+```
+
+Run once per environment via the Supabase SQL editor; no migration
+file is required.
+
+---
+
+## Revenue OS settings and leakage scoring (Phase 8AQ)
+
+The Revenue Leakage Watch on `/dashboard`, the leads-board `?leakage=`
+filter, and the LeadDetailDrawer Speed-to-Lead chip all read from a
+single per-venue settings block:
+
+```sql
+-- Inspect current settings
+select id, name, metadata -> 'revenue_os' as revenue_os
+  from public.venues
+ where id = '<venue uuid>';
+```
+
+Storage shape:
+
+```json
+{
+  "revenue_os": {
+    "first_reply_sla_minutes": 60,
+    "high_fit_threshold": 80,
+    "stale_high_fit_hours": 24,
+    "cold_lead_days": 14
+  }
+}
+```
+
+### Reset to defaults
+
+The admin "Revenue OS thresholds" card on `/dashboard/settings/billing`
+has a `Reset to defaults` button that writes the
+`DEFAULT_REVENUE_OS_SETTINGS` values back. As a manual fallback:
+
+```sql
+update public.venues
+   set metadata = metadata || jsonb_build_object(
+     'revenue_os',
+     jsonb_build_object(
+       'first_reply_sla_minutes', 60,
+       'high_fit_threshold',      80,
+       'stale_high_fit_hours',    24,
+       'cold_lead_days',          14
+     )
+   )
+ where id = '<venue uuid>';
+```
+
+### What each threshold means
+
+| Setting                 | Default | Drives                                      |
+|-------------------------|---------|---------------------------------------------|
+| First reply SLA minutes | 60      | "Slow first reply" leakage + Speed-to-Lead  |
+| High-fit threshold      | 80      | "High-fit idle" + per-lead chip eligibility |
+| Stale high-fit hours    | 24      | "High-fit idle" detection window            |
+| Cold lead days          | 14      | "Cold leads to recover" recovery window     |
+
+Each value is **clamped** server-side in `lib/revenue-os/settings.ts`:
+
+- First reply SLA: 5–240 minutes
+- High-fit threshold: 50–100
+- Stale high-fit window: 1–168 hours
+- Cold lead window: 3–60 days
+
+A hand-crafted curl with an out-of-range value will be silently
+clamped to the boundary; the dashboard never trusts arbitrary jsonb.
+
+### Why the counts may be approximate
+
+- The Overview brief uses a 500-lead in-flight slice + recent message
+  activity in batch. A venue with > 500 active leads sees the most
+  recent 500 only (very rare).
+- The leads-board filter is a client-side approximation backed by an
+  on-demand fetch for tours / inbound messages depending on which
+  filter is active. When that fetch hasn't completed yet the filter
+  shows the candidate stage slice rather than an empty board.
+- The Speed-to-Lead chip is best-effort — if either the venue
+  settings probe or the earliest-outbound message probe fails, the
+  chip silently stays hidden rather than rendering a misleading score.
+
+None of these surfaces are billing-grade truth. They are operator
+prompts pointing at where revenue is at risk; the audit feeds
+(`AIDraftAuditCard`, `DigestAuditLogCard`, tour audit drawer) are
+where the precise per-action history lives.
+
+---
+
+## Speed-to-Lead roll-up + cold-lead baseline (Phase 8AR)
+
+### Inspecting the underlying data
+
+The Speed-to-Lead roll-up on `/dashboard/settings/billing` is
+**derived** every render — there's no cron, no cache, no
+`speed_to_lead_score` column. To audit it, look at the same two
+tables the card reads from:
+
+```sql
+-- Per-lead first outbound timestamp (last 7 days)
+select
+  l.id,
+  l.name,
+  l.created_at,
+  min(case when m.role in ('ai', 'human') then m.created_at end) as first_outbound_at
+from public.leads l
+left join public.messages m on m.lead_id = l.id
+where l.venue_id = '<venue uuid>'
+  and l.created_at >= now() - interval '7 days'
+group by l.id, l.name, l.created_at
+order by l.created_at desc;
+```
+
+### Why pending leads are excluded from SLA met rate
+
+`metRate` divides by `(met + missed)`. A pending lead hasn't crossed
+the SLA line yet — it could still hit, it could still miss. Counting
+it in the denominator would either (a) inflate the met rate every
+time a fresh lead came in, or (b) tank it the moment a lead aged
+past SLA without a reply. Neither matches operator intuition. The
+displayed "Overdue replies" tile carries the pending-overdue count
+separately so the operator still sees the urgency.
+
+### Cold-lead baseline fix
+
+Some intake paths create a `leads` row without a corresponding
+`messages.role='lead'` row (e.g. a widget intake that serializes the
+form into `lead.notes`). Before Phase 8AR, those leads looked cold
+the moment they aged past `cold_lead_days`.
+
+The helper now uses `lead.created_at` as the baseline when no inbound
+message exists. To verify the fix is healthy for a venue:
+
+```sql
+-- Leads with no inbound message, grouped by age
+select
+  case
+    when l.created_at > now() - interval '14 days' then '< 14 days'
+    when l.created_at > now() - interval '30 days' then '14-30 days'
+    else '> 30 days'
+  end as bucket,
+  count(*)
+from public.leads l
+where l.venue_id = '<venue uuid>'
+  and l.stage not in ('booked', 'lost')
+  and not exists (
+    select 1 from public.messages m
+     where m.lead_id = l.id and m.role = 'lead'
+  )
+group by bucket
+order by bucket;
+```
+
+Anything in the `> cold_lead_days` bucket WILL show up on the
+Revenue Leakage Watch's cold-lead tile — that's the intent. What's
+fixed is the case where a 3-day-old lead with no inbound was
+incorrectly counted before.
+
+---
+
+## Follow-Up Recovery surfaces (Phase 8AS)
+
+Phase 8AS makes stalled leads visible across three surfaces, all
+backed by the same pure helper at `lib/revenue-os/recovery.ts`:
+
+| Surface                                                    | What it shows                                           |
+|------------------------------------------------------------|---------------------------------------------------------|
+| `RecoveryQueueCard` on `/dashboard`                        | Top 5 stalled high-value leads + suggested action       |
+| LeadDetailDrawer "Why this lead is slipping" panel         | Active recovery reasons + helper text + suggested CTA   |
+| `RecoveryRollupCard` on `/dashboard/settings/billing`      | Stalled count + high-fit stalled + qualified-no-tour    |
+| `KanbanBoard` `?leakage=follow_up_recovery` filter         | Pipeline filtered to the recovery queue                 |
+
+### What counts as "stalled"
+
+A lead is on the recovery queue when it triggers at least one of:
+
+| Reason                  | Trigger                                                                                    |
+|-------------------------|--------------------------------------------------------------------------------------------|
+| `cold_lead`             | In-flight (not new_inquiry/booked/lost), baseline older than `cold_lead_days`              |
+| `high_fit_idle`         | Lead score ≥ `high_fit_threshold`, no row update in `stale_high_fit_hours`                 |
+| `qualified_no_tour`     | Stage = `qualified` with no `tours` row                                                    |
+| `tour_pending_confirm`  | Has a future tour with `status='scheduled'`                                                |
+| `negotiation_stalled`   | Stage = `negotiation`, no row update in 2× `stale_high_fit_hours`                          |
+
+`cold_lead` uses the Phase 8AR baseline fix (`last inbound` if any,
+else `lead.created_at`).
+
+### Suggested actions are static, not generated
+
+Each reason maps to a static suggested action (e.g. `cold_lead →
+soft_check_in`). The action carries a long-form `instruction` string
+that the operator can pre-fill into the regenerate prompt via the
+drawer's "Use suggestion in draft" CTA. **No AI generation happens
+when the suggestion is clicked.** The operator still has to click
+Regenerate (which calls `/api/ai/draft`) and Approve & send (which
+calls `/api/conversations/[id]/messages`).
+
+### Inspecting the queue with SQL
+
+```sql
+-- Stalled candidate leads for a venue (rough — the helper applies
+-- the per-venue settings + reason logic on top of this set).
+select
+  l.id,
+  l.name,
+  l.stage,
+  l.lead_score,
+  l.created_at,
+  l.updated_at,
+  max(case when m.role = 'lead' then m.created_at end)   as last_inbound,
+  count(t.id) filter (where t.status = 'scheduled')      as pending_tours,
+  count(t.id)                                            as total_tours
+from public.leads l
+left join public.messages m on m.lead_id = l.id
+left join public.tours    t on t.lead_id = l.id
+where l.venue_id = '<venue uuid>'
+  and l.stage not in ('booked', 'lost')
+group by l.id
+order by l.lead_score desc, l.updated_at asc
+limit 25;
+```
+
+The helper sorts by composite score (`lead_score × 10 + reasons × 20
++ min(60, daysSinceActivity)`), so very-old low-score leads never
+out-rank a hot stalled lead.
+
+---
+
+## Tour Booking Agent surfaces (Phase 8AT)
+
+Phase 8AT makes the qualified-to-booked transition visible across
+three surfaces, all backed by `lib/revenue-os/tour-booking.ts`:
+
+| Surface                                                | What it shows                                            |
+|--------------------------------------------------------|----------------------------------------------------------|
+| `TourConfirmationQueueCard` on `/dashboard`            | Top 5 scheduled-but-unconfirmed tours                    |
+| LeadDetailDrawer "Tour Booking Agent" panel            | Per-lead tour signal + Schedule + Use-suggestion CTAs    |
+| `TourConversionRollupCard` on `/dashboard/settings/billing` | Qualified → Scheduled → Confirmed counts (30d)      |
+| KanbanBoard `?leakage=tour_booking` filter             | Pipeline filtered to leads with any tour signal          |
+
+### The five Tour Booking signals
+
+| Signal                          | Trigger                                                       |
+|---------------------------------|---------------------------------------------------------------|
+| `tour_today`                    | Scheduled or confirmed tour with today's UTC date             |
+| `tour_scheduled_unconfirmed`    | Future tour with `status='scheduled'`                         |
+| `qualified_no_tour`             | Lead at stage `qualified` with no `tours` row                 |
+| `tour_completed_no_next_step`   | Completed tour + lead still in `tour_completed`/`negotiation` |
+| `tour_no_show_recovery`         | Tour with `status='no_show'` + lead still in-flight           |
+
+Each signal maps to a static suggested action (catalog lives in
+`tour-booking.ts`). The action's `instruction` field is the long-form
+string the operator can pre-fill into the regenerate prompt via the
+drawer's "Use suggestion in draft" CTA.
+
+### Conversion roll-up math
+
+`TourConversionRollupCard` reads:
+
+```sql
+-- Qualified-or-later leads in the last 30 days (denominator base)
+select count(*)
+  from public.leads
+ where venue_id = '<venue uuid>'
+   and stage in ('qualified', 'tour_scheduled', 'tour_completed',
+                 'negotiation', 'booked')
+   and created_at >= now() - interval '30 days';
+
+-- Tour rows that crossed the scheduled line for those leads
+select count(*), status
+  from public.tours
+ where venue_id = '<venue uuid>'
+   and lead_id in (<qualified ids>)
+   and status in ('scheduled', 'confirmed', 'completed', 'no_show')
+ group by status;
+```
+
+We count tour ROWS (not distinct leads) so a venue that re-schedules
+after a cancel still gets credit for the re-attempt. Including
+`booked` in the "qualified-or-later" denominator prevents fast
+converters from being penalized — a venue with great conversion
+shouldn't see a lower scheduled-rate just because their leads zipped
+past the qualified stage between snapshots.
+
+### Why no autonomous sends
+
+The Tour Booking Agent is operator-visible scoring, not autonomous
+behavior. Surfacing a "Send confirm" suggestion AUTOMATICALLY firing
+a `/api/conversations/[id]/messages` POST would have to handle
+operator-not-online edge cases, lead-just-replied races, brand-voice
+review — none of which the current system mediates. The agent stays
+in the "make it impossible to miss" lane until those guardrails are
+ready.
+
+---
+
+## Revenue OS digest reframe (Phase 8AU)
+
+The Phase 8R operator activity digest was a generic "tour status
+events" summary. Phase 8AU keeps the same cadence + delivery +
+audit infrastructure but reframes the BODY around the Revenue OS
+agents.
+
+### What changed
+
+- Subject becomes `Your VenueRise Revenue OS summary` (cron) /
+  `Your weekly VenueRise Revenue OS summary` when the recipient is
+  on weekly cadence — the text uses the cadence sentence already
+  present in the footer.
+- HTML + plaintext both lead with: leakage snapshot →
+  speed-to-lead → follow-up recovery → tour booking → CTAs →
+  operator activity log (demoted to a quieter container).
+- Cron + preview + manual all call `fetchRevenueOsDigestSummary`
+  per venue ONCE; the helper composes the four pure scoring
+  helpers + returns the same shape.
+- `lib/revenue-os/digest-summary.ts` is pure (no Supabase) so the
+  composer is unit-testable in isolation.
+
+### What didn't change
+
+- Cadence (daily / weekly / off) per recipient
+- `send_kind` discriminator (`cron`/`preview`/`manual`)
+- Idempotency probe (per-recipient + per-day, filtered on
+  `send_kind='cron'`)
+- Suppression handling
+- Audit feed compatibility — outbound rows still tagged the same
+  way; `DigestAuditFeed` + `DigestAuditLogCard` keep working
+- Unsubscribe / resubscribe token URL helpers
+- Per-venue settings sourced from `venues.metadata.revenue_os`
+  (the same `parseRevenueOsSettings` the dashboard surfaces use)
+
+### Fallback path
+
+If the per-venue Revenue OS probe fails (DB hiccup, missing
+metadata, etc.) the helper returns `null`. The body builders
+detect the missing summary and fall back to the legacy tour-
+status-events-only template. Logged as
+`jobs.operator_activity_digest.revenue_os_fetch_failed`. The
+digest still goes out; no recipient loses their email because of
+a transient probe failure.
+
+### Required env / setup
+
+No new env vars. No new migrations. The reframe rides on the
+existing `OPERATOR_DIGEST_ENABLED=1` gate + the Phase 8S
+`DIGEST_UNSUBSCRIBE_SECRET` (for the footer links). The dashboard's
+Revenue OS settings card (Phase 8AQ) tunes the thresholds that
+flow into the digest.
+
+### Smoke-testing locally
+
+1. Set `OPERATOR_DIGEST_ENABLED=1` (and ideally
+   `DIGEST_UNSUBSCRIBE_SECRET=<any 32+ char string>`).
+2. From `/dashboard/settings/billing`, click **Send sample Revenue
+   OS digest**.
+3. Inspect the email: the subject should mention "Revenue OS",
+   the body should have the four sections + the demoted activity
+   log + the three CTAs at the bottom.
+4. Inspect the outbound row in Supabase
+   (`outbound_messages` filtered by venue + today):
+   `metadata.tour_digest_send_kind` should be `'preview'`.
+
+---
+
+## Brand Voice confidence + escalation (Phase 8AV)
+
+### What's stored
+
+Every successful `/api/ai/draft` call writes a `variant_confidences:
+number[]` (and a denorm `min_confidence: number`) into
+`ai_actions.metadata`. Read via:
+
+```sql
+select
+  id,
+  created_at,
+  metadata -> 'variant_confidences' as scores,
+  metadata ->> 'min_confidence'     as min_score,
+  metadata ->> 'instruction'        as instruction
+from public.ai_actions
+where venue_id = '<venue uuid>'
+  and agent  = 'venuerise'
+  and action = 'draft_regenerate'
+order by created_at desc
+limit 25;
+```
+
+### Settings
+
+Per-venue under `venues.metadata.revenue_os`:
+
+```json
+{
+  "brand_voice_confidence_floor": 70,
+  "brand_voice_escalation_mode": "warn"
+}
+```
+
+Floor is 0..100 (default 70); mode is `off | warn | block`
+(default `warn`). Read/write goes through the existing
+`/api/admin/revenue-os/settings` route + the RevenueOsSettingsCard
+on `/dashboard/settings/billing`.
+
+### Reset to defaults
+
+The settings card's `Reset to defaults` button writes the
+DEFAULT_REVENUE_OS_SETTINGS shape (which now includes the two new
+fields). SQL fallback:
+
+```sql
+update public.venues
+   set metadata = metadata || jsonb_build_object(
+     'revenue_os',
+     coalesce(metadata -> 'revenue_os', '{}'::jsonb) || jsonb_build_object(
+       'brand_voice_confidence_floor', 70,
+       'brand_voice_escalation_mode',  'warn'
+     )
+   )
+ where id = '<venue uuid>';
+```
+
+### Why no autonomous send
+
+Brand Voice escalation is a SAFETY layer; flipping the gate to
+`block` doesn't authorize the AI to send messages on its own. It
+just blocks Approve & send until the operator regenerates, edits,
+or picks a different variant. Same operator-stays-in-control
+posture as every other Phase 8 surface.
+
+## Brand Voice calibration telemetry (Phase 8AW)
+
+### What's stored
+
+Phase 8AW extends the same `ai_actions.metadata` block with the
+raw model self-rating, the heuristic score, the adjustment delta
+versus the final shown, a `confidence_source` tag, and the
+operator outcome that closed out the row. The 8AV
+`variant_confidences` array is preserved (it now carries FINAL
+scores) so older readers keep working.
+
+```sql
+select
+  id,
+  created_at,
+  metadata -> 'variant_confidences'             as final_scores,
+  metadata -> 'model_variant_confidences'       as model_scores,
+  metadata -> 'heuristic_variant_confidences'   as heuristic_scores,
+  metadata -> 'confidence_adjustment_deltas'    as deltas,
+  metadata ->> 'confidence_source'              as source,
+  metadata ->> 'operator_outcome'               as outcome,
+  metadata ->> 'edit_distance_bucket'           as edits,
+  metadata ->> 'selected_variant_was_low_confidence' as below_floor_sent
+from public.ai_actions
+where venue_id = '<venue uuid>'
+  and agent = 'venuerise'
+  and action = 'draft_regenerate'
+order by created_at desc
+limit 25;
+```
+
+### Troubleshooting
+
+1. **"Panel is stuck on empty state."**
+   - The page slice returned `total: 0`. Either the venue has no
+     Phase 8AV+ draft_regenerate rows yet, or every row in the
+     window pre-dates 8AV (in which case `variant_confidences`
+     wasn't persisted). Trigger a regenerate from the lead drawer
+     and refresh — the panel rebinds on the next realtime fire.
+
+2. **"Overconfidence signal says High but operators look happy."**
+   - Check `metadata->'confidence_adjustment_deltas'` — a single
+     batch with deeply negative deltas (e.g. all `-30`) can tip
+     the heuristic. The signal is page-scoped, not lifetime; load
+     older pages to confirm it isn't a transient spike.
+   - If it's persistent, the model is consistently over-rating
+     itself relative to the heuristic. Consider lowering
+     `brandVoiceConfidenceFloor` if the heuristic is being too
+     strict, OR tightening the prompt to nudge the model's self-
+     rating down.
+
+3. **"Operator sent a draft as-is but the row stayed unknown."**
+   - The outcome write is best-effort and skipped silently when
+     the source `ai_actions` row is missing or cross-tenant. Look
+     for `conversations.messages.outcome_mark_failed` in logs for
+     the request id. Common cause: the operator approved a draft
+     from a Phase 8AL-era flow that pre-dates the ai_action_id
+     metadata stamp.
+
+4. **"Venue context signal flips to needs_more_context after one
+     draft."**
+   - The scan triggers when ≥25% of rows in the loaded page
+     mention pricing / availability / policy / capacity. With
+     `total: 1`, a single matching draft makes that 100%. The
+     signal stabilizes as more rows land — wait for `total ≥ 4`
+     before reading it as a real instruction to add KB content.
+
+5. **"AIDraftAuditCard detail line shows Model X with no
+     Heuristic."**
+   - Pre-8AW rows render the line only when SOME 8AW field is
+     present. If you see Model without Heuristic (or vice versa),
+     the metadata was hand-written or a partial backfill — neither
+     happens in normal flow. Confirm with the SQL above; if a row
+     is missing both arrays, treat it as a Phase 8AV row that
+     should stay quiet in the UI.
+
+### Why no autonomous send (still)
+
+Phase 8AW is telemetry. The Phase 8AV gate still requires a human
+to click Approve & send. Phase 8AX is the autonomy gate, and it
+won't ship until the calibration panel shows steady-state low
+overconfidence + a low edit-before-send rate.
+
+## Safe Autopilot Guardrails (Phase 8AX)
+
+### What's stored
+
+Two new fields on `ai_actions.metadata`, parallel to
+`variants_offered`. The 8AV/8AW keys are unchanged.
+
+```sql
+select
+  id,
+  created_at,
+  metadata -> 'autopilot_decisions'  as decisions,
+  metadata -> 'variant_risk_flags'   as risk_flags
+from public.ai_actions
+where venue_id = '<venue uuid>'
+  and agent = 'venuerise'
+  and action = 'draft_regenerate'
+order by created_at desc
+limit 25;
+```
+
+Each `autopilot_decisions[i]` is `{mode, label, helper, reasons,
+confidence}`; each `variant_risk_flags[i]` is `{has_pricing_
+question, has_policy_question, has_availability_claim}`.
+
+### Decision rules (summary)
+
+The full rules live in `lib/revenue-os/autopilot-guardrails.ts`.
+Operational shortcuts:
+
+- **Eligible** requires `finalConfidence >= 85`. Anything less
+  drops at least to review.
+- **Blocked** fires on ANY hard signal: pricing/policy/
+  availability keyword hit, `selectedVariantWasLowConfidence`,
+  `finalConfidence < 65`, `heuristicConfidence < 55`, or
+  `needs_more_context` context signal combined with
+  `finalConfidence < 80`.
+- Everything between is **review_required**. Missing
+  `finalConfidence` also defaults to review (we never silently
+  promote unscored drafts to eligible).
+
+### Troubleshooting
+
+1. **"Every draft renders Review required."**
+   - Most likely: the lead's `lead_score` is unset (`null`) and
+     the conservative heuristic floors are punishing the score.
+     Check `select lead_score from public.leads where id = '<id>';`.
+   - Less likely but possible: the model is consistently returning
+     CONFIDENCE lines under 85. Look at the Brand Voice
+     Calibration panel — if average confidence sits in the 70s,
+     review is the correct posture and the prompt is doing its
+     job.
+
+2. **"Decision says Blocked but I don't see why."**
+   - Hover the pill — the tooltip lists the reason codes that
+     fired (`pricing_risk`, `policy_risk`, etc.).
+   - SQL deep dive:
+     ```sql
+     select metadata->'autopilot_decisions'->0->'reasons',
+            metadata->'variant_risk_flags'->0
+       from public.ai_actions
+      where id = '<ai_action_id>';
+     ```
+   - If `pricing_risk` fires on a draft that doesn't mention
+     price, the keyword scan probably caught `package` or `fee`
+     in a non-price context. That's intentional over-flagging —
+     better the operator reviews a false positive than auto-
+     sends a real pricing claim.
+
+3. **"Approve & send is gone."**
+   - It isn't. The 8AX classifier never adds or removes the
+     button. If it disappeared, check the Phase 8AV brand voice
+     escalation gate — `block` mode hard-disables Approve when
+     confidence falls below `brandVoiceConfidenceFloor`. Confirm
+     with the chip color (red Low confidence = 8AV block, not
+     8AX).
+
+4. **"Autopilot readiness card is empty."**
+   - The card hides when the page slice has zero scored rows.
+     Refresh after a regenerate; if it's still empty, the venue
+     has no 8AX+ rows yet (older drafts pre-date the classifier).
+
+5. **"I want to confirm autonomy is still off."**
+   - `curl /api/health | jq .checks.autonomous_sending_still_disabled`
+     must return `"mounted"`. If it doesn't, autonomy was added
+     by a later phase and the health flag should have been removed
+     — investigate the diff.
+
+### Why no autonomous send (yet)
+
+Phase 8AX measures readiness. It does not enable sending. The
+next phase is **8AY — Autopilot Simulation Mode**: log "would
+have sent" decisions against real traffic without emitting
+anything, so we can compare the classifier's recommendation
+against what the operator actually did. Only after that shows
+the classifier is calibrated will Phase 8AZ+ consider letting
+the system act on its own — and even then, only behind explicit
+per-venue opt-in.
+
+## Autopilot Simulation Mode (Phase 8AY)
+
+### What's emitted
+
+No new persistence in 8AY — the simulation is derived from the
+existing 8AV/8AW/8AX fields on `ai_actions.metadata`:
+
+```sql
+select
+  id,
+  created_at,
+  metadata -> 'autopilot_decisions'   as decisions,
+  metadata ->> 'operator_outcome'      as outcome,
+  metadata ->> 'operator_outcome_at'   as outcome_at,
+  metadata ->> 'edit_distance_bucket'  as edit_bucket
+from public.ai_actions
+where venue_id = '<venue uuid>'
+  and agent = 'venuerise'
+  and action = 'draft_regenerate'
+  and created_at >= now() - interval '30 days'
+order by created_at desc
+limit 200;
+```
+
+The simulation helper at `lib/revenue-os/autopilot-simulation.ts`
+projects these into `would_send` / `would_require_review` /
+`would_block` per row, classifies the operator's response, and
+rolls up to a `not_ready` / `watch` / `promising` readiness
+signal.
+
+### Endpoints
+
+- `GET /api/admin/ai/autopilot-simulation?venue_id=…&days=…` —
+  dedicated simulation roll-up. Default window 30 days, range
+  1–90. Returns `{venue_id, window_days, summary, buckets,
+  recent_rows}`. Hard ceiling of 1000 rows per window.
+- `GET /api/admin/ai/draft-audit` — also emits an
+  `autopilot_simulation_summary` block over the loaded page
+  slice (typically 25 rows), plus per-row simulation fields and
+  CSV columns.
+
+### Readiness rules (summary)
+
+Computed in `computeAutopilotSimulationSummary`. Hard floors:
+
+- `promising` requires `total_scored >= 20` AND
+  `eligible_sent_as_is / would_send >= 0.8` AND
+  `blocked_sent_as_is / would_block <= 0.1`.
+- `watch` requires `total_scored >= 10` AND
+  `operator_less_conservative / total_scored < 0.2`.
+- Otherwise `not_ready`.
+
+`promising` is NOT permission to enable autonomous sending. It's
+the precondition for Phase 8AZ to start a structured review of
+disagreements.
+
+### Troubleshooting
+
+1. **"Panel says No simulation data yet but I just regenerated."**
+   - The panel only counts rows where BOTH the autopilot mode
+     AND an operator outcome exist. A fresh regenerate without
+     a follow-up Approve/Reject/Regenerate stays in `unknown`.
+     Send the draft (or regenerate it) and refresh — the panel
+     will fire on the next `venuerise:ai-draft-audit-fired`
+     event.
+
+2. **"Readiness is stuck on `not_ready` even though numbers look good."**
+   - Check the row-count gate. `promising` needs ≥ 20 scored
+     rows; `watch` needs ≥ 10. A venue with 8 perfectly-aligned
+     drafts will still surface as `not_ready` until volume
+     catches up. This is intentional — small samples don't
+     justify autonomy.
+
+3. **"Operator-less-conservative count is non-zero — is that dangerous?"**
+   - Yes, but it's the exact signal we want. Each
+     operator_less_conservative row is a case where autopilot
+     would have blocked or held a draft, but the human sent it
+     as-is anyway. Open the row in the lead drawer via the
+     recent-mismatches list. Two interpretations:
+     - The guardrail was too strict — relax it (a future phase
+       will let you tune per-rule thresholds).
+     - The operator was wrong to send as-is — that's a
+       coaching moment, not a guardrail bug.
+
+4. **"Estimated time saved is zero but Would-send is non-zero."**
+   - Time-saved only counts `eligible + sent_as_is` rows. If
+     operators are editing every eligible draft before sending,
+     time-saved stays at zero. Check the Eligible bucket — if
+     `sent_after_edit` dominates `sent_as_is`, the autopilot
+     would have fired but the human wasn't ready to trust it.
+
+5. **"Bucket counts don't match the summary tile counts."**
+   - The four tiles count by SIMULATION MODE
+     (`would_send` / `would_require_review` / `would_block`).
+     The bucket section counts by AUTOPILOT MODE
+     (`eligible` / `review_required` / `blocked`). Those are
+     1:1 today, so the numbers should match. If they DON'T
+     match, the simulation helper's `simulationModeFromAutopilotMode`
+     mapping has drifted — confirm with
+     `select metadata->'autopilot_decisions'->0->>'mode'
+        from public.ai_actions where id = '<row>';`
+     against what the panel renders.
+
+6. **"I want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must return `"mounted"`. The 8AY phase did NOT touch this
+     flag — it's still the 8AX assertion.
+
+### Why no autonomous send (still)
+
+8AY is the third layer of observation (gate → telemetry →
+guardrails → SIMULATION). 8AZ is the fourth: a queue of every
+disagreement between the system and the operator, with
+operator-reviewed labels. Only after both 8AY and 8AZ show
+sustained `promising` readiness + low false-positive review
+volume should autopilot graduate to opt-in autonomy — and even
+then, only per-venue, gated by an explicit toggle the operator
+has to flip.
+
+## Autopilot Shadow Evaluation + Review Queue (Phase 8AZ)
+
+### What's stored
+
+A new table `public.ai_action_reviews` (migration 024). One row
+per labeled disagreement, keyed unique on `ai_action_id`. Schema:
+
+```sql
+select
+  id,
+  venue_id,
+  ai_action_id,
+  reviewer_user_id,
+  review_state,
+  note,
+  reviewed_at
+from public.ai_action_reviews
+where venue_id = '<venue uuid>'
+order by reviewed_at desc
+limit 25;
+```
+
+RLS allows `owner`/`admin` venue roles to SELECT. No
+INSERT/UPDATE/DELETE policies — writes go through the service-
+role POST route after explicit `requireAdmin` +
+`requireVenueRole(ADMIN_ROLES)` checks.
+
+### Endpoints
+
+- `GET /api/admin/ai/autopilot-reviews` — disagreement queue.
+  Filters: `state` (`needs_review`, `confirmed_*`, `deferred`,
+  `all`), `alignment` (`operator_more_conservative`,
+  `operator_less_conservative`, `all`), `occurred_before`
+  (cursor), `limit` (1-100, default 25). Hard scan ceiling
+  1000 rows.
+- `POST /api/admin/ai/autopilot-reviews/[aiActionId]` —
+  upserts a review row. Body:
+  `{review_state: 'confirmed_guardrail_too_strict' |
+  'confirmed_guardrail_correct' | 'confirmed_operator_error' |
+  'deferred', note?: string<=500}`. Returns
+  `{success, ai_action_id, review_state, reviewed_at}`.
+  `needs_review` is NOT a writable state.
+
+### Review state semantics
+
+- `needs_review` — pending operator verdict. Implicit when no
+  row exists in `ai_action_reviews`.
+- `confirmed_guardrail_too_strict` — operator was right; the
+  autopilot rule was over-conservative.
+- `confirmed_guardrail_correct` — autopilot was right to
+  block/review; the operator's send was the mistake (or the
+  edit was real extra work).
+- `confirmed_operator_error` — operator overrode a guardrail
+  block in a way that should be coached, not replicated.
+- `deferred` — operator parked the row for later.
+
+### Critical safety guarantees
+
+These guarantees are enforced in the codebase, not just the
+docs:
+
+1. **Labels do NOT auto-tune guardrails.** A row labeled
+   `confirmed_guardrail_too_strict` does not weaken any rule.
+   Search the codebase for `confirmed_guardrail_too_strict` —
+   it appears only in storage, UI, and aggregation paths, never
+   in any guardrail evaluation path.
+2. **Labels do NOT block operators.** A row labeled
+   `confirmed_operator_error` does not change what the operator
+   can send. There is no follow-up flag on the operator's user
+   record.
+3. **No autonomous sending was added.** The
+   `autonomous_sending_still_disabled` health flag stays
+   `mounted`. The 8AZ phase touched zero send paths.
+
+### Troubleshooting
+
+1. **"Operator clicks a label but the row doesn't update."**
+   - Check the inline error under the row buttons — the POST
+     route may have 4xx'd (validation, rate limit, cross-tenant
+     id). Hit `/api/health` to confirm
+     `autopilot_review_labels: 'mounted'`.
+   - Check Sentry / server logs for
+     `admin.ai.autopilot_review.upsert_failed`.
+
+2. **"Same row labeled twice creates two rows."**
+   - It shouldn't — unique constraint on `ai_action_id`. If it
+     does, migration 024 didn't apply cleanly. Run:
+     ```sql
+     select indexname from pg_indexes
+      where tablename = 'ai_action_reviews'
+        and indexdef ilike '%unique%';
+     ```
+     If empty, re-apply migration 024.
+
+3. **"Rule signals card is empty even though I labeled rows."**
+   - The simulation endpoint only counts a rule signal when
+     `riskFlags` (pricing / policy / availability) fired on the
+     same row. If you labeled rows that had no risk flags, they
+     still count toward `reviewed_disagreements_pct` but won't
+     show up in the per-rule card. Confirm with:
+     ```sql
+     select metadata->'variant_risk_flags' from public.ai_actions
+      where id = '<row from queue>';
+     ```
+
+4. **"Queue is empty but I know there are disagreements."**
+   - The queue only renders DISAGREEMENTS
+     (`operator_more_conservative` + `operator_less_conservative`).
+     If every operator outcome happened to align with autopilot
+     across the window, the queue is correctly empty. Confirm
+     with the AutopilotSimulationPanel — `summary.aligned`
+     should be high relative to the other two counters.
+
+5. **"I want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 8AZ did NOT touch this flag.
+
+### Why no autonomous send (yet)
+
+8AZ is observation + labeling. The labels are calibration
+evidence; they don't enable any action. Phase 8BA is the
+**per-venue autonomy readiness gate** (still read-only) that
+will eventually consume `reviewed_disagreements_pct` + the
+false-positive rates as the precondition for any future
+opt-in autonomy toggle. Real autopilot sending is at least
+two more safety phases away, and even then will be per-venue,
+gated by an explicit operator toggle.
+
+## Autopilot Safety Scorecard + Readiness Gate (Phase 8BA)
+
+### What's stored
+
+Nothing new. 8BA is purely derived from the 8AY simulation
+data + the 8AZ review labels. No migration. No additional
+schema. The scorecard is a verdict surface over data that
+already exists.
+
+### Endpoint
+
+`GET /api/admin/ai/autopilot-readiness?venue_id=…&days=…`
+
+Window default 30 days, range 1–90. Reuses the same
+`ai_actions` + `ai_action_reviews` scan the 8AY/8AZ routes
+use. Hard scan cap 1000 rows.
+
+Returns:
+
+```json
+{
+  "venue_id": "...",
+  "window_days": 30,
+  "readiness": {
+    "verdict": "not_eligible" | "watch" | "eligible",
+    "eligible": false | true,
+    "reasons": ["..."],
+    "caveats": ["..."],
+    "gates": [
+      {
+        "key": "simulation_readiness_promising",
+        "label": "Simulation readiness is promising",
+        "passed": false,
+        "currentValue": "watch",
+        "threshold": "promising",
+        "severity": "blocking",
+        "nextStep": "Keep approving + regenerating drafts..."
+      }
+      // ... 5 more gates
+    ]
+  },
+  "inputs": {
+    "simulation_readiness": "watch",
+    "total_scored": 23,
+    "reviewed_disagreements_pct": 0.42,
+    "max_rule_false_positive_rate": 0.31,
+    "operator_less_conservative_unreviewed": 2,
+    "window_days_with_data": 11
+  },
+  "generated_at": "2026-..."
+}
+```
+
+### Gates
+
+Six gates evaluated independently. Thresholds live in
+`lib/revenue-os/autopilot-readiness.ts` as exported constants
+(`MIN_SCORED_ROWS`, `MIN_REVIEWED_DISAGREEMENTS_PCT`,
+`MAX_RULE_FALSE_POSITIVE_RATE`, `MIN_WINDOW_DAYS_WITH_DATA`).
+
+| Key | Severity | Pass condition |
+|-----|----------|----------------|
+| `simulation_readiness_promising` | blocking | 8AY `summary.readiness === 'promising'` |
+| `min_scored_rows` | blocking | `total_scored >= 50` |
+| `min_reviewed_disagreements_pct` | blocking | `reviewed_disagreements_pct >= 0.8` |
+| `max_false_positive_rate_per_rule` | warning | no reviewed rule has FP rate > 0.25 |
+| `zero_operator_less_conservative_unreviewed` | blocking | count === 0 |
+| `min_window_days_with_data` | warning | distinct UTC dates with scored rows >= 14 |
+
+### Verdict rule
+
+- `eligible` — every gate passes.
+- `watch` — every blocking gate passes; at most one warning
+  gate fails.
+- `not_eligible` — anything else.
+
+### Critical safety guarantees
+
+These are enforced in the codebase, not just the docs:
+
+1. **`eligible` does NOT enable autopilot.** Returning the
+   verdict has zero side effects — no toggle is flipped, no
+   threshold is loosened, no flag is set. Verify with
+   `grep -R "verdict === 'eligible'" app lib` — only the UI
+   reads it, and the UI only RENDERS the verdict.
+2. **No toggle exists in the codebase.** Search the
+   AutopilotReadinessScorecard for "Enable" — it shouldn't
+   appear. There is no autonomy-related button.
+3. **`autonomous_sending_still_disabled` health flag stays
+   `mounted`.** 8BA does not touch it; assert with
+   `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`.
+
+### Troubleshooting
+
+1. **"Card says eligible but I can't find the autopilot
+   toggle."**
+   - That's the intended behavior. There is no toggle. The
+     `eligible` verdict is the PRECONDITION for a future opt-in
+     phase to even consider adding one. Read the emerald
+     caveat box on the card — it spells this out explicitly.
+
+2. **"Every gate is failing on a venue that's been active for
+   weeks."**
+   - Most likely cause: pre-8AX rows. The gates count only
+     rows with autopilot decisions, which started landing in
+     Phase 8AX. SQL:
+     ```sql
+     select count(*) from public.ai_actions
+      where venue_id = '<id>'
+        and agent = 'venuerise'
+        and action = 'draft_regenerate'
+        and metadata ? 'autopilot_decisions';
+     ```
+   - If that's zero, the venue's draft regenerations all
+     pre-date 8AX. Generate a few new drafts; the gates will
+     begin to populate.
+
+3. **"Disagreement coverage gate keeps failing even after I
+   label rows."**
+   - The denominator is `total_disagreements` — every
+     `operator_more_conservative` + `operator_less_conservative`
+     row in the window. If new disagreements arrive faster
+     than the operator labels them, the percentage drops.
+     Either the operator needs to spend more time in the
+     review queue, or the window's natural disagreement
+     volume is too high for current operator bandwidth.
+
+4. **"`zero_operator_less_conservative_unreviewed` won't
+   clear."**
+   - Find the unlabeled dangerous-direction rows:
+     ```sql
+     select aa.id, aa.created_at
+       from public.ai_actions aa
+       left join public.ai_action_reviews ar
+         on ar.ai_action_id = aa.id
+      where aa.venue_id = '<id>'
+        and aa.agent = 'venuerise'
+        and aa.action = 'draft_regenerate'
+        and aa.created_at >= now() - interval '30 days'
+        and ar.id is null
+        and aa.metadata ->> 'operator_outcome' = 'sent_as_is'
+        and exists (
+          select 1 from jsonb_array_elements(
+            aa.metadata->'autopilot_decisions'
+          ) d
+          where d->>'mode' in ('blocked', 'review_required')
+        );
+     ```
+   - Each one needs a label in the AutopilotReviewQueue.
+     This gate is BLOCKING by design — dangerous mismatches
+     must be reviewed before any autonomy conversation.
+
+5. **"`max_false_positive_rate_per_rule` is a warning but
+   feels important."**
+   - It IS important — a single rule firing wrong > 25% of
+     the time is concerning. We made it a warning rather
+     than blocking because a venue might have one noisy rule
+     while the rest of the system is healthy; in that case
+     `watch` is the honest verdict. If you'd rather treat it
+     as blocking, change the `severity` in
+     `lib/revenue-os/autopilot-readiness.ts` — it's a single
+     line.
+
+6. **"I want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 8BA did not touch this
+     flag. If it ever changes, the safety stack has
+     graduated to a different posture and that requires a
+     different runbook entry.
+
+### Why no autonomous send (still)
+
+Phase 8BA closes the read-only safety stack. The full chain
+is now: confidence gate (8AV) → calibration telemetry (8AW)
+→ guardrails (8AX) → simulation (8AY) → labeled
+disagreements (8AZ) → per-venue readiness scorecard (8BA).
+That is the entire READ side.
+
+The WRITE side — actually emitting an autopilot message
+without operator approval — has not been built and is not
+authorized by this phase. The next phase is whatever the
+team decides; if it's opt-in autonomy, it must add explicit
+per-venue toggle, rollback, kill switch, monitoring, and
+customer-visible settings before any send path is touched.
+
+## Tour Slot Suggestions from Availability (Phase 8BB)
+
+### What's stored
+
+Nothing new. 8BB is a derived surface on top of the existing
+`tour_availability` table (Phase 6B) + the `tours` table.
+
+### Pipeline
+
+1. The lead detail drawer's recovery effect (already running
+   per-lead) fan-outs to also fetch the venue's active
+   `tour_availability` rows + the venue's next 60 days of
+   tours.
+2. The pure helper at
+   `lib/revenue-os/tour-slot-suggestions.ts` computes up to
+   2 candidate slots:
+   - active-only windows
+   - 60-minute default duration; windows narrower than that
+     are skipped
+   - no past times; no times after the lead's `event_date`
+   - no overlap with non-cancelled tours
+   - sorted earliest-first; de-duplicated by calendar date
+3. The TourReadinessPanel renders the slots as small navy
+   chips inside the `qualified_no_tour` branch only.
+4. Clicking a chip stashes the ISO timestamp in the drawer's
+   `scheduleSeedAt` state and opens the existing
+   ScheduleTourDrawer with `defaultScheduledAt` set. The
+   drawer's Phase 8I re-seed effect picks up the new value
+   and pre-fills the date + time inputs.
+5. Operator confirms inside the drawer. No autonomous
+   scheduling.
+
+### Troubleshooting
+
+1. **"Suggestions don't appear on a qualified lead."**
+   - The chips only render when the tour-booking signal is
+     `qualified_no_tour`. Check:
+     `select stage, lead_score from public.leads where id = '<id>';`
+     plus
+     `select id, status from public.tours where lead_id = '<id>';`
+     The signal goes elsewhere (e.g. `tour_today`,
+     `scheduled_unconfirmed`) if a tour already exists in any
+     non-cancelled status.
+
+2. **"Operator says 'No open windows found' but I see open
+     slots in the calendar."**
+   - The helper compares against the venue's next 60 days of
+     tours. If you see open slots in the calendar UI but
+     the chip shows the empty state, either (a) the
+     candidate window is narrower than 60 minutes
+     (`end_time - start_time`), or (b) every candidate
+     date in the scan window falls after the lead's
+     `event_date`. Confirm with:
+     ```sql
+     select day_of_week, start_time, end_time, is_active
+       from public.tour_availability
+      where venue_id = '<venue uuid>'
+        and is_active = true;
+     ```
+     plus the lead's `event_date`. If the event date is
+     soon (< 21 days away), the scan window will exhaust
+     faster than usual.
+
+3. **"Chips show but click does nothing."**
+   - Open DevTools. The click should set `scheduleSeedAt`
+     and open the existing ScheduleTourDrawer. If the
+     drawer opens but the date/time inputs don't update,
+     check that `defaultScheduledAt` is reaching the
+     drawer (it's the Phase 8I prop). A console warning
+     about `Invalid Date` usually means the helper
+     produced a malformed ISO — check the row's
+     `start_time` for unexpected formatting.
+
+4. **"Two suggestions on the same day."**
+   - Shouldn't happen — the helper de-duplicates by
+     calendar date. If it does, the row's `created_at`
+     might be encoded with a timezone offset that pushes
+     two candidates into different ISO day prefixes. File
+     it with the row IDs so we can tighten the de-dup
+     keying.
+
+### Safety posture
+
+- The Tour Slot Suggestions surface NEVER writes a tour,
+  sends a message, or schedules anything. Every action runs
+  through the existing operator-confirmed
+  ScheduleTourDrawer.
+- The `autonomous_sending_still_disabled` health flag
+  (8AX→8AY→8AZ→8BA→8BB) remains `mounted`.
+- The suggestion chips hide silently on fetch errors so the
+  rest of the drawer keeps working.
+
+## Venue Availability Intelligence (Phase 8BC)
+
+### What's stored
+
+Two per-venue settings (Phase 8AQ `RevenueOsSettings` extension)
++ a new dedicated table:
+
+```sql
+-- RevenueOsSettings (in `venues.metadata.revenue_os`):
+--   tour_duration_minutes  int  (15..240, default 60)
+--   tour_buffer_minutes    int  (0..120,  default 0)
+
+-- migration 025 — tour_blackouts:
+select id, blackout_date, reason, created_at
+  from public.tour_blackouts
+ where venue_id = '<venue uuid>'
+ order by blackout_date asc;
+```
+
+`tour_blackouts` is keyed unique on `(venue_id, blackout_date)`
+so re-adding the same day surfaces as a 409 (not a duplicate
+row).
+
+### Endpoints
+
+- `GET    /api/venues/[id]/tour-blackouts`  — list (sales roles)
+- `POST   /api/venues/[id]/tour-blackouts`  — add (admin only)
+- `DELETE /api/venues/[id]/tour-blackouts/[blackoutId]` — remove
+  (admin only)
+- The existing admin Revenue OS settings PATCH route accepts
+  `tourDurationMinutes` + `tourBufferMinutes` alongside the rest.
+
+Auth posture mirrors `/api/venues/[id]/availability` —
+unauthenticated → 401, cross-tenant → 404, Zod-validated. Add
+returns 409 `conflict` on the unique-violation path so the UI
+can render "That date is already blocked." instead of a generic
+500.
+
+### Pipeline
+
+1. Settings → Availability fetches `tour_availability` +
+   `tour_blackouts` server-side. The Blackout dates section adds /
+   lists / deletes against the new routes; on success the rows
+   update optimistically.
+2. The LeadDetailDrawer's recovery effect now fans out to
+   `tour_availability` + `tours` (venue-wide, 60d) +
+   `tour_blackouts` (today+) + `venues.metadata + timezone` in
+   the same `Promise.all`.
+3. `suggestTourSlots` receives `defaultDurationMinutes`,
+   `bufferMinutes`, `blackoutDates`, and `timezone`. It uses the
+   duration for window-fit + ISO computation, the buffer for the
+   end-pad on each existing tour during conflict detection, the
+   blackout set for a local-date filter, and the timezone for
+   chip label rendering (`Intl.DateTimeFormat({ timeZone })`).
+4. Operator clicks a chip → ScheduleTourDrawer opens with the
+   suggested ISO via `defaultScheduledAt` (Phase 8I prop). The
+   operator still confirms — no autonomous scheduling.
+
+### Critical safety guarantees
+
+- **Blackouts only affect SUGGESTIONS.** Operators can still
+  manually schedule a tour on a blackout date from the drawer's
+  date picker. Blackouts do NOT cancel existing tours.
+- **Buffer is suggestion-side only.** Existing tours stored
+  before buffer was set are unchanged; the buffer only affects
+  what the system suggests, not what's in the database.
+- **No autonomous scheduling. No autonomous sending.** The
+  `autonomous_sending_still_disabled` health flag stays
+  `mounted`.
+
+### Troubleshooting
+
+1. **"I added a blackout but suggestions still appear on that
+     day."**
+   - The drawer hydrates fresh on every open — close + re-open
+     to refetch. If still wrong, check
+     `select * from public.tour_blackouts where venue_id =
+     '<id>' and blackout_date = '<YYYY-MM-DD>';` is present.
+   - The helper compares the candidate's LOCAL date against the
+     blackout set. If the operator's browser timezone differs
+     from the venue's, edge cases near midnight can land in a
+     different local day. The chip label honors venue TZ but
+     the underlying scan uses the JS runtime's TZ. Cross-region
+     accuracy is a known limitation.
+
+2. **"Buffer time isn't being respected."**
+   - Confirm:
+     `select metadata->'revenue_os'->>'tour_buffer_minutes'
+        from public.venues where id = '<id>';`
+     If null or 0, buffer isn't enabled. Save again from the
+     RevenueOsSettingsCard; the dirty check + save body now
+     include the field (Phase 8BC fixed a pre-existing 8AV gap
+     where brand voice fields had the same issue).
+
+3. **"Chip labels show times that don't match the venue's
+     timezone."**
+   - The helper passes `venue.timezone` (from
+     `venues.timezone`) to `Intl.DateTimeFormat`. If the column
+     is null, labels fall back to the operator's browser
+     timezone. Fix by setting `venues.timezone` to a valid
+     IANA zone (e.g. `America/Los_Angeles`).
+
+4. **"409 conflict on a date I haven't added."**
+   - The unique constraint hit on `(venue_id, blackout_date)`.
+     Possible causes: a different admin added it; a stale
+     hydration showed the operator an empty list. Refresh
+     `/dashboard/settings` to see the canonical list.
+
+5. **"I want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 8BC did not touch the
+     send path.
+
+## Reactivation Outreach Cadence + Won/Lost Reason Library (Phase 8BD)
+
+### What's stored
+
+Migration 026 adds `leads.metadata` (jsonb, NOT NULL,
+default `'{}'`) + a GIN index. The lost-reason taxonomy lives
+at `metadata.lost_reason`:
+
+```sql
+select
+  id,
+  name,
+  stage,
+  metadata->'lost_reason' as lost_reason
+from public.leads
+where venue_id = '<venue uuid>'
+  and stage = 'lost'
+order by updated_at desc
+limit 25;
+```
+
+Each block is `{reason, note, recorded_at, recorded_by}` with
+`reason ∈ {priced_out, date_unavailable, picked_competitor,
+ghosted, not_a_fit, other}`. Operator-supplied only — the
+system never synthesizes a reason.
+
+### Endpoints
+
+- `PATCH /api/leads/[id]` — extended to accept an allowlisted
+  `lost_reason` field (reason enum + optional 500-char note).
+  Merges into the existing metadata jsonb; pass `null` to
+  clear. Other metadata keys are never overwritten.
+- `GET /api/admin/leads/reactivation-queue?venue_id=&limit=`
+  — top-N reactivation candidates with rationale + suggested
+  instruction. requireAdmin + cross-tenant 404 + per-user
+  rate limit. Metadata only — no email, no message body.
+
+### Candidacy rules (summary)
+
+The full rules live in `lib/revenue-os/reactivation.ts`:
+
+- Only `stage === 'lost'`.
+- `picked_competitor` and `not_a_fit` are NEVER surfaced.
+- Last lead-role message must be > 30 days ago.
+- Inside the 60-day pre-event window → never suggest.
+- Strong reasons (`priced_out`, `date_unavailable`,
+  `ghosted`) → `strong_candidate`.
+- `other` / missing reason → `possible_candidate` only after
+  60 days of cooling.
+- Score = reason quality (40 max) + lead_score (40 max) +
+  days-cooled bonus (20 max, capped at 180 days).
+
+### Critical safety guarantees
+
+- **No autonomous outreach.** The system surfaces candidates
+  and suggested instructions only. Every reactivation reply
+  flows through Regenerate + Approve & send (which themselves
+  flow through the 8AV–8BA brand voice + autopilot safety
+  stack).
+- **Operator-supplied reasons only.** Missing reasons surface
+  as "possible", not "strong".
+- **Skippable prompt.** The lost-reason prompt does NOT block
+  the stage change. Operators who skip end up with a lead
+  that still becomes a reactivation candidate after a longer
+  cooling window.
+- **`autonomous_sending_still_disabled`** flag stays mounted.
+
+### Troubleshooting
+
+1. **"Lost reason prompt doesn't appear when I move a lead
+     to lost."**
+   - The prompt only opens on a transition INTO `lost` — it
+     won't re-open on a lead that's already lost. To re-test,
+     move the lead to a non-lost stage first.
+
+2. **"I labeled a lead but it doesn't show in the
+     reactivation queue."**
+   - Cooling gate: last lead-role message must be > 30 days
+     ago (strong reasons) or > 60 days (other / null
+     reason). If the lead replied recently, the helper
+     correctly excludes it.
+   - Event-date guard: if `event_date` is within 60 days
+     of today, the lead is excluded from suggestions even
+     with a strong reason.
+   - SQL deep dive:
+     ```sql
+     select
+       l.id, l.stage,
+       l.metadata->'lost_reason'->>'reason' as reason,
+       l.event_date,
+       (select max(m.created_at) from public.messages m
+         where m.lead_id = l.id and m.role = 'lead') as last_inbound
+       from public.leads l
+      where l.id = '<id>';
+     ```
+
+3. **"Admin endpoint returns 0 items but the Overview card
+     shows candidates."**
+   - The admin endpoint's default `limit` is 10; the Overview
+     card also caps at 10. They should agree. If they don't,
+     check the request — `limit=0` would be rejected by Zod
+     (`min(1)`); a missing limit defaults to 10.
+
+4. **"Operator marks a lost lead's reason as
+     `picked_competitor` and it stops appearing."**
+   - Correct behavior. `picked_competitor` is a never-surface
+     reason — the operator already said the lead picked
+     somewhere else, so we don't surface reactivation
+     candidates for them.
+
+5. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 8BD did not touch the
+     send path.
+
+## Phase 9A — Enterprise audit log + RBAC posture sweep
+
+### What 9A added
+
+- **Migration 027** — `public.audit_events` with `venue_id`,
+  `actor_user_id`, `actor_kind`, `route`, `action`, `target_table`,
+  `target_id`, `request_id`, `ip_hash`, `user_agent`,
+  `before_snapshot`, `after_snapshot`, `metadata`, `created_at`.
+  Four indexes: `(venue_id, created_at desc)`,
+  `(actor_user_id, created_at desc)`,
+  `(action, created_at desc)`, `(target_table, target_id)`.
+  RLS: SELECT for owner/admin via `has_venue_role`; no write policies
+  (service-role only via the helper).
+- **`lib/enterprise/audit-events.ts`** — best-effort writer:
+  - Recursively drops sensitive keys (password, secret, token,
+    api_key, authorization, cookie, webhook_payload, raw_body,
+    stripe_secret, anthropic_api_key) before storage.
+  - Caps snapshots at 4 KB; truncates strings inside at 1 KB;
+    truncates user-agent at 240 chars.
+  - Salted-SHA-256 fingerprint for the IP via
+    `AUDIT_IP_HASH_SECRET` (falls back to `SUPABASE_JWT_SECRET` in
+    dev). Never stores raw IPs.
+  - Wraps every step in try/catch — logs + Sentry on failure, never
+    throws, never blocks the original business action. Routes use
+    `void recordAuditEvent({...})` so a stalled audit write doesn't
+    delay the HTTP response.
+- **`GET /api/admin/audit-events`** — admin/owner only; cross-tenant
+  forbidden collapses to 404. JSON + CSV branches; cursor pagination
+  via `?occurred_before=<iso>` + X-Has-More / X-Next-Cursor headers.
+  `?id=<uuid>&include_snapshots=1` single-row fetch for the drawer.
+  `ADMIN_ENDPOINT_COUNT` bumped 36 → 37.
+- **`EnterpriseAuditEventsCard`** on `/dashboard/settings/billing`
+  — list view does NOT request snapshots; drawer fetches them on
+  demand. Three filters: action, target_table, actor_user_id.
+
+### RBAC posture (cross-cutting recap)
+
+Every `/api/admin/*` route in the codebase follows the same posture:
+
+1. `requireAdmin()` — owner/admin gate, returns 401 unauthorized /
+   403 no_venue when the caller is not eligible. Sales /
+   coordinator / viewer roles get 403.
+2. Per-user rate limit keyed off `${route}:${userId}`. Distinct key
+   prefixes per route so a noisy surface doesn't starve a sister
+   surface's budget.
+3. Optional cross-tenant `?venue_id=<uuid>` (or body field). When
+   the resolved venue differs from `callerVenueId`, the route calls
+   `requireVenueRole(user.id, targetVenueId, ADMIN_ROLES)`.
+   `TenantAccessError` with `status===403` collapses to 404 — the
+   admin surface never reveals whether a foreign venue exists.
+4. Zod validates the body / query shape; failures return 400 with
+   `validation_failed` + the flattened error.
+5. Sensitive writes record a `recordAuditEvent({...})` row at the
+   success path. Best-effort — the audit row never gates the
+   response.
+
+Non-admin routes (e.g. `/api/leads/[id]`, `/api/tours/[id]`,
+`/api/ai/actions/[id]/reject`, `/api/conversations/[id]/messages`)
+use `SALES_ROLES` instead of `ADMIN_ROLES`. The same 403 → 404
+collapse applies on cross-tenant probes.
+
+### Runbook entries
+
+1. **"Audit feed shows the wrong before/after."**
+   - The helper sanitizes recursively; if a snapshot looks empty
+     it usually means every field matched the sensitive-key
+     allowlist. Check `metadata` for the structural fields the
+     route writer chose (e.g. `field_count`, `had_metadata_diff`).
+   - Snapshots are size-capped at 4 KB. Large jsonb blobs get
+     truncated; the helper emits a `[truncated]` marker.
+
+2. **"Audit feed is empty after a known write."**
+   - Audit writes are best-effort. Look for
+     `audit_events.write_failed` in the pino logs / Sentry. The
+     business action still committed; the audit row didn't.
+   - Confirm the route actually calls `recordAuditEvent`. Use
+     `grep -RE "recordAuditEvent" app/api` to enumerate
+     instrumented surfaces.
+
+3. **"Can I rotate `AUDIT_IP_HASH_SECRET`?"**
+   - Yes, at any time. Rotation breaks linkability of audit rows
+     written before the rotation (by design — incidents resolved
+     before rotation should be fully forensicable from the
+     pre-rotation rows already, and post-rotation rows get a
+     fresh-keyed namespace).
+
+4. **"Audit row missing for an operator-sent message — was the
+   body captured?"**
+   - No. `/api/conversations/[id]/messages` deliberately
+     records `body_length` only — never the message body. The
+     audit row's purpose is *who sent what to whom, when* — the
+     message contents live in `public.messages` and are surfaced
+     by the inbox UI, the message search RPC, and the
+     VariantReplayDrawer. Auditing the body would double-store PII
+     for no incremental investigation value.
+
+5. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9A did not touch any send
+     path. The four 9A flags
+     (`enterprise_audit_log`, `enterprise_audit_events_card`,
+     `rbac_documentation_pass`, `request_context_baseline`) are
+     mounted alongside it.
+
+## Phase 9B — Audit coverage completion + RBAC hardening matrix
+
+### What 9B added
+
+- **`lib/enterprise/audit-actions.ts`** — string constants for
+  every audit action name. New routes import from here so a typo
+  ("lead_updated" vs "lead_update") gets caught at build time.
+  Pre-9B routes keep their literal strings; the strings resolve
+  to identical UTF-8.
+- **Routes newly instrumented**: `/api/leads` POST,
+  `/api/onboarding/create-workspace`, `/api/billing/checkout`,
+  `/api/billing/portal`, `/api/admin/billing-events/[id]/clear-dunning`,
+  `/api/admin/billing-events/[id]/replay`,
+  `/api/team/invitations` POST, `/api/team/invitations/[id]` DELETE,
+  `/api/team/invitations/accept`, `/api/team/members/[userId]` DELETE+PATCH,
+  `/api/admin/demo/{seed,reset}`, `/api/admin/test-send`,
+  `/api/admin/digest/preview`.
+- **Routes explicitly exempted with rationale**: `/api/widget`
+  (public route), `/api/stripe/webhook` + `/api/resend/webhook`
+  (webhook routes), `/api/ai/{draft,chat,followup,qualify}` +
+  `/api/admin/anthropic-probe` (AUDIT_EXEMPT with reason).
+  Every exemption is documented in `docs/AUDIT-COVERAGE.md`.
+- **`docs/AUDIT-COVERAGE.md`** — the source of truth for which
+  routes write audit rows and which are exempted. Read it before
+  adding a new mutating route.
+- **`docs/RBAC-MATRIX.md`** — per-route auth helper, role set,
+  tenant source, cross-tenant collapse behavior, service-role
+  usage, RLS reliance.
+- **`scripts/check-audit-coverage.mjs`** — regression guard.
+  Scans `app/api` for mutating route files lacking
+  `recordAuditEvent` / `AUDIT_EXEMPT` / `public route` /
+  `webhook route` markers. Wired into `npm run verify`.
+- **Drawer polish** on `EnterpriseAuditEventsCard`:
+  before/after/metadata JSON collapsed by default (compact
+  preview shows top-level keys); copy buttons for audit id,
+  request id, actor user id, target id; navigator.clipboard with
+  textarea-fallback for older browsers.
+
+### Runbook entries
+
+1. **"`check:audit-coverage` failed in CI / `npm run verify`."**
+   - Scanner found a mutating route file with neither a
+     `recordAuditEvent(...)` call nor an exemption marker. The
+     error output lists the file + which methods (POST / PATCH /
+     PUT / DELETE) it exports.
+   - Resolve by ONE of:
+     - Add `recordAuditEvent({...})` at the success path. Prefer
+       a constant from `lib/enterprise/audit-actions.ts`; add a
+       new constant if your action doesn't fit an existing name.
+     - Add `// AUDIT_EXEMPT: <reason>` near the top of the file
+       AND document the row in `docs/AUDIT-COVERAGE.md` under
+       "Explicit exemptions".
+     - For anonymous or webhook routes, add `// public route` or
+       `// webhook route` in a header comment.
+
+2. **"Operator can't copy the audit row id."**
+   - Clipboard requires a secure context (HTTPS or localhost) +
+     active document focus. The drawer's `CopyButton` falls
+     back to a `document.execCommand('copy')` flow via a hidden
+     textarea — works in older browsers + non-secure contexts.
+   - If both fail (some hardened browser profile), the audit id
+     is still visible in the drawer's truncated font-mono span;
+     the operator can select + Ctrl-C manually.
+
+3. **"Snapshot panel says `Expand (N fields)` — what's hiding?"**
+   - The JSON pane is collapsed by default to keep the drawer
+     scannable. Clicking "Expand" renders the full sanitized
+     `before_snapshot` / `after_snapshot` / `metadata` blob the
+     helper saved. The sanitization (sensitive-key drop +
+     4 KB cap) already happened at write time; the drawer does
+     no further redaction.
+   - Empty panes show `—`; the helper writes `null` for routes
+     that don't supply a snapshot.
+
+4. **"Want to add a new admin endpoint."**
+   - Read `docs/RBAC-MATRIX.md` first. The standard posture is:
+     `requireAdmin()` → per-user rate limit → Zod-validate body
+     → resolve `targetVenueId = bodyVenueId ?? callerVenueId`
+     → if cross-tenant, `requireVenueRole` with `ADMIN_ROLES`
+     (403 collapses to 404) → service-role write → `void recordAuditEvent`.
+   - Bump `ADMIN_ENDPOINT_COUNT` in `app/api/health/route.ts`.
+   - Run `npm run check:audit-coverage` — must pass clean.
+
+5. **"Audit log isn't immutable — that's a problem for compliance."**
+   - Acknowledged. As of Phase 9B, an admin with database access
+     can delete rows from `audit_events`. The RLS posture only
+     blocks the REST surface. A future phase may add a WORM-style
+     append-only object storage copy for SOC 2 / HIPAA contexts.
+     For now, treat audit logs as forensic evidence (good for
+     investigations) not as a legal record (not yet).
+
+## Phase 9C — Audit mirror + cross-tenant probe
+
+### What 9C added
+
+- **Migration 028** — `public.audit_event_mirror` (separate
+  table; shares the primary `audit_events.id` so a join is
+  trivial). RLS: owner-only SELECT (stricter than the primary
+  feed which allows owner OR admin). NO RLS write policies — all
+  inserts go through the service-role helper; the REST surface
+  cannot mutate the mirror.
+- **`lib/enterprise/audit-mirror.ts`** — `mirrorAuditEvent`
+  best-effort writer. Gated by `AUDIT_MIRROR_ENABLED=1`
+  (default OFF). `recordAuditEvent` selects back the DB-stamped
+  id + created_at from the primary insert, then fires
+  `mirrorAuditEvent` fire-and-forget. The helper's own try/catch
+  ensures failures NEVER throw back.
+- **`scripts/check-cross-tenant-rbac.mjs`** — env-driven smoke
+  harness. Probes 8 routes × 2 passes (authenticated venue-A
+  user against venue-B resources; unauthenticated). Verifies
+  authenticated → 404 (collapsed from 403), unauthenticated →
+  401. Wired via `npm run check:cross-tenant-rbac`. NOT in
+  `npm run verify` because it needs real seeded tenants;
+  operators run it manually in staging or local dev.
+- **`EnterpriseAuditEventsCard`** now renders a "Mirror:
+  best-effort enabled" / "Mirror: disabled" indicator on the
+  billing page. The state comes from the server-rendered
+  billing page reading `AUDIT_MIRROR_ENABLED` via
+  `isAuditMirrorConfigured()` — no new admin endpoint.
+
+### Runbook entries
+
+1. **"Mirror writes are failing."**
+   - Grep the structured logs for `audit_mirror.insert_failed`
+     or `audit_mirror.helper_threw`. The error message + the
+     `route` / `action` / `id` fields identify the offending
+     primary row. The Sentry issue carries the venue id.
+   - Most common cause: migration 028 hasn't applied in the
+     environment. Confirm with
+     `select to_regclass('public.audit_event_mirror');` — null
+     means the table doesn't exist; apply 028.
+   - Second most common: `AUDIT_MIRROR_ENABLED=1` is set but
+     the service-role key is misconfigured. Service-role is
+     required because the mirror table has NO RLS write
+     policies. Confirm the key has the `service_role` claim.
+
+2. **"Mirror is on but the indicator on the card says disabled."**
+   - The card reads `AUDIT_MIRROR_ENABLED` at server-render
+     time (the billing page is a Server Component). If the env
+     var was flipped without restarting the Next.js process,
+     the card still shows the boot-time state. Restart the
+     server.
+
+3. **"How do I run the cross-tenant probe?"**
+   - Seed two test tenants in your local Supabase (or a
+     dedicated staging project): venue A with the user you'll
+     authenticate as, venue B with at least one lead, one tour,
+     and one ai_action.
+   - Copy the venue-A user's session cookie from devtools.
+     Look for `sb-<projectref>-auth-token=...`.
+   - Set env vars (or pass them inline):
+     ```bash
+     export RBAC_PROBE_BASE_URL=http://localhost:3000
+     export RBAC_PROBE_COOKIE='sb-<ref>-auth-token=...'
+     export RBAC_PROBE_FOREIGN_VENUE_ID=<venue B uuid>
+     export RBAC_PROBE_FOREIGN_LEAD_ID=<lead in B uuid>
+     export RBAC_PROBE_FOREIGN_TOUR_ID=<tour in B uuid>
+     export RBAC_PROBE_FOREIGN_AI_ACTION_ID=<ai_action in B uuid>
+     ```
+   - Run `npm run check:cross-tenant-rbac`. Expected output:
+     all probes PASS, summary line `Summary: 16 pass / 0 fail
+     (16 probes total)`. The script exits 1 if any probe diverged.
+
+4. **"Probe failed — what does each diverging result mean?"**
+   - `expected 404, actual 403` → cross-tenant collapse rule
+     not applied. The route caught a `TenantAccessError` with
+     `status === 403` but returned `403 forbidden` instead of
+     `404 not_found`. Fix per `docs/RBAC-MATRIX.md` §1.
+   - `expected 404, actual 200` → the route allowed a
+     cross-tenant read or write. This is a tenant isolation
+     bug. Treat as a P0; do not promote.
+   - `expected 404, actual 400` → the route did Zod validation
+     BEFORE the tenant check, leaking the existence of a route
+     param shape mismatch. Re-order: tenant check first.
+   - `expected 401, actual 200` → unauthenticated access
+     succeeded. The route is missing `requireAdmin()` or the
+     manual `getUser()` gate. P0.
+
+5. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9C added two flags
+     (`enterprise_audit_mirror`,
+     `enterprise_audit_mirror_best_effort`) alongside it.
+
+## Phase 9D — Data export, PII redaction, retention controls
+
+### What 9D added
+
+- **`lib/enterprise/data-export.ts`** — `buildVenueDataExport`
+  builds a venue-scoped JSON snapshot. Per-section row cap
+  (`MAX_ROWS_PER_SECTION = 5000`) prevents a pathological venue
+  from blowing the response. Sections that hit the cap appear in
+  `summary.truncatedSections` so the operator knows to ask for an
+  (eventual) async export.
+- **`lib/enterprise/pii-redaction.ts`** — pure helpers:
+  `redactLeadPiiSnapshot` (narrow PII subtree for the audit
+  `before` field), `buildLeadPiiRedactionPatch` (scalar
+  replacements + metadata stamps), `buildRedactedEmail` (synthetic
+  `redacted+<leadId>@redacted.local`), `dropPiiMetadataKeys`
+  (strips `pii.*` subtree and `lost_reason_note`).
+- **`POST /api/admin/data-export`** — returns the export inline.
+  Capped at `MAX_EXPORT_BYTES = 8 MB`; oversize venues get a 413
+  with `error: "export_too_large"`. Writes a
+  `data_export_requested` audit row with section counts +
+  estimated bytes (NEVER the payload). `ADMIN_ENDPOINT_COUNT`
+  37 → 38.
+- **`POST /api/admin/leads/[leadId]/redact-pii`** — soft-redact
+  one lead. Lead row preserved; conversations / messages / tours
+  / ai_actions / audit_events untouched. Writes a
+  `lead_pii_redacted` audit row carrying the PII before-snapshot
+  + the patch after-snapshot. `ADMIN_ENDPOINT_COUNT` 38 → 39.
+- **`DataLifecycleCard`** on `/dashboard/settings/billing` —
+  admin-only. Export button + include-audit-events toggle +
+  retention posture summary (audit mirror, digest retention,
+  audit log, PII redaction availability). No new admin endpoint;
+  retention flags come from server-rendered env reads.
+
+### Runbook entries
+
+1. **"Operator requested an export but it returns 413."**
+   - The venue's section row counts exceed the 8 MB inline cap.
+     The `data_export_requested` audit row carries
+     `section_counts` + `estimated_bytes` — query
+     `audit_events` filtered on the venue + action to see what
+     pushed over.
+   - Immediate workaround: run the queries from the helper
+     manually via Supabase SQL editor, scope to the operator's
+     venue id, save the result as JSON.
+   - A future phase will add an async export path (object
+     storage + signed URL) for venues over the cap.
+
+2. **"Operator requested an export but a section returned 0
+   rows when it shouldn't."**
+   - Most likely cause: the section cap `MAX_ROWS_PER_SECTION`
+     truncated a different section earlier and the response
+     was correctly returned, but a downstream tool joined the
+     truncated sections wrong. Check `summary.truncatedSections`
+     in the response.
+   - Second cause: the venue genuinely has 0 rows in that
+     section. Confirm via Supabase SQL: `select count(*) from
+     <section> where venue_id = '...';`.
+
+3. **"Operator redacted a lead but their conversations still
+   show the customer's name."**
+   - Conversations and messages are NOT touched by the redaction
+     endpoint. Only the `leads` row's PII is removed. The audit
+     event `lead_pii_redacted` proves the lead-level redaction
+     happened.
+   - This is by design — the soft redaction preserves the
+     conversation history so funnel analytics still work. If the
+     operator's intent is full PII purge across the conversation
+     thread, that's a P0 feature gap; treat as a product
+     conversation, not a runbook fix. Future phases will likely
+     add a `message_pii_redacted` action for conversation-level
+     redaction.
+
+4. **"Re-redacting a lead — is that safe?"**
+   - Yes. The endpoint is idempotent. Re-running:
+     - Re-stamps `pii_redacted_at` + `pii_redacted_by` to the
+       new operator + new timestamp.
+     - Resets `name` to "Redacted Lead", `email` to the
+       deterministic `redacted+<leadId>@redacted.local`, `phone`
+       and `notes` to null again.
+     - Writes a fresh `lead_pii_redacted` audit row with
+       `metadata.already_redacted: true`.
+   - Treat re-redaction as an explicit operator action — the
+     audit feed should show one row per click, and the second
+     row's `before` snapshot will already show redacted values
+     (proving the redaction was already in place).
+
+5. **"How do I verify a lead is fully redacted?"**
+   - Query directly: `select id, name, email, phone, notes,
+     metadata->>'pii_redacted' as redacted from public.leads
+     where id = '...';`.
+   - Expected: name = "Redacted Lead", email =
+     "redacted+<id>@redacted.local", phone null, notes null,
+     redacted = "true".
+   - Cross-check: the audit row exists via the
+     EnterpriseAuditEventsCard filtered on
+     `action = lead_pii_redacted`.
+
+6. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9D added four flags
+     (`enterprise_data_export`, `lead_pii_redaction`,
+     `data_lifecycle_card`, `retention_posture_visible`)
+     alongside it.
+
+## Phase 9E — Secrets rotation and header hardening
+
+### What 9E added
+
+- **Phase 7A security headers** were already in `next.config.js`.
+  9E expanded `Permissions-Policy` to include `bluetooth=()` and
+  added a SEPARATE `Content-Security-Policy-Report-Only` header
+  carrying the fuller aspirational directive set. The existing
+  enforced `Content-Security-Policy: frame-ancestors` posture is
+  unchanged.
+- **`/api/security/csp-report`** — anonymous + per-IP rate-limited
+  (60/min via `vr:csp` Upstash prefix). Parses level-2
+  `application/csp-report`, level-3 `application/reports+json`,
+  and plain JSON. Logs one structured `security.csp_report.received`
+  line per report; NEVER stores raw cookies or full user-agents
+  (truncated at 240 chars). Returns 204.
+- **5 health flags** — `security_headers_report_only`,
+  `csp_report_endpoint`, `hsts_header`, `permissions_policy_header`,
+  `secrets_rotation_runbook` (doc-presence flag).
+
+### Secrets rotation table
+
+Every secret listed below should rotate AT LEAST when:
+- A team member with prod access leaves.
+- A vendor reports a breach affecting that secret's class.
+- The rotation cadence below elapses.
+
+Never paste the actual secret value into a PR description, a chat
+message, a screenshot, or this doc. Never put it in `.env.example`.
+Use the deployment platform's secret store (Vercel project env,
+Supabase dashboard) as the only source of truth.
+
+| Secret | Cadence | What it controls | Rotation invalidates | Dual-secret needed? | Verify after | Rollback |
+|---|---|---|---|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | Quarterly | Bypass-RLS reads/writes from API routes + Inngest cron + scripts | All in-flight requests using the old key fail with 401 from PostgREST | No — Supabase issues a new key alongside the old one; flip env, restart | `GET /api/health` returns `supabase: up`; new audit_events insert; new cron run | Re-insert the old key in env, restart |
+| `NEXT_PUBLIC_SUPABASE_URL` | Only on project move | Browser + server reads of Supabase REST/Realtime | Every active browser session breaks; old service-role key no longer valid against new project | Yes — practical impossibility to dual-host; treat as a migration event | Re-sign in to dashboard; widget POST returns 201 | Restore old URL + old service-role key |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Quarterly | Browser-side anon RLS reads | Active browser sessions revalidate on next request | No — Supabase rotates with the JWT secret; restart server | Sign in to dashboard from a fresh session | Restore old anon key |
+| `STRIPE_SECRET_KEY` | Quarterly | All server-side Stripe calls (checkout, portal, event retrieval) | All in-flight Stripe calls fail with 401 | No — Stripe allows two keys briefly via key rotation in dashboard | `POST /api/admin/anthropic-probe` is unrelated; instead trigger a `POST /api/billing/portal` and verify 200 | Stripe dashboard → re-activate previous key |
+| `STRIPE_WEBHOOK_SECRET` | After every signing-secret rotation in Stripe dashboard | HMAC verification of Stripe webhook payloads | All in-flight webhooks fail signature check → `400 bad_signature` | Yes — Stripe lets you keep both signing secrets active during transition; flip env, then deactivate old in Stripe | `/api/health` `stripe_webhook` flag still `mounted`; trigger a test event from Stripe dashboard | Reactivate previous signing secret in Stripe, restore env |
+| `RESEND_API_KEY` | Quarterly | Outbound email (digest, tour notifications, test-send) | All in-flight `resend.emails.send` calls 401 | No — Resend issues new key, both work until you revoke the old | `POST /api/admin/test-send` returns `delivered: true` | Restore old key, restart |
+| `ANTHROPIC_API_KEY` | Quarterly | All AI generation (`/api/ai/{draft,chat,followup,qualify}`) + autopilot guardrails + autopilot simulation | All in-flight Anthropic calls 401 | No — Anthropic console issues a new key, revoke old after a window | `POST /api/admin/anthropic-probe` returns 200 with content | Restore old key, restart |
+| `DIGEST_UNSUBSCRIBE_SECRET` | Annually OR on operator suspicion of leak | HMAC signing for digest unsubscribe + resubscribe tokens emailed to operators | Every outstanding unsubscribe link in operator inboxes silently stops working. Operators re-receive working links on the next digest. | No — single secret. Acceptable to drop active links because the next digest carries new ones. | Send a digest preview, click the footer unsubscribe — should land at `/unsubscribe` and succeed | Restore old secret; outstanding links work again |
+| `TOUR_ACTION_SECRET` | Annually OR on suspected leak | HMAC signing for tour confirm/cancel one-click links in tour notification emails | Every outstanding `/tour/confirm?token=` and `/tour/cancel?token=` link silently stops working until the next email goes out | No — same dynamic as DIGEST_UNSUBSCRIBE_SECRET | Send a tour reminder, click confirm — should land at `/tour/confirm` and succeed | Restore old secret |
+| `AUDIT_IP_HASH_SECRET` | Annually | Salted-SHA-256 fingerprint stored in `audit_events.ip_hash` (Phase 9A) | Pre-rotation audit rows' IP hashes are no longer linkable to post-rotation rows from the same client (by design — fresh-keyed namespace) | No — single secret. Falls back to `SUPABASE_JWT_SECRET` in dev when unset. | New audit row writes; `ip_hash` field changes character set | Restore old secret to restore linkability of pre-rotation rows |
+| `AUDIT_MIRROR_ENABLED` | Not a secret — operational toggle | Phase 9C audit mirror best-effort writes | When flipped off, new `audit_events` inserts stop populating `audit_event_mirror`. Existing mirror rows remain. | No — toggle. Restart Next.js to pick up the new value (the DataLifecycleCard reads it at server-render time) | DataLifecycleCard's "Audit mirror" line shows the new state; query `select count(*) from audit_event_mirror where created_at > now() - interval '5 minutes'` after a write | Flip toggle back |
+| `DIGEST_AUDIT_RETENTION_ENABLED` | Not a secret — operational toggle | Weekly Inngest cron that archives old `digest_audit_events` rows | When flipped off, old rows accumulate. No data loss. | No — toggle | DataLifecycleCard's "Digest retention" line updates after restart; Inngest dashboard shows next-run schedule | Flip toggle back |
+
+### Runbook entries
+
+1. **"Headers look right in production but wrong in dev."**
+   - HSTS is intentionally production-only (would brick
+     `http://localhost`). Confirm via
+     `curl -I http://localhost:3000/dashboard` — Strict-Transport-Security
+     should be ABSENT.
+   - `curl -I https://your-prod-host.com/dashboard` — Strict-Transport-Security
+     should be `max-age=63072000; includeSubDomains; preload`.
+
+2. **"CSP report endpoint is getting flooded."**
+   - Per-IP rate limit is 60/min via `vr:csp`. A genuine flood
+     means the deployed CSP is misconfigured AND a popular page
+     trips violations on every load.
+   - Grep `security.csp_report.received` for the most common
+     `violatedDirective` + `blockedUri` pair — that's the rule
+     to relax in `next.config.js`.
+   - The endpoint itself is anonymous + 204; a flood doesn't
+     leak data, it just produces log noise.
+
+3. **"Stripe checkout suddenly fails after a CSP change."**
+   - The report-only header doesn't enforce, so a CSP change
+     can only cause a hard break if you moved the directive
+     from `Content-Security-Policy-Report-Only` to
+     `Content-Security-Policy`. Revert.
+   - Stripe Checkout iframes need `frame-src https://checkout.stripe.com`
+     + `form-action https://checkout.stripe.com` to load card entry
+     without console errors. Both are in the report-only baseline;
+     verify they're in any enforced policy too.
+
+4. **"Widget broke after a header change."**
+   - The widget route (`/widget/*`) deliberately gets
+     `Content-Security-Policy: frame-ancestors *` and NO
+     `X-Frame-Options`. If a recent change added either of those
+     globally without excluding the widget path, embedding
+     breaks immediately.
+   - Confirm with `curl -I http://localhost:3000/widget/<venueId>`
+     — there should be no `X-Frame-Options` header and the CSP
+     should be `frame-ancestors *`.
+
+5. **"How do I rotate `STRIPE_WEBHOOK_SECRET` without dropping events?"**
+   - In Stripe dashboard → Webhooks → your endpoint, click
+     "Roll signing secret" — Stripe gives you both old + new for
+     a window.
+   - Update env to the new secret, restart Next.js. Existing
+     in-flight events get verified against the new secret.
+   - After confirming `/api/health` shows `stripe_webhook` still
+     mounted AND new events land successfully, deactivate the
+     old secret in Stripe.
+
+6. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9E added five flags
+     (`security_headers_report_only`, `csp_report_endpoint`,
+     `hsts_header`, `permissions_policy_header`,
+     `secrets_rotation_runbook`) alongside it.
+
+## Phase 9F — Rate-limit normalization + abuse monitoring
+
+### What 9F added
+
+- **`lib/rate-limit-catalog.ts`** — typed `RATE_LIMIT_DOMAINS`
+  constants. Single source of truth for every limiter key prefix.
+  Adoption is incremental: pre-9F routes keep their literal
+  strings; new routes import from the catalog.
+- **`lib/enterprise/abuse-events.ts`** — `recordAbuseEvent`
+  best-effort writer to `public.abuse_events` (migration 029).
+  Reuses `maskIpForAudit` so the same salted-SHA-256 fingerprint
+  shape appears in both `audit_events.ip_hash` and
+  `abuse_events.ip_hash` for cross-feed correlation. Failures
+  log + Sentry but never throw.
+- **`lib/rate-limit.ts`** — every wrapper (`rateLimitWidget`,
+  `rateLimitAi`, `rateLimitUserAction`, `rateLimitCspReport`)
+  accepts an optional `abuseContext`. On block, the wrapper fires
+  `void recordAbuseEvent(...)` — fire-and-forget.
+- **9 routes newly rate-limited** in this phase:
+  `/api/leads/[id]` (PATCH+DELETE), `/api/tours` (POST),
+  `/api/tours/[id]` (PATCH), `/api/venues/[id]` (PATCH),
+  `/api/venues/[id]/availability` (POST),
+  `/api/venues/[id]/availability/[slotId]` (PATCH+DELETE),
+  `/api/venues/[id]/tour-blackouts` (POST),
+  `/api/venues/[id]/tour-blackouts/[blackoutId]` (DELETE),
+  `/api/team/invitations/[id]` (DELETE).
+- **`scripts/check-rate-limit-coverage.mjs`** — regression guard.
+  Scans `app/api` for mutating routes (and admin GETs) lacking
+  `rateLimit*` / `RATE_LIMIT_EXEMPT` / `webhook route` /
+  `public route` markers. 65 routes currently clean. Wired into
+  `npm run check:rate-limit-coverage` (NOT yet in `verify` —
+  promote after a sweep cycle confirms stability).
+- **`GET /api/admin/security/abuse-events`** — admin/owner only;
+  cross-tenant collapses to 404. JSON + CSV branches; cursor
+  pagination. In-slice summary (top routes / reasons / limiter
+  keys) so the AbuseMonitorCard chips don't need a second query.
+  `ADMIN_ENDPOINT_COUNT` bumped 39 → 40.
+- **`AbuseMonitorCard`** on `/dashboard/settings/billing` —
+  admin-only. Top-3 chips for route/reason/limiter, recent rows
+  table, Load older, CSV export, manual Refresh.
+
+### Runbook entries
+
+1. **"Card shows 'No abuse events recorded yet' but I expected
+   blocks."**
+   - The card is venue-scoped. Public-route blocks (widget,
+     CSP report) have `venue_id IS NULL` and are intentionally
+     NOT surfaced through the venue-bound card. Query directly:
+     ```sql
+     select route, count(*) from public.abuse_events
+     where venue_id is null and created_at > now() - interval '1 hour'
+     group by route order by count(*) desc;
+     ```
+   - If you expected blocks on a venue-scoped route, check that
+     the route's rate-limit call passes an `abuseContext`. Without
+     the context, blocks still happen but no `abuse_events` row
+     is written.
+
+2. **"Operator says they're getting 429 on a normal workflow."**
+   - The userAction limiter is 30/min. Drag-and-drop board
+     operations issue 1 PATCH per move; a normal operator stays
+     well under. A 429 means either:
+     a) A bug is firing the route in a loop (check browser network
+        tab), or
+     b) The operator legitimately hit 30+ moves in 60 seconds
+        (rare but possible with bulk reorganization).
+   - Either way the AbuseMonitorCard row will show the route +
+     timestamp. Confirm with the operator before raising the
+     budget; persistent 429s from one user is information.
+
+3. **"Want to seed a fake abuse row to verify the card renders."**
+   ```sql
+   insert into public.abuse_events (
+     venue_id, user_id, route, method, limiter_key, ip_hash, reason
+   ) values (
+     '<your venue id>', '<your user id>',
+     '/api/leads/[id]', 'PATCH', 'leads:update:<your user id>',
+     'demo_hash_0000000000000000000000000000000000', 'rate_limited'
+   );
+   ```
+   Refresh the AbuseMonitorCard. Delete the row when done.
+
+4. **"Rate-limit coverage scanner is failing in CI."**
+   - The error output lists the file + methods. Two valid fixes:
+     - Add a `rateLimit*` call before the mutation, OR
+     - Add a `RATE_LIMIT_EXEMPT: <reason>` header comment and
+       document the row in `docs/RATE-LIMIT-COVERAGE.md` under
+       "Explicit exemptions."
+   - Webhook routes use `// webhook route` instead;
+     anonymous public endpoints use `// public route`.
+
+5. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9F added five flags
+     (`rate_limit_catalog`, `rate_limit_coverage_check`,
+     `abuse_monitoring`, `abuse_monitor_card`,
+     `public_route_throttles`) alongside it.
+
+## Phase 9G — Enterprise SSO readiness
+
+### What 9G added
+
+- **Migration 030** — `sso_connections` (owner-only mutations,
+  admin SELECT) + `sso_login_events` (service-role insert,
+  admin/owner SELECT scoped to venue).
+- **`lib/enterprise/sso/*`** — `types.ts`, `domain.ts`,
+  `audit.ts` (recordSsoLoginEvent), `provider.ts`
+  (resolveSsoAdapter + SsoProviderAdapter interface),
+  `adapters/not-configured.ts` (placeholder).
+- **Public routes** — `POST /api/auth/sso/initiate`,
+  `POST /api/auth/sso/callback`. Rate-limited via new
+  `vr:sso` Upstash prefix (10/min/IP+domain on initiate,
+  10/min/IP on callback). `AUDIT_EXEMPT` because the forensic
+  record lives in `sso_login_events`.
+- **Admin routes** —
+  `GET/POST /api/admin/security/sso-connections`,
+  `PATCH/DELETE /api/admin/security/sso-connections/[id]`,
+  `GET /api/admin/security/sso-login-events`. Audit row
+  emitted on every connection mutation
+  (`sso_connection_create/update/delete`).
+- **Admin UI** — `SsoConnectionsCard` + `SsoLoginEventsCard` on
+  `/dashboard/settings/billing`.
+- **`ADMIN_ENDPOINT_COUNT`** bumped 40 → 43.
+- **`docs/SSO-READINESS.md`** — vendor comparison, security
+  rules, future-implementation checklist.
+
+### Runbook entries
+
+1. **"Operator says SSO doesn't work."**
+   - Expected. 9G is readiness-only. Every initiate / callback
+     returns `SSO_PROVIDER_NOT_CONFIGURED` /
+     `SSO_CALLBACK_NOT_CONFIGURED`. The forensic feed is in
+     `sso_login_events` — the SsoLoginEventsCard shows every
+     attempt with the structured reason.
+
+2. **"Owner created a draft connection but login still fails."**
+   - Drafts persist but never open an auth path. The
+     connection's `status` must be flipped to `active` via the
+     PATCH route AND a real adapter must be wired (Phase 9G
+     placeholder still rejects). Documented in SSO-READINESS.md.
+
+3. **"Want to delete an active SSO connection."**
+   - The DELETE route refuses to delete `active` or `pending`
+     connections. Flip the status to `disabled` first
+     (separate PATCH). That preserves audit context for any
+     in-flight login attempts.
+
+4. **"How do I configure WorkOS later?"**
+   - Follow the `docs/SSO-READINESS.md` "Future implementation
+     checklist" — adapter file + env vars + JIT branch are
+     the only code changes needed.
+
+5. **"Cross-tenant SSO check failed in a probe."**
+   - Run `npm run check:cross-tenant-rbac` with
+     `RBAC_PROBE_FOREIGN_VENUE_ID` set and a session cookie. The
+     `/api/admin/security/sso-connections?venue_id=<foreign>`
+     path should return 404, not 403 — same posture as every
+     other admin surface (Phase 9C documents the collapse).
+
+6. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9G added 5 flags
+     (`sso_readiness`, `sso_connections_table`,
+     `sso_login_events`, `sso_admin_endpoints`,
+     `sso_provider_abstraction`) alongside it.
+
+## Phase 9H — Backup posture + disaster recovery
+
+### What 9H added
+
+- **`lib/enterprise/disaster-recovery/*`** — `types.ts`,
+  `policy.ts` (conservative enterprise defaults — RTO 4h, RPO
+  24h, retention 7d floor, quarterly dry-runs),
+  `backup-posture.ts` (env-gated Supabase Management API smoke
+  probe + safe `unknown` fallback), `restore-intent.ts` (audit
+  helper routing through `recordAuditEvent`).
+- **3 new audit action constants** — `RESTORE_INTENT_RECORDED`,
+  `RESTORE_INTENT_CANCELLED`, `RESTORE_COMPLETED_OUTSIDE_APP`.
+- **`GET /api/admin/security/backup-posture`** — admin/owner
+  read-only. Returns the typed BackupPostureSummary; never
+  surfaces the Supabase Management API token. `AUDIT_EXEMPT`
+  (read-only, no mutation).
+- **`POST /api/admin/security/restore-intents`** — owner-only.
+  Records operator intent via `recordRestoreIntent` →
+  `recordAuditEvent`. NEVER executes a restore.
+- **`BackupPostureCard`** + **`RestoreIntentCard`** mounted on
+  `/dashboard/settings/billing`. Both cards explicitly state
+  that restores happen outside the app.
+- **`scripts/check-backup-posture.mjs`** — file/route/doc
+  presence scanner with optional live Management API probe when
+  env vars are set. Wired via `npm run check:backup-posture`;
+  NOT in `npm run verify` (external network call).
+- **`docs/DISASTER-RECOVERY.md`** — 7 incident classes,
+  restore decision tree, Supabase workflow, dry-run checklist,
+  customer-facing language.
+- **`ADMIN_ENDPOINT_COUNT`** bumped 43 → 45.
+
+### Runbook entries
+
+1. **"BackupPostureCard shows status=unknown."**
+   - Expected when `SUPABASE_PROJECT_REF` /
+     `SUPABASE_ACCESS_TOKEN` aren't set. The card surfaces
+     policy targets + runbook presence; live PITR / last-backup
+     checks degrade to `unknown` rather than `critical` because
+     "we can't see" is materially different from "we know it's
+     broken."
+   - Set the two env vars in the deployment platform's secret
+     store, restart the server, click Refresh on the card.
+
+2. **"Management API probe returns 401."**
+   - The `SUPABASE_ACCESS_TOKEN` lacks read access to the
+     project. Mint a fresh personal access token in the
+     Supabase dashboard (Account → Access Tokens). Rotate via
+     the secrets table in Phase 9E's RUNBOOK section.
+
+3. **"Operator filed a restore intent — what happens next?"**
+   - Nothing automatic. The audit row lands in `audit_events`
+     (action `restore_intent_recorded`) and the EnterpriseAuditEventsCard
+     surfaces it. The actual restore is the operator's
+     out-of-app workflow per `docs/DISASTER-RECOVERY.md`.
+   - When the restore completes (or is cancelled), the operator
+     should file a SECOND intent with
+     `status: 'completed_outside_app'` or `'cancelled'` so the
+     audit feed reflects closure.
+
+4. **"`npm run check:backup-posture` fails in CI."**
+   - The script asserts file/doc presence. The most common
+     failure is a missing or renamed file under
+     `lib/enterprise/disaster-recovery/`. Re-add or update the
+     expected path list at the top of the script.
+   - When `SUPABASE_PROJECT_REF` + `SUPABASE_ACCESS_TOKEN` are
+     present in CI, the live probe runs. A 4xx/5xx from
+     Supabase fails the script — this is intentional (the
+     token might have lapsed). Skip the probe in CI by
+     unsetting the env vars there if it becomes noisy.
+
+5. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9H added 5 flags
+     (`backup_posture`, `disaster_recovery_runbook`,
+     `restore_intent_audit`, `backup_posture_card`,
+     `backup_posture_check`) alongside it.
+
+## Phase 9I — SOC 2 / enterprise evidence packaging
+
+### What 9I added
+
+- **`lib/enterprise/evidence/*`** — `types.ts`, `control-map.ts`
+  (static EVIDENCE_CONTROLS catalog), `report.ts`
+  (`buildEvidenceReport()` + markdown/CSV renderers).
+- **`GET /api/admin/security/evidence-report`** — admin/owner;
+  `format=json|markdown|csv`. Markdown + CSV exports write a
+  `evidence_report_exported` audit row; JSON refreshes do not
+  (would flood the feed).
+- **`SecurityEvidenceCenter`** card on
+  `/dashboard/settings/billing` — summary chips + grouped
+  controls + Refresh / Markdown / CSV buttons + disclaimer.
+- **`scripts/build-evidence-pack.mjs`** — local static
+  generator. Writes `artifacts/evidence/{md,csv,json}`. Reads
+  the control map source via regex extraction — no Supabase
+  creds required. Wired via `npm run build:evidence-pack`.
+- **`scripts/check-evidence-packaging.mjs`** — presence scanner
+  for the evidence scaffolding. `npm run check:evidence-packaging`.
+- **`docs/SOC2-EVIDENCE-MAP.md`** — TSC mapping, certification
+  disclaimer, security questionnaire snippets, known gaps.
+- **2 new audit action constants** — `EVIDENCE_REPORT_EXPORTED`,
+  `EVIDENCE_PACK_GENERATED` (reserved for future).
+- **`ADMIN_ENDPOINT_COUNT`** bumped 45 → 46.
+
+### Runbook entries
+
+1. **"Operator asks for a security questionnaire response."**
+   - Open `/dashboard/settings/billing`, scroll to the
+     SecurityEvidenceCenter, click "Markdown". The download is
+     a self-contained report with controls + status + SOC 2
+     mappings + disclaimer. Audit row
+     `evidence_report_exported` lands automatically.
+   - For a no-session response (e.g. helping a customer pre-call):
+     `npm run build:evidence-pack` writes the same shape to
+     `artifacts/evidence/`. Static — no live backup posture
+     snapshot.
+
+2. **"Control map shows `unknown` for backup posture."**
+   - Expected when Supabase Management API env vars aren't set.
+     See Phase 9H runbook entries for the env doc. The evidence
+     report continues without the snapshot; auditors see the
+     warning in the report header.
+
+3. **"Want to add a new control to the evidence map."**
+   - Edit `lib/enterprise/evidence/control-map.ts`. Add a new
+     row to `EVIDENCE_CONTROLS` with id / title / category /
+     soc2Categories / status / description / artifacts /
+     limitations / recommendedNext.
+   - **Honesty rule**: only mark `implemented` if a code path
+     actually enforces the control. Docs-only goes `manual`.
+     Env-dependent live checks go `unknown` when env is unset.
+   - Run `npm run check:evidence-packaging` to confirm the
+     scaffolding is still wired. Re-run
+     `npm run build:evidence-pack` to refresh the static pack.
+
+4. **"check:evidence-packaging fails in CI."**
+   - The scanner checks file presence + package.json scripts +
+     doc cross-references. The most common failure is a
+     renamed or moved file under
+     `lib/enterprise/evidence/`. Update the expected path list
+     at the top of the script.
+
+5. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9I added 5 flags
+     (`security_evidence_center`, `evidence_report_api`,
+     `evidence_pack_generator`, `soc2_evidence_map`,
+     `evidence_packaging_check`) alongside it.
+
+## Phase 9J — Enterprise sales readiness + security questionnaire automation
+
+### What 9J added
+
+- **`lib/enterprise/evidence/*`** — `questionnaire-types.ts`,
+  `questionnaire-map.ts` (12 sections × ~25 buyer questions
+  mapped to Phase 9I evidence controls), `questionnaire-report.ts`
+  (builder + markdown/CSV renderers), `security-summary.ts`
+  (buyer-facing prose), `readiness-checklist.ts` (12-item
+  ready/partial/missing checklist).
+- **Migration 031** — added `venues.demo_mode_enabled`,
+  `demo_mode_label`, `demo_mode_started_at`,
+  `demo_mode_started_by`. Owner-only PATCH via route gate.
+- **3 new admin routes**: questionnaire-response,
+  buyer-security-summary, demo-mode (GET+PATCH).
+- **4 new UI cards** + 1 banner mounted on
+  `/dashboard/settings/billing`:
+  SecurityQuestionnaireCard, BuyerSecuritySummaryCard,
+  DemoModeCard, EnterpriseReadinessCard, DemoModeBanner.
+- **3 new audit actions** — `questionnaire_response_exported`,
+  `buyer_security_summary_exported`, `demo_mode_updated`.
+- **2 new scripts** — `npm run build:questionnaire-pack`,
+  `npm run check:sales-readiness`.
+- **`docs/ENTERPRISE-SALES-READINESS.md`** — operator workflow,
+  buyer-question scripts, review-before-sending checklist.
+- **`ADMIN_ENDPOINT_COUNT`** bumped 46 → 49.
+
+### Runbook entries
+
+1. **"Sales engineer needs a security questionnaire response."**
+   - Sign in as admin/owner → `/dashboard/settings/billing`.
+   - Open SecurityQuestionnaireCard. Pick the format. Click
+     Download Markdown.
+   - REVIEW before sending (checklist in
+     docs/ENTERPRISE-SALES-READINESS.md).
+   - Audit row `questionnaire_response_exported` lands
+     automatically.
+
+2. **"Need to demo VenueRise to an enterprise prospect."**
+   - Owner flips demo mode on via DemoModeCard with the buyer
+     label. Dashboard renders "DEMO MODE — Label" banner
+     across the topbar. Flip off after the demo. Both edges
+     audit via `demo_mode_updated`.
+
+3. **"Demo mode does not anonymize data — what's the right
+   move for actual anonymization?"**
+   - Phase 9D PII redaction
+     (`/api/admin/leads/[leadId]/redact-pii`) is the lead-level
+     surface. Demo mode is a visual screen-share signal only.
+
+4. **"No dashboard session — can sales still get the pack?"**
+   - `npm run build:questionnaire-pack` writes a static pack
+     to `artifacts/evidence/questionnaires/`. Disclaimer +
+     review-before-sending notes still apply.
+
+5. **"`check:sales-readiness` fails in CI."**
+   - File-presence scanner. A renamed file under
+     `lib/enterprise/evidence/` or
+     `components/dashboard/settings/` is the most common
+     cause. Update the required-files list at the top of the
+     script.
+
+6. **"Want to confirm autonomy is still off."**
+   - `curl /api/health | jq '.checks.autonomous_sending_still_disabled'`
+     must still return `"mounted"`. 9J added 5 flags
+     (`security_questionnaire_generator`,
+     `buyer_security_summary`, `demo_mode_foundation`,
+     `enterprise_readiness_checklist`, `sales_readiness_exports`)
+     alongside it.
+
+## Phase 9K — Vendor risk + subprocessor disclosure
+
+### When a new SDK lands in package.json
+
+1. Add a `VendorRecord` entry to
+   `lib/enterprise/vendor-risk/vendor-registry.ts` BEFORE
+   merging. Populate `id` / `name` / `category` / `purpose` /
+   `criticality` / `disclosureStatus` / `dataCategories` /
+   `productionUse` / `buyerSafeDescription` / `riskTier` /
+   `assuranceStatus` (default `manual_review_required`) /
+   `evidence` (env vars + package name) / `knownLimitations` /
+   `reviewOwner` / `reviewCadence` / `lastReviewedAt: null`.
+2. Add the package + match string to `KNOWN_VENDOR_PACKAGES` in
+   `scripts/check-vendor-risk.mjs` so future drift is caught
+   automatically.
+3. Run `npm run check:vendor-risk` — passes.
+4. Run `npm run build:vendor-risk-pack` — regenerates the
+   static pack under `artifacts/evidence/vendor-risk/`.
+
+### After a vendor review
+
+1. Update `lastReviewedAt` on the registry row to today's ISO
+   date.
+2. If executed DPA / current SOC 2 report is on file and
+   confirmed by legal, optionally move `assuranceStatus` from
+   `manual_review_required` to `verified`. Default to manual
+   review on any doubt.
+3. Update `knownLimitations` if anything new came up.
+4. Commit the registry change with a pointer (e.g. shared
+   drive folder id) to the external evidence.
+5. If the change affects buyer-facing rows
+   (`disclosureStatus === 'public'`), regenerate the pack and
+   re-share the buyer disclosure with enterprise prospects per
+   their sub-processor change notification SLA.
+
+### When a buyer asks for a subprocessor list
+
+1. Open `/dashboard/settings/billing` (admin or owner).
+2. Click **Download Markdown** on the
+   "Subprocessor disclosure" card.
+3. Review the markdown — confirm every line is buyer-safe
+   (no env vars, no internal route paths, no architecture
+   details).
+4. Attach to the response. The export was audited
+   (`subprocessor_disclosure_exported`) so the action is
+   traceable.
+
+### When a buyer asks for DPAs
+
+1. Do NOT answer "we have DPAs in place" without confirming.
+2. The platform tracks DPA status as `manual_review_required`
+   by default. Confirm against the external vendor evidence
+   repository before sending any contractual representation.
+3. Use the language in `docs/VENDOR-RISK.md` §6 / §7.
+
+### When a vendor security incident is reported
+
+1. Trigger an out-of-cadence vendor review immediately.
+2. Update the registry row's `knownLimitations` with the
+   incident reference.
+3. If the vendor is `disclosureStatus === 'public'`, decide
+   whether to notify enterprise prospects per their
+   sub-processor change SLA.
+4. Update `lastReviewedAt` after the review concludes.
+
+### Cron / scheduled tasks
+
+None. Phase 9K is read-only + operator-triggered. No background
+work, no autonomous sending, no audit-event retention sweeps.
+
+## Phase 9L — Incident response
+
+### When a real incident occurs
+
+1. **Open the incident** via IncidentResponseCard `+ New Incident`.
+   Pick the right severity from `docs/INCIDENT-RESPONSE.md` §2.
+2. **Move to investigating** as soon as triage starts. Add a
+   note with the current understanding.
+3. **Decide on alerts** — for SEV1/SEV2 click `Send alert`. If
+   the response shows `skipped_unconfigured` and the situation
+   warrants paging, confirm env vars or fall back to manual
+   notification.
+4. **Update at the cadence** in the severity matrix (every 60
+   min for SEV1, every 4 h for SEV2, daily for SEV3, weekly
+   for SEV4). Each update appends a `note_added` timeline event.
+5. **Mitigate** — once customer-visible impact is contained,
+   move status to `mitigated`. This stamps `mitigated_at`.
+6. **Resolve** — once root cause is addressed, move to
+   `resolved`. Stamps `resolved_at` + `resolved_by`. Audit row
+   is `incident_resolved`.
+7. **For SEV1 + SEV2**: write the post-incident review using
+   the template at
+   `artifacts/evidence/incidents/post-incident-review-template.md`
+   (regenerate via `npm run build:incident-response-pack`).
+   Append to the timeline via the `postmortem` PATCH field.
+8. **Update the runbook** if the incident exposed an
+   ambiguity. Reference the PR in the action items.
+
+### When a detector candidate appears
+
+1. Click `Detect Candidates` → `Preview`. Review every
+   candidate before clicking `Create all`. Detectors are
+   conservative but not infallible — a single noisy buyer
+   embed can cross the abuse threshold.
+2. For candidates you DO want to materialise, use `Create all`
+   (one click) — each candidate becomes a SEV3-suggested
+   incident with the source pre-populated and the threshold
+   metadata in the row's `metadata` JSON.
+3. For candidates you DON'T want, just close the panel. No row
+   is written. The `incident_candidates_detected` audit row
+   still records that you ran detection.
+
+### When alerts won't fire
+
+1. Check the `Send alert` button's response.
+2. `skipped_disabled` → `INCIDENT_ALERTS_ENABLED` is not set
+   to `true`/`1`. Update env and redeploy.
+3. `skipped_unconfigured` → the channel's env var is missing
+   (`INCIDENT_SLACK_WEBHOOK_URL` for Slack,
+   `INCIDENT_PAGERDUTY_ROUTING_KEY` for PagerDuty). Sentry uses
+   the existing SDK init; if Sentry skipped, the master toggle
+   is off.
+4. `failed` → look at the timeline event for the short error
+   message (e.g. `slack:403` = revoked webhook,
+   `pagerduty:429` = rate-limited at the PagerDuty side).
+5. Webhook URLs / routing keys are NEVER logged. To debug, set
+   the env var to a known-good value and re-fire from the card.
+
+### When a buyer asks "do you have incident response?"
+
+1. Refer them to `docs/INCIDENT-RESPONSE.md` §2 (severity
+   matrix) + §6 (automated vs manual).
+2. The buyer security summary (Phase 9J) already has an
+   `incident-response-detail` section — operators can attach
+   the markdown export.
+3. Be honest about the §11 / §12 limitations: no 24/7
+   staffing, no SLA contract, alert routing is OFF by default.
+
+### Cron / scheduled tasks
+
+None. Phase 9L is entirely operator-triggered. No background
+detection cron, no autonomous alert escalation, no auto-resolve.
+
+## Phase 9M — Privacy + DSR readiness
+
+### When a customer files a DSR
+
+1. **Open the DSR** via DsrRequestsCard `+ New DSR`. Pick the
+   right type (access / export / delete / correct /
+   restrict_processing / opt_out / other) and risk level.
+   Capture subject email + name + requested-by email + due
+   date.
+2. **Move to triage** as soon as the request is acknowledged.
+   Add a note with the inbound channel + any context.
+3. **Verify subject identity** via your existing process
+   (email round-trip, OAuth proof, out-of-band). Once verified,
+   click **Mark identity verified**.
+4. **Move to in_progress** and decide the response:
+   - For access / export requests: click **Export preview** to
+     enumerate scope, then run the real export via
+     `/api/admin/data-export` (Phase 9D) for venue-scoped JSON
+     under legal review.
+   - For deletion requests: click **Deletion review** to see
+     the retention-exception map, then run real deletion via
+     `/api/admin/leads/[leadId]/redact-pii` (Phase 9D) or
+     equivalent flow under legal review.
+   - For correction requests: update the underlying record via
+     the existing operator flow.
+5. **Move to awaiting_legal_review** for any response with
+   contractual or jurisdictional risk. Append the legal review
+   note via the detail panel.
+6. **Close** as `fulfilled` / `denied` / `cancelled`. The
+   appropriate timestamp + `closed_by` are stamped
+   automatically.
+
+### When a buyer asks about privacy posture
+
+1. Open `/dashboard/settings/billing`.
+2. **Privacy readiness card** — confirm counts.
+3. For procurement evidence, regenerate the static pack:
+
+   ```bash
+   npm run build:privacy-pack
+   # → artifacts/evidence/privacy/privacy-readiness-report.md
+   # → artifacts/evidence/privacy/data-inventory.csv
+   # → artifacts/evidence/privacy/retention-policy.csv
+   # → artifacts/evidence/privacy/dsr-workflow.md
+   # → artifacts/evidence/privacy/privacy-summary.json
+   ```
+
+4. Review every line before sending. The questionnaire (Phase
+   9J) carries the verbatim answers under §11 / §12 of
+   `docs/PRIVACY-DSR-READINESS.md`.
+
+### When a customer asks "do you train AI on my data?"
+
+1. Refer to `docs/PRIVACY-DSR-READINESS.md` §9.
+2. The honest answer: VenueRise does not train internally;
+   AI inference happens at Anthropic; their training-use
+   posture requires legal verification of the active contract.
+3. Do NOT say "we never use your data for training" without
+   confirmed Anthropic contract terms.
+
+### When a customer asks "where is my data stored?"
+
+1. Refer to the Phase 9K subprocessor disclosure +
+   `docs/PRIVACY-DSR-READINESS.md` §2.
+2. Default: Supabase US, Vercel US, Anthropic US, Resend US.
+3. EU-resident customers can be provisioned on Supabase EU on
+   request.
+
+### When a customer asks "how long do you keep my data?"
+
+1. Refer to `docs/PRIVACY-DSR-READINESS.md` §3.
+2. Be honest about the gaps — audit / abuse / SSO / incident
+   tables currently accumulate; sweepers are planned, not
+   live.
+
+### Cron / scheduled tasks
+
+None added in 9M. Phase 9M is operator-triggered + workflow
+only. No background DSR processing, no automated retention
+sweeper (the audit-class sweepers are reserved for a future
+phase pending policy review with legal).
+
+## Phase 9N — Trust Center
+
+### When a buyer asks for security documentation
+
+1. Open `/dashboard/settings/billing` (admin or owner).
+2. **TrustCenterCard** — preview the packet at the right
+   scope before granting access. Use `Download Markdown` to
+   review the manifest content.
+3. **TrustAccessGrantsCard** → **New grant**. Fill buyer
+   details / scope / expiry days.
+4. Save the URL when it appears — it is shown ONCE. The
+   creation panel also shows the warning copy + expiry
+   timestamp.
+5. Send the URL via your buyer communication channel.
+6. Monitor access counts + last-accessed in the
+   TrustAccessGrantsCard.
+7. Revoke when no longer needed.
+
+### When choosing a scope
+
+| Scope | Use when |
+|---|---|
+| `summary_only` | First procurement contact, NDA not yet signed. |
+| `standard_packet` | Post-NDA security review covering questionnaire + privacy + DR + incident posture. |
+| `full_packet` | Active enterprise security review or auditor request — includes evidence report + vendor risk report + SOC 2 evidence map. |
+
+For `full_packet`, run a legal review before sending.
+
+### When a grant URL leaks
+
+1. **Revoke immediately** via TrustAccessGrantsCard.
+2. The next access attempt with that URL returns the generic
+   denial page; an `access_denied` event is recorded.
+3. Check the `trust_access_events` log for unauthorised
+   downloads. The salted-SHA-256 IP + user-agent fingerprints
+   give correlation without exposing raw values.
+4. If a sensitive scope (`full_packet`) was potentially
+   accessed by an unintended party, file an incident
+   (`category = privacy` or `security`) via
+   IncidentResponseCard and route through the Phase 9L
+   workflow.
+
+### When updating the public page copy
+
+1. Edit `lib/enterprise/trust-center/policy.ts →
+   PUBLIC_TRUST_SECTIONS`.
+2. Ensure the new section id is in `PUBLIC_SECTION_IDS`.
+3. Run `npm run build:trust-center-pack` and review the
+   generated public summary markdown.
+4. Run `npm run check:trust-center` to confirm scaffolding.
+5. Commit + deploy. The public page revalidates every 5
+   minutes.
+
+### Cron / scheduled tasks
+
+None added in 9N. Trust Center is entirely operator-managed.
+No background grant expiry sweeper (expired grants flip on
+first denied validation). No background public-page rebuild
+(Next.js ISR handles cache revalidation).
+
+## Phase 9O — Compliance operations calendar
+
+### When you ship a new readiness area (future phase)
+
+1. Add a row to `lib/enterprise/compliance-ops/policy.ts`
+   with id / area / cadence / description / owner role /
+   evidence references / recommended action / staleAfterDays /
+   buyer impact.
+2. Update `docs/COMPLIANCE-OPS.md` cadence matrix in the
+   same PR.
+3. Update the relevant doc's review section if applicable
+   (RUNBOOK / VENDOR-RISK / TRUST-CENTER / etc.).
+4. Operators re-seed via ComplianceCalendarCard → `Seed
+   missing` to pick up the new row.
+
+### When an operator runs a scheduled review
+
+1. Refer to the policy row's `recommendedAction`.
+2. Run the actual review (walk the vendor registry, do the
+   DR drill, regenerate the pack, etc.).
+3. Capture notes + optional evidence URL (shared drive
+   doc / ticket / diff link).
+4. Open the row in ComplianceCalendarCard → paste notes +
+   URL → click `Mark completed`.
+
+### When a review needs to be waived
+
+1. Identify the reason (policy superseded, area covered by
+   another control, scoped-out for this venue).
+2. Type the explicit reason into the waiver field.
+3. Click `Waive`. The row stays in the trail.
+4. If the underlying policy item is genuinely no longer
+   applicable, update `lib/enterprise/compliance-ops/policy.ts`
+   in a follow-up PR.
+
+### When you need to re-schedule
+
+The seed helper does NOT auto-reschedule on completion. After
+a wave of completions:
+
+1. Open ComplianceCalendarCard → `Seed missing`.
+2. The helper inserts fresh upcoming events for any policy
+   items without an active row.
+
+### When a buyer asks about review cadence
+
+1. Open `/dashboard/settings/billing` → ComplianceCalendarCard.
+2. Click `Freshness MD` → download
+   `venuerise-compliance-freshness-YYYY-MM-DD.md`.
+3. Review every line. Confirm no internal review notes leak
+   subject identity or operator personal data.
+4. If the buyer is post-NDA, share the markdown directly. If
+   pre-NDA, send the static `compliance-review-policy.md` pack
+   (cadence-only, no completion timestamps).
+
+### Cron / scheduled tasks
+
+None added in 9O. The calendar is entirely operator-pull. No
+background reminder job, no external alerting, no autonomous
+state change. Future phases could add an Inngest reminder cron
+that surfaces overdue reviews in the operator digest — that
+remains explicitly opt-in.
+
+## Phase 9P — Contract commitments register
+
+### When sales / legal signs a new MSA / DPA / security addendum
+
+1. Walk the contract for customer-specific commitments —
+   anything that obligates VenueRise to a specific behaviour
+   for THIS buyer that differs from the baseline product.
+2. Open `/dashboard/settings/billing` → CommitmentsRegisterCard
+   → `+ New commitment`.
+3. Record one row per commitment with:
+   - Buyer identity (company + email).
+   - Source type (msa / dpa / security_addendum / order_form / trust_grant / email / other).
+   - Commitment area (closest match).
+   - Title (1-line).
+   - Description (paragraph quoting the relevant clause).
+   - Status = `draft` until the contract is signed; flip to
+     `active` after.
+   - Risk level (operator judgement).
+   - Owner (the operator accountable).
+   - Due / review dates (when do we need to fulfil; when do
+     we re-check).
+   - Evidence URL (shared drive doc / ticket / contract).
+4. Check CommitmentsReadinessCard for unsupported-risk
+   warnings on any rows you just added. Walk each warning
+   with the buyer if applicable before flipping to `active`.
+
+### When an unsupported-risk warning surfaces
+
+1. Read the reason carefully. The warning explains what the
+   product DOES / DOES NOT support today.
+2. Options:
+   - **Renegotiate**: ask the buyer to amend the commitment to
+     reflect current capability. Update the commitment row.
+   - **Withdraw**: status → `withdrawn` + record the reason
+     in notes.
+   - **Commit + plan**: leave the row as recorded; file a
+     follow-up product phase that implements the capability;
+     keep risk = `high` until shipped.
+3. Do NOT silently leave the commitment `active` without
+   addressing the warning.
+
+### When a commitment hits its review date
+
+1. Open the row in CommitmentsRegisterCard.
+2. Confirm we still meet it. Update evidence URL if needed.
+3. Click `Mark reviewed`. The next review window starts now.
+4. Cross-link in the Phase 9O compliance calendar: capture
+   the review as a custom compliance event with
+   `evidence_url` pointing at the commitment.
+
+### When a commitment is fulfilled / expires / is superseded
+
+- **Fulfilled**: operator confirms we met it → `Mark
+  fulfilled`. Stamps `fulfilled_at` + `fulfilled_by`. Use
+  for one-off commitments.
+- **Expired**: time-bound commitment past its window →
+  `Set status: expired`.
+- **Superseded / cancelled**: → `Set status: withdrawn` +
+  record the reason in notes (we never DELETE).
+
+### When sales asks "what did we promise this buyer?"
+
+1. Open CommitmentsRegisterCard.
+2. Filter by buyer company.
+3. Review every row. Cross-check `evidence_url` is current.
+4. For deep procurement reviews, download the CSV via the
+   admin route and share internally after redaction review.
+
+### When a buyer asks about commitment tracking posture
+
+1. Open `/dashboard/settings/billing` →
+   CommitmentsReadinessCard.
+2. Click `Download Markdown` → review every line.
+3. **Redact buyer-specific commitment titles + notes before
+   sharing externally** — the readiness export is buyer-
+   identifying. The static pack (`build:commitments-pack`)
+   contains only per-area support posture and is safe to
+   share without redaction.
+
+### Cron / scheduled tasks
+
+None added in 9P. The register is entirely operator-pull. No
+background reminder cron, no external alerting, no autonomous
+state change. Future phases could add a digest reminder of
+overdue reviews; that remains explicitly opt-in.
+
+---
+
+## Phase 8BE — Omnichannel inbox foundation
+
+Operator-facing surfaces:
+
+- `/dashboard/settings/billing` → **Channel connections** card
+  shows every supported channel with posture (inbound /
+  outbound / manual reply) and active connection rows.
+  Add / mark disconnected / save label here.
+- Inbox + lead drawer render `ChannelSourceBadge` per
+  conversation / message bubble when the channel metadata
+  is stamped.
+- When the operator drafts a reply on a manual-required
+  channel, the `ManualChannelReplyBanner` mounts with a
+  `Copy reply` button + a `Mark sent manually` confirmation.
+  Pressing `Mark sent manually` records a `human` message in
+  the conversation and stamps an `external_messages` row
+  with `delivery_status='marked_sent_manually'`.
+
+Public inbound routes (all anonymous, IP+venue rate-limited):
+
+- `POST /api/integrations/website/message` — structured
+  website intake (sibling to `/api/widget`).
+- `POST /api/integrations/lead-forwarding/the-knot` and
+  `…/weddingwire` — structured forwarded-lead intake. No
+  raw email parsing in this phase.
+- `GET|POST /api/integrations/meta/webhook` — placeholder.
+  Verification round-trip works when
+  `META_WEBHOOK_VERIFY_TOKEN` is set; POST accepts and
+  returns 202 without normalizing. Real handler ships in
+  Phase 8BF.
+
+No autonomous sending. No real OAuth.
+`autonomous_sending_still_disabled` health flag stays mounted.
+See `docs/OMNICHANNEL-INBOX.md` for the full posture and the
+operator workflow.
+
+---
+
+## Phase 8BE-2 — Omnichannel inbox activation patch
+
+Patch on top of Phase 8BE. Two behaviours are now operator-
+visible:
+
+1. **Channel badges in the inbox.** ConversationList rows on
+   `/dashboard/inbox` and `/dashboard/inbox/[leadId]` now show
+   the source channel badge (Website / Instagram / Facebook /
+   Meta Lead Ad / Email / The Knot / WeddingWire / Manual)
+   for any conversation that has a normalized
+   `external_conversations` mapping OR a
+   `messages.metadata.channel_type` stamp. Legacy
+   conversations without channel context render unchanged.
+2. **Manual-required workflow in LeadDetailDrawer.** When the
+   selected lead's conversation lives on a manual-required
+   channel, the drawer mounts `ManualChannelReplyBanner`
+   above the Approve & send row. The Approve & send button
+   is disabled (label flips to `Manual reply only`) and the
+   operator's path is Copy reply → send out-of-band →
+   `Mark sent manually`. The audit + external_messages
+   trail records the operator assertion; VenueRise does NOT
+   claim to have delivered the reply.
+
+No new admin routes; `ADMIN_ENDPOINT_COUNT` stays at 72.
+See `docs/OMNICHANNEL-INBOX.md` §13 for the full activation
+detail.
+
+---
+
+## Phase 8BG — Lead-forwarding parser
+
+The Knot + WeddingWire lead-forwarding routes
+(`/api/integrations/lead-forwarding/the-knot`,
+`/api/integrations/lead-forwarding/weddingwire`) now run
+incoming payloads through a deterministic parser. Confidence +
+needs-review flag are stamped onto both `messages.metadata`
+and `external_messages.metadata`.
+
+Operator-visible signals:
+
+- **Inbox sidebar**: amber dot next to the channel badge when
+  the latest inbound message carries `parse_needs_review`.
+- **ConversationThread bubble**: "Needs parse review" pill on
+  the bubble itself with confidence + missing signals on
+  hover.
+- **LeadDetailDrawer**: a "Source parse review" panel renders
+  next to the recovery / reactivation panels when a lead's
+  most-recent inbound message needs review. Shows extracted
+  event date / guests / budget + missing signals list.
+- **ChannelConnectionsCard**: The Knot + WeddingWire rows now
+  say "Lead forwarding parser active · Outbound reply: manual
+  · Parse confidence review: active".
+
+Operator QA:
+
+- `POST /api/admin/integrations/lead-forwarding/test-parse` —
+  admin-only. Runs the parser without creating a lead. Body:
+  `{ channel_type, subject?, body?, payload? }`. Returns the
+  fully-parsed shape so operators can validate a forwarder
+  before pointing it at the public route. PII-light audit
+  metadata; raw body is NEVER logged.
+
+`ADMIN_ENDPOINT_COUNT` bumped 72 → 73.
+
+---
+
+## Phase 8BF — Meta / Instagram / Facebook connector
+
+Replaces the placeholder webhook with verified inbound.
+
+Operator setup:
+1. Set `META_WEBHOOK_VERIFY_TOKEN` + `META_APP_SECRET` in
+   prod env. Until both are set, the webhook returns 503
+   `webhook_not_configured` (POST) / 503 `placeholder_only`
+   (GET).
+2. In ChannelConnectionsCard create an `instagram` /
+   `facebook` / `meta_lead_ads` connection and fill the
+   Meta identifier fields (Page ID, IG Business Account ID,
+   Ad Account ID, App ID). NO tokens — the admin route
+   rejects token/secret-shaped keys server-side.
+3. In Meta App Dashboard subscribe the webhook to
+   `https://<host>/api/integrations/meta/webhook` with the
+   matching verify token.
+
+Operator-visible behaviour:
+- Verified inbound messages from Instagram / Facebook
+  thread into the existing inbox, render the source badge
+  via Phase 8BE-2, and the Approve & send button stays
+  gated by the manual-required banner.
+- Lead-ad submissions land as placeholder messages with
+  the "Needs parse review" badge until Graph hydration
+  ships in 8BF+1.
+
+QA endpoint:
+- `POST /api/admin/integrations/meta/test-parse` — pure
+  parser, no DB writes, no signature required. Useful for
+  demos and payload-shape validation.
+
+`ADMIN_ENDPOINT_COUNT` bumped 73 → 74.
+
+No autonomous sending. No Send API call.
+`autonomous_sending_still_disabled` health flag stays
+mounted.
+
+---
+
+## Phase 8BH — Website + Ads attribution
+
+Operator-visible:
+- New leads from the widget and from omnichannel inbound
+  (Instagram / Facebook / Meta lead-ads / The Knot /
+  WeddingWire / manual) carry `metadata.attribution`.
+- AttributionPerformanceCard on `/dashboard` groups by
+  source label.
+- Analytics page renders the breakdown as a table.
+- LeadDetailDrawer shows an AttributionPanel with campaign,
+  landing page, referrer, and click-ID presence badges.
+- KanbanCard rows show a compact source badge alongside
+  the lead email.
+
+Widget integration:
+- `public/widget.js` captures UTM + click IDs + referrer +
+  landing page from the parent page and forwards via
+  iframe query params.
+- The embedded widget page reads them on mount and submits
+  them with the intake POST.
+- Locked-down embeds with no readable `window.location`
+  still submit successfully — the lead just lands as
+  `Website` (or `Unknown` if no channel context).
+
+Honesty:
+- No pixel.
+- No ad-platform API call.
+- No multi-touch.
+- "Estimated pipeline" is summed from operator-entered
+  budgets — NOT ROAS.
+
+`ADMIN_ENDPOINT_COUNT` is unchanged (no new admin routes).
+
+---
+
+## Phase 8BI — Booked revenue attribution
+
+Operator-visible surfaces:
+
+- **`/dashboard` BookedRevenueAttributionCard**: top 5
+  sources by estimated booked value with leads / tours /
+  booked / L→Booked rate columns. Empty state when no
+  attributed leads have reached booked yet.
+- **`/dashboard/analytics` "Booked revenue by source"
+  section**: full table with the same metrics plus tours,
+  pipeline, and L→Tour rate.
+- **LeadDetailDrawer Attribution panel**: header flips to
+  "Booked source" + estimated-booked pill on booked leads.
+- **KanbanCard**: Budget row label flips to "Est. booked"
+  with emerald tone for booked leads.
+
+Helper:
+- `lib/enterprise/attribution/revenue.ts` —
+  `buildAttributionRevenueSummary({leads, tours})` returns
+  per-source rollup + totals + disclaimer. Pure function.
+- `formatBookedValueShort(n)` — `$15k` / `$1.2M` style
+  shortener reused across surfaces.
+
+Honesty contract (carried in every render):
+- NOT ROAS — ad spend is not connected.
+- Booked value is **estimated** from `leads.budget`. There
+  is no dedicated booked-contract-value column yet.
+- Legacy leads with no `metadata.attribution` group under
+  `Unknown`.
+- Multi-touch attribution is not supported.
+
+`ADMIN_ENDPOINT_COUNT` unchanged (no new admin routes).
+
+---
+
+## Phase 8BJ — Source-level revenue leakage drilldowns
+
+Operator-visible surfaces:
+
+- **`/dashboard` SourceRevenueLeakageCard**: top 5 sources
+  by at-risk lead count, with leads / booked / est. booked /
+  top leak / at-risk columns + per-row CTA into the leads
+  board.
+- **`/dashboard/leads?source=<SourceLabel>`**: source filter
+  pill (amber) that composes on top of the existing leakage
+  filter pill (blue). Each pill has an independent "Clear"
+  control. DnD reordering is disabled while EITHER filter is
+  active (same posture as `?leakage=`).
+- **AttributionPerformanceCard + BookedRevenueAttributionCard**:
+  each source row now has a "View leads →" CTA linking to
+  `/dashboard/leads?source=<sourceLabel>`. Additive only —
+  card numbers and meaning unchanged.
+- **`/dashboard/analytics` "Source leakage breakdown"
+  section**: per-source table with Leads / Booked / Slow
+  reply / No tour / Recovery / Reactivation / Top leak /
+  At-risk + a View leads CTA.
+- **LeadDetailDrawer Attribution panel**: read-only context
+  lines naming the lead's source cohort and (when present)
+  the active leakage bucket.
+
+Helpers:
+- `lib/enterprise/attribution/leakage.ts` —
+  `buildSourceLeakageSummary({leads, tours, outbound,
+  inbound, lastMessages, settings})` returns per-source row
+  buckets + totals + disclaimer. Composes existing
+  `computeRevenueLeakage` / `computeRecoverySignals` /
+  `computeTourBookingSignals` / `computeReactivationSignals`.
+  Pure function, never throws.
+- `sourceLeakageForLead({...args, leadId})` returns the
+  single highest-priority active leakage key for one lead.
+
+Honesty contract (carried in every render):
+- NOT ROAS — no ad-platform API calls, no spend ingestion.
+- Booked / pipeline values are **estimated** from
+  `leads.budget`.
+- Attribution is the captured intake-time signal —
+  multi-touch is not supported.
+- Legacy leads with no `metadata.attribution` group under
+  `Unknown` so the unattributed cohort is always visible.
+- Source leakage is an operator prioritization lens, not an
+  accounting report.
+
+`ADMIN_ENDPOINT_COUNT` unchanged (no new admin routes).
+
+---
+
+## Phase 9Q — Payment Methods + Stripe Billing Portal
+
+Operator-visible surface:
+
+- **`/dashboard/settings/billing` PaymentMethodsCard**: header
+  "Payment methods" + Stripe-hosted message + status badge
+  (active / trialing / past-due / canceled / incomplete /
+  none / unknown). One primary CTA: **Manage payment method**
+  (when a Stripe customer exists) or **Set up billing** (when
+  one does not).
+- Read-only data shown: Stripe customer connected / not
+  connected; "Open Stripe portal to view or update payment
+  methods." We deliberately do NOT render card brand or last4.
+  No Stripe API fetch is added — the portal is the source of
+  truth.
+
+Routes:
+
+- `POST /api/billing/portal` — unchanged contract; now reads
+  the venue subscription snapshot via
+  `getVenueSubscriptionStatus(venueId)` (request-memoized) and
+  records `subscription_status`, `stripe_customer_present`,
+  and `source` in the audit metadata. ADMIN_ROLES gated.
+  User-scoped rate-limit. Returns `{ url }` on success.
+  Error codes: `unauthorized` / `no_venue` /
+  `tenant_access_*` (forbidden family) / `rate_limited` /
+  `billing_not_configured` (503) / `billing_customer_not_found`
+  (404) / `stripe_failed` / `unexpected_error`. The Phase 9Q
+  PaymentMethodActions client maps these to friendly strings.
+- `POST /api/billing/checkout` — used as the fallback when no
+  Stripe customer exists yet. Unchanged.
+
+Env vars used:
+
+- `STRIPE_SECRET_KEY` (required for any portal / checkout call)
+- `STRIPE_WEBHOOK_SECRET` (already used by /api/stripe/webhook)
+- `STRIPE_DEFAULT_PRICE_ID` (used by checkout fallback)
+- `STRIPE_BILLING_PORTAL_RETURN_URL` (return URL from Stripe
+  portal back into the app; falls back to dashboard if unset)
+- `STRIPE_CHECKOUT_SUCCESS_URL` / `STRIPE_CHECKOUT_CANCEL_URL`
+  (used by checkout)
+
+Local testing:
+
+1. Set `STRIPE_SECRET_KEY` (test mode) + `STRIPE_DEFAULT_PRICE_ID`
+   in `.env.local`.
+2. As an admin, navigate to `/dashboard/settings/billing` and
+   click **Set up billing** if you have no Stripe customer yet.
+   Complete the test-card checkout flow.
+3. Return to `/dashboard/settings/billing`. The Payment Methods
+   card should now show "Stripe customer: Connected" and the
+   CTA should be **Manage payment method**.
+4. Click **Manage payment method** → Stripe Billing Portal opens.
+5. Inspect EnterpriseAuditEventsCard for a
+   `billing_portal_session_create` row with metadata.source =
+   `payment_methods_card`.
+
+Troubleshooting:
+
+- "Stripe is not configured for this deploy." → set
+  `STRIPE_SECRET_KEY` and restart.
+- "Stripe customer missing. Start checkout first." → the venue
+  has no `billing_customers` row yet. Walk the checkout flow.
+- "Only venue owners and admins can manage billing." → caller's
+  role is sales/coordinator/viewer. Promote via team management.
+- "Could not open Stripe portal." → check `STRIPE_SECRET_KEY`
+  matches the mode (test vs live) of the customer record; check
+  Sentry for the captured `billing.portal.unexpected` error.
+
+Honesty contract:
+
+- We DO NOT claim PCI compliance, Stripe certification, or
+  "fully secure".
+- Allowed copy: "processed by Stripe", "full card details are
+  not stored in VenueRise", "billing actions are audited".
+- The portal is Stripe-hosted by design — VenueRise will not
+  build a custom card form (out of scope; raises PCI surface
+  unnecessarily for the same UX outcome).
+
+`ADMIN_ENDPOINT_COUNT` unchanged (no new `/api/admin/*` routes).
+
+---
+
+## Phase 9R — Subscription Plans + Pricing Tiers
+
+Operator-visible surface:
+
+- **`/dashboard/settings/billing` SubscriptionPlansCard**: 4 tier
+  cards (Starter $497 / Growth $997 / Elite $1,997 / Enterprise
+  Custom). Growth carries the **Recommended** chip. The currently
+  active plan carries a **Current** chip. Card header shows
+  "Current plan: <name>" plus subscription status + interval.
+
+Plan catalog: `lib/billing/plans.ts`. Single source of truth.
+Feature gates helper: `lib/billing/plan-gates.ts` (foundation only
+— **not** enforced globally in 9R).
+
+Routes:
+
+- `POST /api/billing/checkout` — extended body. Accepts:
+    `{ plan_id, interval, source }` (Phase 9R) — preferred.
+    `{ price_id }` (legacy) — still accepted.
+    No body (`{}`) — falls back to `STRIPE_DEFAULT_PRICE_ID`.
+  - Enterprise → 400 `enterprise_contact_required`.
+  - Plan missing matching env var → 422 `stripe_price_not_configured`
+    with `detail: { plan_id, interval }`.
+  - All existing gates preserved: auth / ADMIN_ROLES /
+    rate-limit (`billing:checkout:${userId}`) / audit.
+  - Audit metadata now also carries `plan_id`, `interval`,
+    `stripe_price_configured`, `source`.
+
+Env vars (NEW in 9R):
+
+```
+STRIPE_PRICE_STARTER_MONTHLY=
+STRIPE_PRICE_STARTER_ANNUAL=
+STRIPE_PRICE_GROWTH_MONTHLY=
+STRIPE_PRICE_GROWTH_ANNUAL=
+STRIPE_PRICE_ELITE_MONTHLY=
+STRIPE_PRICE_ELITE_ANNUAL=
+```
+
+Local test:
+
+1. In Stripe Dashboard → Products, create monthly + annual prices
+   for Starter / Growth / Elite. Copy each `price_…` id.
+2. Set the matching env vars in `.env.local`. Restart `npm run dev`.
+3. As an admin, open `/dashboard/settings/billing` → confirm all
+   4 plan cards render + CTAs are enabled.
+4. Click Growth → `Start plan` → Stripe Checkout opens with the
+   monthly Growth price; complete with the 4242 test card.
+5. Return to billing — header should now read "Current plan: Growth
+   · Active · monthly", and the Growth card carries the **Current**
+   chip.
+6. Inspect EnterpriseAuditEventsCard for the
+   `billing_checkout_session_create` row with
+   `metadata.plan_id='growth'`.
+
+Current plan resolution:
+
+- Helper: `lib/billing/current-plan.ts` →
+  `getCurrentPlanForVenue(venueId)`. Service-role read,
+  request-memoized. Resolution order:
+    1. `subscriptions.metadata.plan_id` (set by Phase 9R checkout)
+    2. `subscriptions.stripe_price_id` reverse-lookup against
+       the env-configured plan catalog
+  Returns `null` when neither path resolves — card shows
+  "Current plan: Not set" and an unprompted upgrade flow.
+
+Webhook compatibility:
+
+- `app/api/stripe/webhook/route.ts` was NOT modified. The webhook
+  already copies the full `subscription.metadata` object into
+  `subscriptions.metadata`, so the `plan_id` + `interval` keys we
+  added to the Stripe subscription metadata flow through
+  automatically. Legacy venues (no plan_id metadata) resolve via
+  the price-id reverse lookup.
+
+Plan limits posture:
+
+- `limits.venues / leadsPerMonth / adminSeats / teamSeats` are
+  rendered in the card but are NOT enforced anywhere yet. This is
+  a Phase 9R **foundation** commitment — sudden hard-blocking
+  would break trial users. Future phases can call
+  `canUseFeature(planId, featureKey)` to soft-gate.
+
+Honesty contract:
+
+- We DO NOT claim SOC 2, GDPR, HIPAA, PCI, real SSO, SCIM, or
+  24/7 monitoring. Trust / privacy / SSO surfaces are described as
+  **readiness scaffolding** — operator-controlled workflows
+  shipped today, not certifications.
+- Plan limits are PRODUCT controls, not legal / compliance
+  guarantees.
+- Card data still lives only inside Stripe — Phase 9R adds no card
+  storage or card form.
+
+`ADMIN_ENDPOINT_COUNT` unchanged (no new `/api/admin/*` routes).
+
+---
+
+## Phase 9S — UI Interaction Audit + Dead Button Fix Pass
+
+Two new CI scanners + a per-surface audit doc:
+
+- `npm run check:ui-interactions` — catches placeholder hrefs,
+  empty `onClick={() => {}}`, `alert()` / `window.confirm()`
+  outside admin destructive flows, `console.log` in client
+  components, JSX placeholder text. Exemptions via
+  `// UI_INTERACTION_EXEMPT: <reason>` on the same line OR the
+  line immediately above the offending statement.
+- `npm run check:fetch-routes` — walks every client
+  `fetch('/api/...')` and verifies the URL resolves to an
+  `app/api/.../route.ts` on disk. Tolerates string-concat +
+  first-segment-dynamic templates as info-only.
+
+Inventory + status table: `docs/UI-INTERACTION-AUDIT.md`.
+
+Honest disablement pattern added by 9S:
+
+- `<button disabled className="text-[#CBD5E1] cursor-not-allowed"
+  title="<why this isn't enabled>" aria-label="<same>">…</button>`
+- Add an inline yellow callout above the surface when an entire
+  workflow is read-only (see `KnowledgeBaseTab`).
+
+P0 / P1 fixes shipped:
+
+- KnowledgeBaseTab Add / Toggle / Delete buttons removed (dead
+  routes). Tab is now read-only + carries a "Contact support to
+  edit" callout. Will return as a real CRUD surface in a future
+  phase.
+- MessageComposer Paperclip + Mic buttons disabled with tooltip
+  ("Attachments are not yet enabled" / "Voice input is not yet
+  enabled"). Will return when upload + transcription paths ship.
+
+`ADMIN_ENDPOINT_COUNT` unchanged at 74. No new routes added.
+
+---
+
+## Phase 9T-alt — Knowledge Base CRUD + Audit + Rate-Limit
+
+Operator-visible surface:
+
+- **`/dashboard/settings` → Knowledge Base tab**: full inline
+  CRUD restored. Add entry button, per-row edit (Save icon),
+  toggle active/inactive (Check icon), delete (Trash icon with
+  native confirm). Per-row spinners + inline error rendering;
+  no row blocks another from saving.
+- Header callout reads: "These entries guide AI replies. Avoid
+  pasting secrets, credentials, or anything you wouldn't want
+  surfaced in a reply. Edits are audited."
+
+Routes:
+
+- `GET    /api/venues/[id]/knowledge`                  — list (any venue member)
+- `POST   /api/venues/[id]/knowledge`                  — create (SALES_ROLES)
+- `PATCH  /api/venues/[id]/knowledge/[knowledgeId]`    — update / toggle (SALES_ROLES)
+- `DELETE /api/venues/[id]/knowledge/[knowledgeId]`    — delete (SALES_ROLES)
+
+Auth + safety:
+- SALES_ROLES = owner / admin / sales_manager / coordinator,
+  matching `knowledge_base` RLS in migration 005.
+- Cross-tenant forbidden collapses to 404.
+- Zod validation: title 1–160, content 1–8,000, category ≤80,
+  priority 0–100, is_active boolean. PATCH with empty body →
+  400 `validation_failed`.
+- User-scoped rate limit per HTTP verb
+  (`venues:knowledge:{list|create|update|delete}:<userId>`).
+
+Audit:
+- `KNOWLEDGE_ENTRY_CREATED` — after metadata only (no full content).
+- `KNOWLEDGE_ENTRY_UPDATED` — before + after metadata; changed
+  field list in `metadata.fields`.
+- `KNOWLEDGE_ENTRY_TOGGLED` — distinct action when only
+  `is_active` flips, so admins can filter enable/disable churn.
+- `KNOWLEDGE_ENTRY_DELETED` — before snapshot only.
+- Audit metadata captures `title`, `category`, `priority`,
+  `is_active`, `content_length`. Full `content` is NOT mirrored
+  to the audit feed.
+
+Behavior preserved:
+- AI orchestrator reads `public.knowledge_base` at conversation
+  time (unchanged from before 9T-alt). New / updated entries
+  flow into the next reply without an agent prompt change.
+- `ADMIN_ENDPOINT_COUNT` still 74 — these are venue routes, not
+  admin routes.
+
+Troubleshooting:
+- "Stripe customer missing" copy → wrong surface; this tab
+  doesn't touch billing.
+- "Only owners, admins, sales managers, or coordinators can
+  edit knowledge." → caller's role is viewer. Promote via team
+  management.
+- "Invalid input. Check title (1–160) and content (1–8,000)." →
+  empty / over-length submission rejected at Zod.
+- Entry disappears after delete → success path; audit row
+  `knowledge_entry_deleted` appears in EnterpriseAuditEventsCard.
+
+Honesty:
+- Knowledge entries influence AI replies. The audit feed is
+  admin-readable; full content is intentionally not mirrored
+  there because operators are warned via UI copy to keep
+  secrets out, but we don't want auditors browsing pasted
+  business content either. The audit row tells you WHEN and
+  WHO; the entry itself lives in the table.
+
+---
+
+## Phase 9T — Playwright Runtime Interaction QA
+
+Scope: core operator workflows. Static UI + fetch-route scanners
+from 9S still ship; 9T adds the load/error/redirect coverage
+those scanners can't see.
+
+Test files:
+- `tests/e2e/core-dashboard.spec.ts` — overview load, command
+  palette, Add Lead → Kanban → drawer → close.
+- `tests/e2e/settings-knowledge.spec.ts` — full Knowledge Base
+  CRUD round-trip (add / edit / toggle / delete) + empty-content
+  validation.
+- `tests/e2e/settings-availability.spec.ts` — Availability tab
+  render + Blackout add/delete round-trip.
+- `tests/e2e/inbox-tours-smoke.spec.ts` — Inbox page render,
+  Paperclip+Mic disabled assertion, Tours calendar render,
+  Billing cards render, optional Stripe portal CTA gated on
+  `E2E_ALLOW_STRIPE=1`.
+
+Helpers:
+- `tests/e2e/helpers/selectors.ts` — single source of truth for
+  every `data-testid` the suite touches. Update here when a
+  testid is renamed.
+- `tests/e2e/helpers/auth.ts` — `gotoDashboard()` + early
+  storage-state assertion.
+- `tests/e2e/helpers/seed.ts` — `cleanupKnowledgeEntriesByPrefix`
+  for E2E-prefixed rows.
+
+### One-time auth setup
+
+Tests use Playwright `storageState` from `.auth/admin.json` (in
+`.gitignore`). Generate once per workstation:
+
+```bash
+# 1. Make sure the app is running and you have a test venue:
+npm run dev
+npm run demo:seed   # if you haven't yet — creates a venue + user
+
+# 2. Open Playwright codegen against the app:
+npx playwright codegen http://localhost:3000/login
+
+# 3. Sign in as the admin user.
+# 4. In the codegen window menu, "Save Storage State…" → save as
+#    `.auth/admin.json` at the repo root.
+```
+
+Sanity check the file exists:
+```bash
+ls -la .auth/admin.json
+```
+
+### Run the tests
+
+```bash
+# Make sure the dev server is running in another terminal first
+npm run dev
+
+# In another terminal:
+npx playwright install chromium   # first time only
+npm run test:e2e:core              # core workflows
+npm run test:e2e                   # full E2E suite
+npm run test:e2e:headed            # open Chromium with the UI
+```
+
+Reports:
+- Console: `list` reporter by default (CI gets `list` + HTML).
+- On failure: `playwright-report/index.html` + `test-results/`
+  with traces, screenshots, and a retry video.
+
+### Env vars used
+
+```
+E2E_BASE_URL=http://localhost:3000   # required
+E2E_VENUE_ID=                         # optional; cross-tenant probes
+E2E_ALLOW_STRIPE=                     # set to 1 to exercise portal CTA
+```
+
+Auth email/password are NOT consumed by the suite — they're only
+needed during the manual `codegen` flow.
+
+### What is NOT covered yet
+
+- AI generation paths (`/api/ai/draft`, `/api/ai/chat`) — those
+  need Anthropic credentials + a stable prompt.
+- Drag-and-drop reordering on the Kanban board.
+- Realtime layers (digest sends, tour status, AI audit).
+- Stripe checkout completion (CTA assertion is gated on
+  `E2E_ALLOW_STRIPE=1`; the full flow stays manual).
+- The 47 enterprise cards individually. The smoke spec only
+  asserts that the billing page mounts; per-card runtime
+  coverage is a future phase.
+- External-channel send paths (Meta, Instagram, email) — the
+  manual-reply posture is enforced server-side, and the UI
+  surfaces that gate honestly; runtime coverage of the actual
+  external send is intentionally out of scope.
+
+### Honesty contract
+
+- We do NOT add a test-auth API route to production code. The
+  storage state mechanism keeps the suite honest about how the
+  app actually authenticates.
+- Tests use `E2E `-prefixed names so cleanup can locate them
+  without risking real data.
+- Stripe checkout is opt-in. Default runs never hit Stripe.
+- Console errors fail the test by default. The allowlist is
+  narrow (browser-extension hydration noise only).
+
+`ADMIN_ENDPOINT_COUNT` unchanged — no new routes added.
+
+---
+
+## GTM-0A — Revenue Recovery Demo Seed
+
+Quick-seed a wedding-venue pipeline so `/dashboard` tells the
+Revenue OS story in 30 seconds. Designed for sales demos and
+pilot setup.
+
+Full doc: `docs/DEMO-REVENUE-RECOVERY.md`.
+
+Operator surface:
+- `/dashboard/settings/billing` → **Revenue Recovery demo mode**
+  card (admin-only). Toggle "Reset previous demo seed first" if
+  you want a clean re-seed, then click **Seed demo data**.
+- Or hit the route directly:
+  ```bash
+  curl -X POST http://localhost:3000/api/admin/demo/revenue-recovery-seed \
+    -H "Cookie: <admin-session>" \
+    -H "Content-Type: application/json" \
+    -d '{"reset_existing_demo_data": true}'
+  ```
+
+What it seeds:
+- 24 leads tagged `metadata.demo_seed=true` across every stage,
+  with `metadata.attribution` and (for lost rows)
+  `metadata.lost_reason`.
+- ~14 conversations / ~25 messages with `channel_type` set per
+  message. One Meta lead carries `parse_needs_review`.
+- 7–8 tours (scheduled / confirmed / completed).
+- 5 venue_channel_connections (Website connected, others
+  manual_only). No tokens.
+- 6 knowledge_base entries **only when the venue has none**.
+- 3 tour_availability slots + 1 blackout **only when empty**.
+
+What it never does:
+- Calls Stripe, Anthropic, or any external platform.
+- Deletes non-demo rows. Reset matches `metadata->>demo_seed`
+  only; tables without that metadata column
+  (`knowledge_base`, `tour_availability`, `tour_blackouts`) are
+  never reset — the result's `warnings` array documents this.
+- Sends a real message. `autonomous_sending_still_disabled`
+  health flag stays mounted.
+
+Audit: every seed call writes `revenue_recovery_demo_seeded`
+to `public.audit_events` with the counts + reset flag.
+
+Rate limit: `admin:demo:revenue-recovery-seed:<userId>` —
+user-scoped. The seed is heavy (~24 leads + their artifacts);
+the limiter keeps a single operator from hammering it.
+
+`ADMIN_ENDPOINT_COUNT` bumped 74 → **75** (new admin route).
+
+---
+
+## GTM-0B — Public marketing reposition
+
+Public homepage repositioned around the Revenue OS wedge.
+
+Section order on `/`:
+- Hero → PainPoints (5 leaks) → HowItWorks (4-step loop) →
+  DemoPreview (static mock dashboard) → Differentiation (operator
+  control + honesty) → ROI (pilot offer) → FAQ → FinalCTA
+  (AuditForm).
+
+New routes:
+- `/demo` — pilot application landing zone. Reuses the existing
+  `AuditForm` (writes to `audit_leads` Supabase table). No new
+  backend.
+
+Removed from the page:
+- `SocialProof` "Trusted by top venues nationwide" + venue-type
+  marquee — we don't have public partner logo rights yet.
+- `Solution` generic 6-feature grid — replaced by the 4-step
+  HowItWorks loop.
+- `Trust` generic shield-icon section — folded into
+  `Differentiation` as the operator-control + honesty surface.
+
+Removed copy (autonomy overclaims):
+- "Respond in under 60 seconds" / "24/7 sales coordinator" — these
+  implied autonomous sending, which is not the product posture.
+- "3× more tours" / "80% less follow-up" — specific lift % we
+  don't have public case-study evidence for.
+
+Approved + forbidden claim list: `docs/GTM-POSITIONING.md` (single
+source of truth).
+
+CTA inventory: every CTA points at a real anchor or `/demo`.
+`check:ui-interactions` + `check:fetch-routes` pass; no dead
+links. `ADMIN_ENDPOINT_COUNT` unchanged.
+
+Marketing QA checklist (run before promoting copy changes):
+
+- [ ] Homepage builds cleanly (`npm run build`).
+- [ ] `/` renders without runtime errors in browser console.
+- [ ] Hero headline + subhead match `docs/GTM-POSITIONING.md`.
+- [ ] All anchors resolve (`#leaks`, `#how-it-works`, `#why`,
+      `#pilot`, `#faq`, `#apply`).
+- [ ] Hero "Book a demo" → `/demo`. `/demo` renders + form
+      submits to `audit_leads`.
+- [ ] No fake testimonials, no fake partner logos, no fake "trusted
+      by N venues" claims.
+- [ ] No autonomous-send copy ("AI responds in N seconds", "24/7
+      sales coordinator").
+- [ ] No SOC 2 / GDPR / PCI / HIPAA / "fully secure" claims.
+- [ ] FAQ "Does AI send messages automatically?" answers No.
+- [ ] FAQ "Is this a CRM?" answers No.
+- [ ] Pilot section uses "Pilot packages available" rather than a
+      specific price.
+- [ ] Footer points at `/demo`, not the old `#audit` anchor.
+
+---
+
+## GTM-0A.2 — Revenue Recovery Load / Stress Demo seed
+
+**Route:** `POST /api/admin/demo/revenue-recovery-load-seed`
+**Card:** Settings → Billing → "Revenue Recovery load / stress demo"
+
+### Operator QA
+
+- [ ] Card renders for admins only (`isAdmin && <RevenueRecoveryLoadDemoCard />`).
+- [ ] Lead count picker offers 100 / 250 / 500 / 1000.
+- [ ] Profile picker offers balanced / high_volume / messy_channels / sales_demo.
+- [ ] "Reset previous load-seed rows" checkbox is wired and warns that it does NOT touch the hand-crafted GTM-0A demo.
+- [ ] Submit calls the route, returns a `SeedResult` with distribution breakdown shown in collapsible sections.
+- [ ] Distribution panel renders 5 sections: Stage mix, Source mix, Channel mix, Leakage signals, Lost reasons.
+- [ ] "View dashboard →" link appears on success.
+- [ ] Reset flag deletes ONLY rows tagged `metadata.demo_seed_type='load'` AND `demo_seed_version='gtm_0a_2'`.
+
+### Multi-venue stress smoke
+
+1. Pick two different venues (or invite a second test user with their own venue).
+2. Seed `balanced` 250 leads to venue A, then `messy_channels` 250 leads to venue B.
+3. Confirm `/dashboard` for each shows only its own data.
+4. Reset venue A — venue B's load-seed data remains untouched.
+5. Run the GTM-0A hand-crafted demo seed on venue A — both datasets coexist; reset of GTM-0A doesn't remove GTM-0A.2 rows and vice versa.

@@ -12,6 +12,30 @@ import WeeklyToursStrip, {
 import { Card, CardHeader, CardTitle, CardSubtitle, CardContent } from '@/components/dashboard/ui/Card'
 import { Button } from '@/components/dashboard/ui/Button'
 import OverviewRecentLeads from '@/components/dashboard/OverviewRecentLeads'
+import RevenueLeakageBrief from '@/components/dashboard/RevenueLeakageBrief'
+import AttributionPerformanceCard from '@/components/dashboard/AttributionPerformanceCard'
+import { buildAttributionSummary } from '@/lib/enterprise/attribution/summary'
+// Phase 8BI — Booked revenue attribution shares the same
+// leads + tours read as the 8BH summary, so we add the helper
+// import next to it.
+import BookedRevenueAttributionCard from '@/components/dashboard/BookedRevenueAttributionCard'
+import { buildAttributionRevenueSummary } from '@/lib/enterprise/attribution/revenue'
+// Phase 8BJ — Source-level revenue leakage drilldowns.
+// `parseRevenueOsSettings` parses the venue's saved Revenue OS
+// thresholds (with a defaults fallback baked into the helper);
+// `DEFAULT_REVENUE_OS_SETTINGS` is the const fallback used when
+// the venue row read fails. The source-leakage helper consumes
+// these settings; same shape as the existing leakage / recovery
+// readers downstream.
+import SourceRevenueLeakageCard from '@/components/dashboard/SourceRevenueLeakageCard'
+import { buildSourceLeakageSummary } from '@/lib/enterprise/attribution/leakage'
+import {
+  parseRevenueOsSettings,
+  DEFAULT_REVENUE_OS_SETTINGS,
+} from '@/lib/revenue-os/settings'
+import ReactivationQueueCard from '@/components/dashboard/ReactivationQueueCard'
+import RecoveryQueueCard from '@/components/dashboard/RecoveryQueueCard'
+import TourConfirmationQueueCard from '@/components/dashboard/TourConfirmationQueueCard'
 import {
   Download,
   Sparkles,
@@ -136,17 +160,183 @@ export default async function DashboardPage() {
     .order('created_at').limit(1).maybeSingle()
   const venue = venueRaw as { id: string; name?: string } | null
 
-  // Existing data shape preserved.
+  // Existing data shape preserved. Phase 8BH widens the leads
+  // select to also pull `id` + `metadata` so
+  // buildAttributionSummary can group rows by source label
+  // without a second round-trip.
   const [leadsRes, recentLeadsRes] = await Promise.all([
     venue
-      ? supabase.from('leads').select('stage, lead_score, budget, created_at').eq('venue_id', venue.id)
-      : Promise.resolve({ data: [] as { stage: string; lead_score: number; budget: number | null; created_at: string }[] }),
+      ? supabase
+          .from('leads')
+          .select('id, stage, lead_score, budget, created_at, updated_at, metadata')
+          .eq('venue_id', venue.id)
+      : Promise.resolve({
+          data: [] as {
+            id: string
+            stage: string
+            lead_score: number
+            budget: number | null
+            created_at: string
+            metadata?: unknown
+          }[],
+        }),
     venue
       ? supabase.from('leads').select('*').eq('venue_id', venue.id).order('created_at', { ascending: false }).limit(8)
       : Promise.resolve({ data: [] as { id: string; name: string; email: string; lead_score: number; stage: string; created_at: string; guest_count?: number | null }[] }),
   ])
   const leads = leadsRes.data ?? []
   const recentLeads = recentLeadsRes.data ?? []
+
+  // Phase 8BH — fetch the per-venue tour list so the
+  // attribution summary can count tours-scheduled per source.
+  // Phase 8BJ widened the SELECT to include `id` + `scheduled_at`
+  // so the same row set powers `buildSourceLeakageSummary`'s
+  // tour_pending_confirm signal without a second round-trip.
+  const toursForAttributionRes = venue
+    ? await supabase
+        .from('tours')
+        .select('id, lead_id, status, scheduled_at')
+        .eq('venue_id', venue.id)
+        .limit(1000)
+    : {
+        data: [] as Array<{
+          id: string
+          lead_id: string | null
+          status: string | null
+          scheduled_at: string | null
+        }>,
+      }
+  const attributionSummary = buildAttributionSummary({
+    leads: leads as Array<{
+      id?: string
+      stage?: string | null
+      budget?: number | null
+      created_at?: string | null
+      metadata?: unknown
+    }>,
+    tours: (toursForAttributionRes.data ?? []) as Array<{
+      lead_id?: string | null
+      status?: string | null
+    }>,
+    topN: 5,
+  })
+
+  // Phase 8BI — Booked revenue attribution. Same leads + tours
+  // input as the 8BH summary; pure helper, no DB round-trip.
+  const bookedRevenueSummary = buildAttributionRevenueSummary({
+    leads: leads as Array<{
+      id?: string | null
+      stage?: string | null
+      budget?: number | null
+      updated_at?: string | null
+      created_at?: string | null
+      metadata?: unknown
+    }>,
+    tours: (toursForAttributionRes.data ?? []) as Array<{
+      lead_id?: string | null
+      status?: string | null
+    }>,
+  })
+
+  // Phase 8BJ — Source-level revenue leakage drilldowns.
+  // Server-side fan-out: aggregate the venue's messages into
+  // first-outbound + last-inbound per lead (same pattern as
+  // RevenueLeakageBrief), pull venue settings, then run the
+  // composed leakage helper. Best-effort: a query failure
+  // collapses to an empty summary without failing the page.
+  let sourceLeakageSummary: Awaited<ReturnType<typeof buildSourceLeakageSummary>> = {
+    rows: [],
+    totals: {
+      leadCount: 0,
+      bookedCount: 0,
+      atRiskCount: 0,
+      estimatedPipelineValue: 0,
+      estimatedBookedValue: 0,
+    },
+    disclaimer:
+      'Source leakage is based on captured attribution and Revenue OS signals. It is not ROAS — ad spend is not connected. Booked / pipeline values are estimated from operator-entered budgets.',
+  }
+  if (venue && leads.length > 0) {
+    const leadIds = (leads as Array<{ id: string }>).map((l) => l.id)
+    const [messagesRes, venueRow] = await Promise.all([
+      supabase
+        .from('messages')
+        .select('lead_id, role, created_at')
+        .eq('venue_id', venue.id)
+        .in('lead_id', leadIds)
+        .order('created_at', { ascending: true })
+        .limit(5000),
+      supabase
+        .from('venues')
+        .select('metadata')
+        .eq('id', venue.id)
+        .maybeSingle(),
+    ])
+    const outboundMap = new Map<string, string | null>()
+    const inboundMap = new Map<string, string | null>()
+    for (const m of ((messagesRes.data ?? []) as Array<{
+      lead_id: string
+      role: string
+      created_at: string
+    }>)) {
+      if (m.role === 'ai' || m.role === 'human') {
+        if (!outboundMap.has(m.lead_id)) outboundMap.set(m.lead_id, m.created_at)
+      } else if (m.role === 'lead') {
+        inboundMap.set(m.lead_id, m.created_at)
+      }
+    }
+    const settings = parseRevenueOsSettings(
+      (venueRow.data as { metadata?: unknown } | null)?.metadata ?? null
+    )
+    // Reactivation needs a `lastMessages` map — reuse inboundMap so
+    // we don't refetch.
+    const lastMessages: Record<string, string | null> = {}
+    for (const [k, v] of inboundMap.entries()) lastMessages[k] = v
+    sourceLeakageSummary = buildSourceLeakageSummary({
+      leads: (leads as Array<{
+        id: string
+        stage: string
+        lead_score: number
+        budget: number | null
+        created_at: string
+        updated_at: string
+        metadata?: unknown
+      }>).map((l) => ({
+        id: l.id,
+        stage: l.stage,
+        lead_score: l.lead_score,
+        budget: l.budget,
+        created_at: l.created_at,
+        updated_at: l.updated_at,
+        metadata: l.metadata,
+      })),
+      tours: ((toursForAttributionRes.data ?? []) as Array<{
+        id: string
+        lead_id: string | null
+        status: string | null
+        scheduled_at: string | null
+      }>)
+        .filter((t): t is { id: string; lead_id: string; status: string; scheduled_at: string | null } =>
+          Boolean(t.lead_id) && Boolean(t.status)
+        )
+        .map((t) => ({
+          id: t.id,
+          lead_id: t.lead_id,
+          status: t.status,
+          scheduled_at: t.scheduled_at,
+        })),
+      outbound: Array.from(outboundMap.entries()).map(([lead_id, first_outbound_at]) => ({
+        lead_id,
+        first_outbound_at,
+      })),
+      inbound: Array.from(inboundMap.entries()).map(([lead_id, last_inbound_at]) => ({
+        lead_id,
+        last_inbound_at,
+      })),
+      lastMessages,
+      settings: settings ?? DEFAULT_REVENUE_OS_SETTINGS,
+    })
+  }
 
   // Phase 8AG — pull the next-7-days tours for the strip. Best-effort:
   // a denial / missing column collapses to an empty week without
@@ -326,6 +516,54 @@ export default async function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Phase 8AP — Revenue leakage watch. Revenue OS direction: the
+          Overview shouldn't only tell the operator what's done; it
+          should tell them what's at risk now. Server-rendered so the
+          numbers are live on first paint. See
+          docs/PRODUCT-THESIS.md + docs/AGENTIC-WORKFLOW-MAP.md
+          (Revenue Leakage Agent). */}
+      <RevenueLeakageBrief venueId={venue?.id ?? null} />
+
+      {/* Phase 8AS — Follow-Up Recovery queue. Top 5 stalled leads
+          with reason + suggested action. Read-only; the suggestion
+          can prefill the regenerate prompt but the operator stays
+          in control of the actual send. */}
+      <RecoveryQueueCard venueId={venue?.id ?? null} />
+
+      {/* Phase 8AT — Tour Booking Agent confirmation queue. Surfaces
+          scheduled-but-unconfirmed tours so the operator can fire a
+          confirm before the slot slips. CTAs link to the lead drawer
+          and the tour audit drawer; no autonomous sends. */}
+      <TourConfirmationQueueCard venueId={venue?.id ?? null} />
+
+      {/* Phase 8BD — Reactivation Agent queue. Surfaces lost leads
+          where the recorded reason + cool-down suggest a soft
+          re-engagement is worth it. Read-only — the Open lead CTA
+          deep-links to the drawer; no autonomous outreach. */}
+      <ReactivationQueueCard venueId={venue?.id ?? null} />
+
+      {/* Phase 8BH — Attribution performance.
+          Groups recent leads + tours by derived source label
+          (Google Ads / Meta Ads / Instagram / The Knot /
+          WeddingWire / Website / Unknown). Estimated pipeline
+          is summed from operator-entered budgets — NOT true
+          ROAS, because ad spend is not connected. */}
+      <AttributionPerformanceCard summary={attributionSummary} />
+
+      {/* Phase 8BI — Booked revenue by source. Same input data
+          as the 8BH summary; surfaces which channels are
+          actually converting to booked weddings + estimated
+          booked value summed from operator-entered budgets.
+          NOT ROAS — ad spend remains disconnected. */}
+      <BookedRevenueAttributionCard summary={bookedRevenueSummary} />
+
+      {/* Phase 8BJ — Source-level revenue leakage drilldowns.
+          Each row links into the leads board with the matching
+          `?source=` filter + optional `?leakage=` filter so
+          operators can triage the specific stuck-cohort. NOT
+          ROAS; pure inference over existing Revenue OS signals. */}
+      <SourceRevenueLeakageCard summary={sourceLeakageSummary} />
 
       {/* AI overnight brief */}
       <AIBriefCard

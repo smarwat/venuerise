@@ -1,0 +1,11 @@
+{
+  "generatedAt": "2026-05-20T18:29:52.428Z",
+  "disclaimer": "Privacy readiness is not a legal compliance attestation. VenueRise does NOT claim GDPR / CCPA / LGPD compliance in this automated summary. Operator + counsel review is required before any external claim. DSRs are tracked, NOT auto-fulfilled. Export preview is metadata-only. Deletion review is non-destructive.",
+  "counts": {
+    "totalCategories": 15,
+    "highOrRestrictedSensitivity": 8,
+    "exportReady": 9,
+    "deletionReady": 5,
+    "retentionPolicyRows": 15
+  }
+}

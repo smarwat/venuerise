@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, Mail, CheckCircle2, AlertTriangle, Send, MailCheck } from 'lucide-react'
 import {
   Card,
@@ -148,6 +148,48 @@ export default function DigestPreferencesCard() {
   const [members, setMembers] = useState<MembersState>({ kind: 'loading' })
   const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(null)
   const [respectCadence, setRespectCadence] = useState<boolean>(false)
+
+  // Phase 8AK — CommandPalette "Send sample digest" deep-link.
+  // When the URL contains `?digest_action=sample` (set by clicking the
+  // palette quick action) we scroll the card into view and apply a
+  // short-lived highlight ring so the operator's eye lands on the right
+  // surface. We DON'T auto-fire `handleSendSample` — the operator still
+  // has to confirm by clicking the button. After consuming the param we
+  // strip it from the URL via history.replaceState so a page refresh
+  // doesn't re-trigger the scroll/highlight.
+  const cardRootRef = useRef<HTMLDivElement | null>(null)
+  const [highlighted, setHighlighted] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('digest_action') !== 'sample') return
+    // Scroll the card into view on next paint so the Card has mounted.
+    const t1 = setTimeout(() => {
+      cardRootRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+      setHighlighted(true)
+    }, 60)
+    const t2 = setTimeout(() => setHighlighted(false), 2200)
+    // Strip the param without disturbing the rest of the URL or the
+    // browser back-stack.
+    try {
+      params.delete('digest_action')
+      const next =
+        window.location.pathname +
+        (params.toString() ? `?${params.toString()}` : '') +
+        window.location.hash
+      window.history.replaceState({}, '', next)
+    } catch {
+      // history.replaceState can throw in sandbox iframes; the deep-link
+      // UX still works, just the URL stays sticky.
+    }
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -407,12 +449,24 @@ export default function DigestPreferencesCard() {
   const saving = save.kind === 'saving'
 
   return (
+    <div
+      ref={cardRootRef}
+      id="digest-preferences-card"
+      data-digest-card="true"
+      className={
+        highlighted
+          ? 'rounded-2xl ring-2 ring-[#1D4ED8] ring-offset-2 ring-offset-[#F4F7FB] transition-shadow duration-300'
+          : 'rounded-2xl transition-shadow duration-300'
+      }
+    >
     <Card>
       <CardHeader>
         <div>
-          <CardTitle>Activity digest</CardTitle>
+          <CardTitle>Revenue OS digest</CardTitle>
           <CardSubtitle>
-            This setting applies to your user account for this venue.
+            Get a daily or weekly summary of revenue leakage, tour
+            momentum, and operator activity. Setting applies to your
+            user account for this venue.
           </CardSubtitle>
         </div>
         <div className="shrink-0 flex items-center gap-2">
@@ -453,7 +507,7 @@ export default function DigestPreferencesCard() {
         {ready && (
           <>
             <fieldset className="space-y-2">
-              <legend className="sr-only">Activity digest cadence</legend>
+              <legend className="sr-only">Revenue OS digest cadence</legend>
               {CADENCE_OPTIONS.map((opt) => {
                 const checked = draftCadence === opt.value
                 return (
@@ -556,7 +610,7 @@ export default function DigestPreferencesCard() {
                   ? 'Sending…'
                   : preview.kind === 'saved'
                     ? 'Sample sent'
-                    : 'Send sample'}
+                    : 'Send sample Revenue OS digest'}
               </Button>
 
               {/* Phase 8X → 8Y — Send manual digest. Same destination
@@ -598,7 +652,7 @@ export default function DigestPreferencesCard() {
                   ? 'Sending…'
                   : manual.kind === 'saved'
                     ? 'Manual digest sent'
-                    : 'Send manual digest'}
+                    : 'Send manual Revenue OS digest'}
               </Button>
 
               {save.kind === 'saved' && (
@@ -704,6 +758,7 @@ export default function DigestPreferencesCard() {
         )}
       </CardContent>
     </Card>
+    </div>
   )
 }
 

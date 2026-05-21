@@ -8,6 +8,7 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 import {
   DIGEST_CADENCES,
   DIGEST_WEEKLY_DAYS,
@@ -377,6 +378,20 @@ export async function POST(request: NextRequest): Promise<Response> {
     },
     'admin.digest_preferences.post_completed'
   )
+
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/digest/preferences',
+    action: 'digest_preferences_update',
+    targetTable: 'venue_member_digest_preferences',
+    targetId: user.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    after: { cadence, weekly_day: effectiveWeeklyDay },
+  })
 
   return respond(
     NextResponse.json({

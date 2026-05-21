@@ -5,6 +5,7 @@ import { DashboardProvider } from '@/lib/contexts/dashboard-context'
 import DashboardSidebar from '@/components/dashboard/DashboardSidebar'
 import DashboardTopBar from '@/components/dashboard/DashboardTopBar'
 import BillingBanner from '@/components/dashboard/billing/BillingBanner'
+import DemoModeBanner from '@/components/dashboard/DemoModeBanner'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -117,6 +118,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
           <div className="lg:ml-[260px] min-w-0 flex flex-col min-h-screen">
             <DashboardTopBar />
+            {/* Phase 9J — demo mode banner. Reads venues.demo_mode_*
+                from the venue row already fetched above; renders a
+                "DEMO MODE" badge below the topbar when enabled.
+                Visual marker only; does NOT anonymize production
+                data. Owner-only toggle on /dashboard/settings/billing
+                via the DemoModeCard. */}
+            <DemoModeBanner
+              enabled={
+                Boolean(
+                  (venue as { demo_mode_enabled?: boolean } | null)
+                    ?.demo_mode_enabled
+                )
+              }
+              label={
+                (venue as { demo_mode_label?: string | null } | null)
+                  ?.demo_mode_label ?? null
+              }
+            />
             {/* Banner is fail-open: if the subscription read throws, it renders
                 nothing and the dashboard keeps working. See BillingBanner. */}
             <BillingBanner venueId={venueId} />

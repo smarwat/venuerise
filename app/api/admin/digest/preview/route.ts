@@ -13,11 +13,14 @@ import {
   aggregateEvents,
   buildOperatorDigestText,
   buildOperatorDigestHtml,
+  fetchRevenueOsDigestSummary,
   tryBuildUnsubscribeUrl,
   tryBuildResubscribeUrl,
 } from '@/lib/jobs/functions/operator-activity-digest'
 import { resolveEffectiveDigestPreference } from '@/lib/billing/operator-digest-preferences'
 import { recordDigestAuditEvent } from '@/lib/billing/digest-audit-events'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 
 /**
  * Phase 8AE — preview audit env gate. Reuses
@@ -245,6 +248,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   )
   const unsubscribeUrl = tryBuildUnsubscribeUrl(targetVenueId)
   const resubscribeUrl = tryBuildResubscribeUrl(targetVenueId, user.id)
+  // Phase 8AU — preview emails the operator the SAME Revenue OS
+  // body the cron would render. Best-effort; on probe failure the
+  // body builder falls back to the legacy tour-activity-only
+  // template so preview never breaks.
+  const revenueOsSummary = await fetchRevenueOsDigestSummary(
+    svc,
+    targetVenueId
+  )
   const bodyArgs = {
     venueName,
     venueId: targetVenueId,
@@ -255,6 +266,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     cadence: pref.cadence,
     weeklyDay: pref.weeklyDay,
     sendKind: 'preview' as const,
+    revenueOs: revenueOsSummary,
   }
   const text = buildOperatorDigestText(bodyArgs)
   const html = buildOperatorDigestHtml(bodyArgs)
@@ -392,6 +404,30 @@ export async function POST(request: NextRequest): Promise<Response> {
       requestId,
     })
   }
+
+  // Phase 9B — enterprise audit. Unconditional (the Phase 8AE
+  // digest-specific row above is gated on DIGEST_AUDIT_LOG_CRON_SENDS;
+  // this one is always written so the enterprise feed is the
+  // complete record of operator "Send sample" clicks).
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/digest/preview',
+    action: AUDIT_ACTIONS.DIGEST_PREVIEW_SEND,
+    targetTable: 'venue_member_digest_preferences',
+    targetId: user.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      event_count: agg.total,
+      cadence: pref.cadence,
+      weekly_day: pref.weeklyDay ?? null,
+      outbound_message_id: result.outboundMessageId ?? null,
+      send_kind: 'preview',
+    },
+  })
 
   return respond(
     NextResponse.json({

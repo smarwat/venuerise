@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 import { getCurrentVenueForUser } from '@/lib/auth/tenant-access'
 import { SALES_ROLES } from '@/lib/auth/roles'
 import { requireActiveSubscription, SubscriptionRequiredError } from '@/lib/billing/subscription-status'
 import { sendTourNotificationEmail } from '@/lib/integrations/tour-notifications'
+import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
 import { z } from 'zod'
 
 const CreateTourSchema = z.object({
@@ -64,6 +67,26 @@ export async function POST(request: NextRequest) {
     return respond(NextResponse.json({ error: 'forbidden' }, { status: 403 }))
   }
   const venueId = venue.venueId
+
+  // Phase 9F — per-user rate limit.
+  const rl = await rateLimitUserAction(
+    request,
+    `tours:create:${user.id}`,
+    {
+      route: '/api/tours',
+      method: 'POST',
+      userId: user.id,
+      venueId,
+      requestId,
+    }
+  )
+  if (!rl.allowed) {
+    log.warn(
+      { requestId, userId: user.id, retryMs: rl.retryAfterMs },
+      'rate_limit.blocked'
+    )
+    return respond(rateLimitedResponse(rl))
+  }
 
   // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
   try {
@@ -129,6 +152,29 @@ export async function POST(request: NextRequest) {
     requestId,
   }).catch(() => {
     /* swallowed — helper already logs + Sentry-captures */
+  })
+
+  // Phase 9A — best-effort audit row. Captures the tour
+  // create with the slim allowlisted fields the
+  // EnterpriseAuditEventsCard wants to surface.
+  void recordAuditEvent({
+    venueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/tours',
+    action: 'tour_create',
+    targetTable: 'tours',
+    targetId: tour.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    before: null,
+    after: {
+      lead_id: tour.lead_id,
+      scheduled_at: tour.scheduled_at,
+      duration_minutes: tour.duration_minutes,
+      status: 'scheduled',
+    },
   })
 
   return respond(NextResponse.json(data, { status: 201 }))

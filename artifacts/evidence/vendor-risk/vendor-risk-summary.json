@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-05-20T18:29:52.119Z",
+  "disclaimer": "This disclosure is for security review and procurement support. It is not legal advice or a contractual representation. Vendor SOC 2, DPA, SCC, and ISO posture must be verified against the vendor's current evidence before relying on any contractual commitment. Operators MUST review before sending to a buyer.",
+  "counts": {
+    "total": 11,
+    "production": 8,
+    "critical": 4,
+    "manualReviewRequired": 10,
+    "unknownAssurance": 0,
+    "publicDisclosable": 8
+  },
+  "vendorCount": 11,
+  "publicCount": 8
+}

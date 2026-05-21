@@ -122,6 +122,7 @@ export default function DigestSuppressionsCallout() {
 
   async function handleRemove(item: SuppressionItem) {
     if (typeof window === 'undefined') return
+    // UI_INTERACTION_EXEMPT: admin-only digest unsuppression — native confirm is intentional one-shot friction.
     if (!window.confirm(CONFIRM_COPY)) return
 
     setRowState((prev) => ({
@@ -175,6 +176,7 @@ export default function DigestSuppressionsCallout() {
 
   async function handleRemoveAll() {
     if (typeof window === 'undefined') return
+    // UI_INTERACTION_EXEMPT: admin-only bulk digest unsuppression — native confirm is intentional friction.
     if (!window.confirm(CONFIRM_BULK_COPY)) return
     setBulkState({ removing: true, error: null })
     try {

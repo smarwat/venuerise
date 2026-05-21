@@ -5,6 +5,8 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 import { z } from 'zod'
 
 /**
@@ -85,6 +87,31 @@ export async function POST(request: NextRequest) {
       },
       'admin.test_send.completed'
     )
+
+    // Phase 9B — enterprise audit. Closed-loop test send (caller
+    // → caller's own email only). The body text is NOT echoed
+    // into the audit row — it can include arbitrary operator-
+    // supplied content. We record what matters: delivery
+    // outcome, provider, the outbound_messages row id (operator
+    // can pivot from there if they need contents).
+    void recordAuditEvent({
+      venueId,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/admin/test-send',
+      action: AUDIT_ACTIONS.ADMIN_TEST_SEND,
+      targetTable: 'outbound_messages',
+      targetId: result.outboundMessageId ?? null,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      metadata: {
+        delivered: result.delivered,
+        provider: result.provider,
+        custom_subject: typeof parsed.data.subject === 'string',
+        custom_text: typeof parsed.data.text === 'string',
+      },
+    })
 
     return respond(NextResponse.json({
       success: true,

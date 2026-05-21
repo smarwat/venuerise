@@ -11,6 +11,8 @@ import {
 } from '@/lib/auth/tenant-access'
 import { ADMIN_ROLES, VENUE_ROLES } from '@/lib/auth/roles'
 import { removeMember, updateMemberRole, TeamError } from '@/lib/team/team-service'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 import { z } from 'zod'
 
 const UpdateMemberRoleSchema = z.object({
@@ -55,6 +57,24 @@ export async function DELETE(
       targetUserId,
       supabase,
       requestId,
+    })
+    // Phase 9B — enterprise audit. RBAC removals are
+    // security-relevant; this row is the canonical "operator X
+    // removed user Y from venue Z" forensic record. The team
+    // service refuses to remove the last owner, so a successful
+    // response here means the membership row really came out.
+    void recordAuditEvent({
+      venueId: venue.venueId,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/team/members/[userId]',
+      action: AUDIT_ACTIONS.TEAM_MEMBER_REMOVE,
+      targetTable: 'venue_members',
+      targetId: targetUserId,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      metadata: { self_removal: targetUserId === user.id },
     })
     return respond(NextResponse.json({ success: true }))
   } catch (err) {
@@ -133,6 +153,27 @@ export async function PATCH(
       newRole: parsed.data.role,
       supabase,
       requestId,
+    })
+    // Phase 9B — enterprise audit. Role changes are
+    // security-relevant. The helper refuses to demote the last
+    // owner; on success the returned `updated` row reflects the
+    // new role. We deliberately skip a pre-read of the previous
+    // role to keep this a single round-trip — the audit row
+    // captures the operator-supplied target role + actor + venue,
+    // which is enough to reconstruct "who promoted/demoted whom."
+    void recordAuditEvent({
+      venueId: venue.venueId,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/team/members/[userId]',
+      action: AUDIT_ACTIONS.TEAM_MEMBER_ROLE_UPDATE,
+      targetTable: 'venue_members',
+      targetId: targetUserId,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      after: { role: parsed.data.role },
+      metadata: { self_role_change: targetUserId === user.id },
     })
     return respond(NextResponse.json({ success: true, member: updated }))
   } catch (err) {

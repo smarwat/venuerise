@@ -19,6 +19,23 @@ import {
 import { log } from '@/lib/log'
 import { captureJobError } from '@/lib/observability/sentry'
 import { recordDigestAuditEvent } from '@/lib/billing/digest-audit-events'
+import {
+  composeRevenueOsDigestSummary,
+  summaryHasActionableContent,
+  type RevenueOsDigestSummary,
+  type RevenueOsDigestLeadSlice,
+} from '@/lib/revenue-os/digest-summary'
+import { parseRevenueOsSettings } from '@/lib/revenue-os/settings'
+import {
+  isLostReason,
+  LOST_REASON_LABEL,
+  type LostReason,
+} from '@/lib/revenue-os/reactivation'
+import type {
+  LeakageInboundActivity,
+  LeakageOutboundActivity,
+  LeakageTour,
+} from '@/lib/revenue-os/leakage'
 
 // Phase 8S — once-per-process guard for the "DIGEST_UNSUBSCRIBE_SECRET
 // missing" warn. Same pattern as the Phase 8K tour-action secret check
@@ -396,6 +413,16 @@ interface DigestBodyArgs {
    * this field existed.
    */
   sendKind?: DigestSendKind
+  /**
+   * Phase 8AU — Revenue OS digest summary. Optional for back-compat
+   * with legacy callers (tests, ad-hoc reruns). When present, the
+   * body builders lead with the Revenue OS sections — speed-to-lead,
+   * follow-up recovery, tour booking, leakage snapshot — and demote
+   * the operator activity log to a "log" section lower in the email.
+   * When absent, the builders render the legacy
+   * tour_status_events-only content.
+   */
+  revenueOs?: RevenueOsDigestSummary | null
 }
 
 function cadenceSentence(
@@ -434,16 +461,117 @@ function cadenceSentence(
 function buildOperatorDigestText(args: DigestBodyArgs): string {
   const venueLabel = args.venueName?.trim() || `Venue ${args.venueId.slice(0, 8)}`
   const settingsUrl = `${args.appUrl}/dashboard/settings/billing`
+  const dashboardUrl = `${args.appUrl}/dashboard`
+  const recoveryUrl = `${args.appUrl}/dashboard/leads?leakage=follow_up_recovery`
+  const tourBookingUrl = `${args.appUrl}/dashboard/leads?leakage=tour_booking`
   const sendKind: DigestSendKind = args.sendKind ?? 'cron'
   const includeResubscribe = sendKind !== 'cron' && Boolean(args.resubscribeUrl)
+  const summary = args.revenueOs ?? null
 
   const unsubBlock = args.unsubscribeUrl
     ? `\nNo longer want these summaries? Unsubscribe:\n${args.unsubscribeUrl}\n`
     : ''
   const resubBlock = includeResubscribe
-    ? `\nRe-enable daily digest:\n${args.resubscribeUrl}\n`
+    ? `\nRe-enable Revenue OS digest:\n${args.resubscribeUrl}\n`
     : ''
 
+  // Phase 8AU — the new Revenue OS-first body. When the caller
+  // supplies a `revenueOs` summary (cron, preview, manual all do as
+  // of Phase 8AU), we lead with revenue language. The legacy
+  // tour-activity-only body remains the fallback for any caller that
+  // hasn't been upgraded (mostly unit tests).
+  if (summary) {
+    const opening =
+      summary.leakage.totalAttentionItems > 0
+        ? `${summary.leakage.totalAttentionItems} revenue opportunit${summary.leakage.totalAttentionItems === 1 ? 'y' : 'ies'} need${summary.leakage.totalAttentionItems === 1 ? 's' : ''} attention today.`
+        : 'No urgent leakage detected today. Keep response speed tight.'
+    const topRisk = summary.leakage.topPriorityLabel
+      ? `Top risk: ${summary.leakage.topPriorityLabel}.\n`
+      : ''
+
+    const speed = summary.speedToLead
+    const speedBlock = [
+      `SPEED-TO-LEAD (last 7 days)`,
+      `Median first reply: ${
+        speed.medianMinutesToFirstReply === null
+          ? '—'
+          : `${speed.medianMinutesToFirstReply} min`
+      }`,
+      `SLA hit rate: ${
+        speed.metRate === null ? '—' : `${Math.round(speed.metRate * 100)}%`
+      }`,
+      `${speed.pendingOverdue} lead${speed.pendingOverdue === 1 ? '' : 's'} overdue for first reply`,
+      speed.totalMeasured > 0
+        ? `Leads measured: ${speed.totalMeasured}`
+        : null,
+    ]
+      .filter((s): s is string => s !== null)
+      .join('\n')
+
+    const recovery = summary.recovery
+    const recoveryHeader = `FOLLOW-UP RECOVERY\nStalled leads: ${recovery.stalledLeads} (${recovery.highFitStalled} high-fit)`
+    const recoveryRows =
+      recovery.topLeads.length > 0
+        ? `\nTop stalled leads:\n${recovery.topLeads
+            .map(
+              (r) =>
+                `  - ${r.name} · ${r.lead_score ?? '—'} score · ${r.suggested_action_title}`
+            )
+            .join('\n')}`
+        : `\n(Nobody stalled — keep nurturing.)`
+
+    const tour = summary.tourBooking
+    const tourHeader = `TOUR BOOKING\nQualified leads without tours: ${tour.qualifiedNoTour}\nUnconfirmed tours: ${tour.unconfirmedTours}\nTours today: ${tour.toursToday}`
+    const tourRows =
+      tour.topUnconfirmed.length > 0
+        ? `\nNext unconfirmed tours:\n${tour.topUnconfirmed
+            .map(
+              (t) =>
+                `  - ${t.name}${t.scheduled_at ? ` · ${formatScheduledLine(t.scheduled_at)}` : ''}`
+            )
+            .join('\n')}`
+        : ''
+
+    // Phase 8BD — Reactivation candidates this week. Counts + top
+    // 3 lost leads. Operator-supplied reasons only; no autonomous
+    // outreach (the body explicitly says so via the section copy).
+    const react = summary.reactivation
+    const reactivationBlock =
+      react.candidateCount > 0
+        ? `REACTIVATION CANDIDATES THIS WEEK\nCandidates: ${react.candidateCount} (${react.strongCount} strong)\nTop leads:\n${react.topLeads
+            .map((r) => {
+              const reasonLabel = r.reason ? LOST_REASON_LABEL[r.reason] : 'No reason recorded'
+              return `  - ${r.name} · ${reasonLabel}`
+            })
+            .join('\n')}\nOpen the queue: ${args.appUrl}/dashboard/leads?leakage=reactivation`
+        : `REACTIVATION CANDIDATES THIS WEEK\n(No reactivation candidates this week — nothing cooled long enough yet.)`
+
+    const activityHeader = `OPERATOR ACTIVITY LOG (24h)`
+    const activityBlock =
+      args.agg.total === 0
+        ? `${activityHeader}\n(No tour status events in the last 24h.)`
+        : `${activityHeader}\nTotal events: ${args.agg.total}\n\nBy action:\n${formatCountsBlock(args.agg.byAction)}\n\nBy actor:\n${formatCountsBlock(args.agg.byActor)}`
+
+    return (
+      `Hi there,\n\n` +
+      `Here's where your venue may be leaking revenue and where the team should focus next.\n\n` +
+      `Venue: ${venueLabel}\n\n` +
+      `REVENUE LEAKAGE SNAPSHOT\n${opening}\n${topRisk}\n` +
+      `${speedBlock}\n\n` +
+      `${recoveryHeader}${recoveryRows}\n\n` +
+      `${tourHeader}${tourRows}\n\n` +
+      `${reactivationBlock}\n\n` +
+      `${activityBlock}\n\n` +
+      `OPEN IN THE DASHBOARD\nRevenue OS overview: ${dashboardUrl}\nRecovery queue: ${recoveryUrl}\nTour Booking queue: ${tourBookingUrl}\nReactivation queue: ${args.appUrl}/dashboard/leads?leakage=reactivation\nFull audit feed (admins only): ${settingsUrl}\n` +
+      `\nManage your Revenue OS digest preferences from Billing Settings:\n${settingsUrl}\n` +
+      unsubBlock +
+      resubBlock +
+      `\n${cadenceSentence(args.cadence, args.weeklyDay)}` +
+      `\nReply to this email if you'd like us to dial the digest cadence or scope.`
+    )
+  }
+
+  // Legacy fallback (no Revenue OS summary supplied).
   return (
     `Hi there,\n\n` +
     `Here's your VenueRise tour activity for the last 24 hours.\n\n` +
@@ -458,6 +586,26 @@ function buildOperatorDigestText(args: DigestBodyArgs): string {
     `\n${cadenceSentence(args.cadence, args.weeklyDay)}` +
     `\nReply to this email if you'd like us to dial the digest cadence or scope.`
   )
+}
+
+/**
+ * Phase 8AU — format a UTC-ish scheduled timestamp into a compact
+ * "Mon, Mar 4 · 2:30 PM" string suitable for plaintext digest rows.
+ * Falls back to the raw ISO when the input doesn't parse.
+ */
+function formatScheduledLine(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const weekday = d.toLocaleDateString(undefined, { weekday: 'short' })
+  const date = d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+  const time = d.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  return `${weekday}, ${date} · ${time}`
 }
 
 // Backward-compat alias for any existing caller. Phase 8S renamed to
@@ -507,9 +655,13 @@ function htmlCountsRows(counts: Record<string, number>): string {
 export function buildOperatorDigestHtml(args: DigestBodyArgs): string {
   const venueLabel = args.venueName?.trim() || `Venue ${args.venueId.slice(0, 8)}`
   const settingsUrl = `${args.appUrl}/dashboard/settings/billing`
+  const dashboardUrl = `${args.appUrl}/dashboard`
+  const recoveryUrl = `${args.appUrl}/dashboard/leads?leakage=follow_up_recovery`
+  const tourBookingUrl = `${args.appUrl}/dashboard/leads?leakage=tour_booking`
   const dateStr = new Date().toUTCString().replace(/ \d{2}:\d{2}:\d{2} GMT$/, ' UTC')
   const sendKind: DigestSendKind = args.sendKind ?? 'cron'
   const includeResubscribe = sendKind !== 'cron' && Boolean(args.resubscribeUrl)
+  const summary = args.revenueOs ?? null
 
   // Phase 8X — explicit "Manage your digest preferences" pointer in the
   // footer. Mirrors the plaintext block; same href as the "View full
@@ -530,25 +682,72 @@ export function buildOperatorDigestHtml(args: DigestBodyArgs): string {
        </p>`
     : ''
 
+  // Phase 8AU — Revenue OS-first inner body. Falls back to the
+  // legacy tour-activity block when no `summary` is supplied.
+  const inner = summary
+    ? renderRevenueOsInnerHtml({
+        summary,
+        venueLabel,
+        dateStr,
+        agg: args.agg,
+        settingsUrl,
+        dashboardUrl,
+        recoveryUrl,
+        tourBookingUrl,
+      })
+    : renderLegacyInnerHtml({ venueLabel, dateStr, agg: args.agg, settingsUrl })
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>VenueRise daily activity summary</title>
+<title>${summary ? 'Your VenueRise Revenue OS summary' : 'VenueRise daily activity summary'}</title>
 </head>
 <body style="margin:0;padding:0;background:#F4F6FB;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0F172A;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6FB;padding:32px 16px;">
   <tr>
     <td align="center">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:20px;box-shadow:0 4px 14px rgba(15,23,42,0.06);">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:20px;box-shadow:0 4px 14px rgba(15,23,42,0.06);">
+        ${inner}
         <tr>
+          <td style="padding:0 28px 24px 28px;">
+            <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#475569;">
+              ${escapeHtml(cadenceSentence(args.cadence, args.weeklyDay))}
+            </p>
+            <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#64748B;">
+              Reply to this email if you'd like us to dial the digest cadence or scope.
+            </p>
+            ${settingsLine}
+            ${unsubLine}
+            ${resubLine}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>`
+}
+
+/**
+ * Phase 8AU — render the legacy "tour activity only" inner table
+ * body. Used as a fallback when no Revenue OS summary is supplied.
+ */
+function renderLegacyInnerHtml(args: {
+  venueLabel: string
+  dateStr: string
+  agg: VenueAggregate
+  settingsUrl: string
+}): string {
+  return `<tr>
           <td style="padding:28px 28px 8px 28px;">
             <p style="margin:0 0 4px 0;font-size:13px;color:#64748B;">Hi there,</p>
             <h1 style="margin:0 0 12px 0;font-size:20px;line-height:1.3;font-weight:600;color:#0F172A;">VenueRise daily activity summary</h1>
             <p style="margin:0 0 16px 0;font-size:13px;line-height:1.55;color:#475569;">
-              Tour activity for <strong style="color:#0F172A;">${escapeHtml(venueLabel)}</strong> in the last 24 hours.
-              <span style="color:#94A3B8;">${escapeHtml(dateStr)}</span>
+              Tour activity for <strong style="color:#0F172A;">${escapeHtml(args.venueLabel)}</strong> in the last 24 hours.
+              <span style="color:#94A3B8;">${escapeHtml(args.dateStr)}</span>
             </p>
             <div style="display:inline-block;background:#EFF6FF;border:1px solid #BFDBFE;color:#1D4ED8;font-size:13px;font-weight:600;padding:6px 12px;border-radius:9999px;margin-bottom:20px;">
               ${args.agg.total} event${args.agg.total === 1 ? '' : 's'}
@@ -573,29 +772,204 @@ export function buildOperatorDigestHtml(args: DigestBodyArgs): string {
         </tr>
         <tr>
           <td style="padding:8px 28px 20px 28px;text-align:center;">
-            <a href="${escapeHtml(settingsUrl)}" style="display:inline-block;background:#0F172A;color:#FFFFFF;text-decoration:none;font-size:13px;font-weight:600;padding:10px 18px;border-radius:10px;box-shadow:0 2px 6px rgba(15,23,42,0.18);">View full audit</a>
+            <a href="${escapeHtml(args.settingsUrl)}" style="display:inline-block;background:#0F172A;color:#FFFFFF;text-decoration:none;font-size:13px;font-weight:600;padding:10px 18px;border-radius:10px;box-shadow:0 2px 6px rgba(15,23,42,0.18);">View full audit</a>
+          </td>
+        </tr>`
+}
+
+/**
+ * Phase 8AU — render the Revenue OS-first inner table body. Owner-
+ * readable, premium-feel, Outlook-safe inline-CSS only. Sections,
+ * in order:
+ *   1. Headline + opening
+ *   2. Revenue leakage snapshot (3 metric tiles)
+ *   3. Speed-to-Lead numbers
+ *   4. Follow-up Recovery top stalled leads
+ *   5. Tour Booking + next unconfirmed tours
+ *   6. CTAs (dashboard / recovery / tour-booking)
+ *   7. Operator activity log (demoted; smaller font, slate background)
+ */
+function renderRevenueOsInnerHtml(args: {
+  summary: RevenueOsDigestSummary
+  venueLabel: string
+  dateStr: string
+  agg: VenueAggregate
+  settingsUrl: string
+  dashboardUrl: string
+  recoveryUrl: string
+  tourBookingUrl: string
+}): string {
+  const { summary } = args
+  const opening =
+    summary.leakage.totalAttentionItems > 0
+      ? `<strong style="color:#0F172A;">${summary.leakage.totalAttentionItems} revenue opportunit${summary.leakage.totalAttentionItems === 1 ? 'y' : 'ies'}</strong> need${summary.leakage.totalAttentionItems === 1 ? 's' : ''} attention.`
+      : `<strong style="color:#0F172A;">No urgent leakage</strong> detected today. Keep response speed tight.`
+  const topRiskLine = summary.leakage.topPriorityLabel
+    ? `<p style="margin:6px 0 0 0;font-size:12.5px;color:#475569;line-height:1.55;">Top risk: <strong style="color:#0F172A;">${escapeHtml(summary.leakage.topPriorityLabel)}</strong>.</p>`
+    : ''
+
+  // 3 metric tiles for the leakage snapshot row.
+  const speed = summary.speedToLead
+  const speedMedianCell =
+    speed.medianMinutesToFirstReply === null
+      ? '—'
+      : `${speed.medianMinutesToFirstReply}m`
+  const speedRateCell =
+    speed.metRate === null ? '—' : `${Math.round(speed.metRate * 100)}%`
+  const tilesRow = `
+        <tr>
+          <td style="padding:0 28px 18px 28px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                ${metricTile('Median first reply', speedMedianCell, `${speed.totalMeasured} leads measured`)}
+                ${metricTile('SLA hit rate', speedRateCell, `${speed.met} met · ${speed.missed} missed`)}
+                ${metricTile('Overdue replies', String(speed.pendingOverdue), 'Leads past SLA')}
+              </tr>
+            </table>
+          </td>
+        </tr>`
+
+  // Recovery section — header + top leads or "calm" copy.
+  const recovery = summary.recovery
+  const recoveryRows =
+    recovery.topLeads.length > 0
+      ? recovery.topLeads
+          .map(
+            (r) => `<tr>
+                <td style="padding:8px 14px;border-bottom:1px solid #F1F5F9;font-size:12.5px;color:#0F172A;">
+                  <strong>${escapeHtml(r.name)}</strong>
+                  ${r.lead_score !== null ? `<span style="color:#94A3B8;font-weight:400;"> · ${r.lead_score} score</span>` : ''}
+                  <span style="color:#1D4ED8;font-weight:500;display:block;font-size:11.5px;margin-top:2px;">${escapeHtml(r.suggested_action_title)}</span>
+                </td>
+              </tr>`
+          )
+          .join('')
+      : `<tr><td style="padding:10px 14px;font-size:12px;color:#94A3B8;">Nobody stalled — keep nurturing the pipeline.</td></tr>`
+  const recoverySection = `
+        <tr>
+          <td style="padding:0 28px 16px 28px;">
+            <p style="margin:0 0 6px 0;font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Follow-up recovery</p>
+            <p style="margin:0 0 8px 0;font-size:12.5px;color:#475569;">
+              ${recovery.stalledLeads} stalled lead${recovery.stalledLeads === 1 ? '' : 's'} · ${recovery.highFitStalled} high-fit
+            </p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFFBEB;border:1px solid #FCD9A1;border-radius:12px;">
+              ${recoveryRows}
+            </table>
+          </td>
+        </tr>`
+
+  // Tour Booking section.
+  const tour = summary.tourBooking
+  const tourRows =
+    tour.topUnconfirmed.length > 0
+      ? tour.topUnconfirmed
+          .map(
+            (t) => `<tr>
+                <td style="padding:8px 14px;border-bottom:1px solid #F1F5F9;font-size:12.5px;color:#0F172A;">
+                  <strong>${escapeHtml(t.name)}</strong>
+                  ${t.lead_score !== null ? `<span style="color:#94A3B8;font-weight:400;"> · ${t.lead_score} score</span>` : ''}
+                  ${t.scheduled_at ? `<span style="color:#1D4ED8;font-weight:500;display:block;font-size:11.5px;margin-top:2px;">${escapeHtml(formatScheduledLine(t.scheduled_at))}</span>` : ''}
+                </td>
+              </tr>`
+          )
+          .join('')
+      : `<tr><td style="padding:10px 14px;font-size:12px;color:#94A3B8;">No tours waiting on a confirm.</td></tr>`
+  const tourSection = `
+        <tr>
+          <td style="padding:0 28px 16px 28px;">
+            <p style="margin:0 0 6px 0;font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Tour booking</p>
+            <p style="margin:0 0 8px 0;font-size:12.5px;color:#475569;">
+              ${tour.qualifiedNoTour} qualified · no tour · ${tour.unconfirmedTours} unconfirmed · ${tour.toursToday} today
+            </p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;">
+              ${tourRows}
+            </table>
+          </td>
+        </tr>`
+
+  // CTA row — three soft buttons. The first is the primary navy.
+  const ctaRow = `
+        <tr>
+          <td style="padding:8px 28px 20px 28px;text-align:center;">
+            <a href="${escapeHtml(args.dashboardUrl)}" style="display:inline-block;background:#0F172A;color:#FFFFFF;text-decoration:none;font-size:13px;font-weight:600;padding:10px 18px;border-radius:10px;box-shadow:0 2px 6px rgba(15,23,42,0.18);margin:0 4px 6px 4px;">Open Revenue OS dashboard</a>
+            <br/>
+            <a href="${escapeHtml(args.recoveryUrl)}" style="display:inline-block;color:#1D4ED8;text-decoration:none;font-size:12.5px;font-weight:600;padding:6px 10px;margin:4px 4px 0 4px;">Review leakage queue →</a>
+            <a href="${escapeHtml(args.tourBookingUrl)}" style="display:inline-block;color:#1D4ED8;text-decoration:none;font-size:12.5px;font-weight:600;padding:6px 10px;margin:4px 4px 0 4px;">Review tour booking queue →</a>
+          </td>
+        </tr>`
+
+  // Operator activity log — demoted lower, smaller. Same content as
+  // the legacy block but in a quieter container so the owner reads it
+  // as an audit footnote rather than the headline.
+  const activityLog =
+    args.agg.total === 0
+      ? `<p style="margin:0 0 6px 0;font-size:12px;color:#94A3B8;">No tour status events in the last 24h.</p>`
+      : `
+              <p style="margin:0 0 6px 0;font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">By action</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;margin-bottom:10px;">
+                ${htmlCountsRows(args.agg.byAction)}
+              </table>
+              <p style="margin:0 0 6px 0;font-size:11px;color:#94A3B8;text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">By actor</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;">
+                ${htmlCountsRows(args.agg.byActor)}
+              </table>`
+  const activitySection = `
+        <tr>
+          <td style="padding:0 28px 24px 28px;">
+            <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;padding:16px;">
+              <p style="margin:0 0 4px 0;font-size:11px;color:#475569;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Operator activity log (24h)</p>
+              <p style="margin:0 0 10px 0;font-size:11.5px;color:#94A3B8;">Lower-priority audit context. The full feed lives in Billing Settings.</p>
+              ${activityLog}
+            </div>
+          </td>
+        </tr>`
+
+  // Headline.
+  return `<tr>
+          <td style="padding:28px 28px 8px 28px;">
+            <p style="margin:0 0 4px 0;font-size:13px;color:#64748B;">Hi there,</p>
+            <h1 style="margin:0 0 10px 0;font-size:22px;line-height:1.25;font-weight:600;color:#0F172A;">Your VenueRise Revenue OS summary</h1>
+            <p style="margin:0 0 14px 0;font-size:13px;line-height:1.55;color:#475569;">
+              Here&rsquo;s where <strong style="color:#0F172A;">${escapeHtml(args.venueLabel)}</strong> may be leaking revenue and where the team should focus next.
+              <span style="color:#94A3B8;">${escapeHtml(args.dateStr)}</span>
+            </p>
           </td>
         </tr>
         <tr>
-          <td style="padding:0 28px 24px 28px;">
-            <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#475569;">
-              ${escapeHtml(cadenceSentence(args.cadence, args.weeklyDay))}
-            </p>
-            <p style="margin:0 0 8px 0;font-size:12px;line-height:1.5;color:#64748B;">
-              Reply to this email if you'd like us to dial the digest cadence or scope.
-            </p>
-            ${settingsLine}
-            ${unsubLine}
-            ${resubLine}
+          <td style="padding:0 28px 16px 28px;">
+            <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:14px;padding:14px 16px;">
+              <p style="margin:0;font-size:13px;line-height:1.55;color:#0F172A;">${opening}</p>
+              ${topRiskLine}
+            </div>
           </td>
         </tr>
-      </table>
-    </td>
-  </tr>
-</table>
-</body>
-</html>`
+        ${tilesRow}
+        ${recoverySection}
+        ${tourSection}
+        ${ctaRow}
+        ${activitySection}`
 }
+
+/**
+ * Phase 8AU — small metric tile used by the Revenue OS snapshot row.
+ * Inline + table-based so Outlook still renders it cleanly.
+ */
+function metricTile(label: string, value: string, hint: string): string {
+  return `<td style="width:33.33%;padding:0 4px;vertical-align:top;">
+                  <div style="background:#FFFFFF;border:1px solid #E6E8EF;border-radius:12px;padding:10px 12px;">
+                    <p style="margin:0 0 4px 0;font-size:10.5px;color:#64748B;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">${escapeHtml(label)}</p>
+                    <p style="margin:0 0 4px 0;font-size:20px;color:#0F172A;font-weight:600;line-height:1;">${escapeHtml(value)}</p>
+                    <p style="margin:0;font-size:10.5px;color:#94A3B8;line-height:1.4;">${escapeHtml(hint)}</p>
+                  </div>
+                </td>`
+}
+
+// Phase 8AU — Revenue OS-aware aliases. Same body shape as the
+// upgraded `buildOperatorDigestText/Html`; named for the new content
+// so call sites can self-document by import name. Callers that want
+// the legacy fallback can simply omit the `revenueOs` field on args.
+export const buildRevenueOsDigestText = buildOperatorDigestText
+export const buildRevenueOsDigestHtml = buildOperatorDigestHtml
 
 // ---------------------------------------------------------------------------
 // Phase 8S — opt-out check + unsubscribe URL build
@@ -727,6 +1101,222 @@ function warnSecretMissingOnce(): void {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Phase 8AU — shared Revenue OS summary fetcher.
+//
+// Composes the lead / message / tour / settings slice the digest body
+// needs into one Supabase round-trip block + hands it to the pure
+// `composeRevenueOsDigestSummary` helper. Used by the cron loop +
+// preview + manual-send routes so all three render the same content.
+//
+// Best-effort: a probe failure returns `null` so the email still goes
+// out (just without the Revenue OS sections — the existing operator
+// activity body still renders).
+// ---------------------------------------------------------------------------
+export async function fetchRevenueOsDigestSummary(
+  supabase: ReturnType<typeof createServiceClient>,
+  venueId: string,
+  options?: { now?: Date; speedToLeadWindowDays?: number }
+): Promise<RevenueOsDigestSummary | null> {
+  try {
+    // 1. Venue metadata for settings parsing.
+    const { data: venueRow } = await supabase
+      .from('venues')
+      .select('metadata')
+      .eq('id', venueId)
+      .maybeSingle()
+    const settings = parseRevenueOsSettings(
+      (venueRow as { metadata?: unknown } | null)?.metadata
+    )
+
+    // 2. In-flight leads + name slice. We scope to non-lost leads so
+    //    the helpers see the whole pipeline (qualified, booked,
+    //    etc.) — the speed-to-lead rollup also wants very-recent
+    //    leads, and including booked-or-later doesn't hurt.
+    const { data: leadRows, error: leadsErr } = await supabase
+      .from('leads')
+      .select('id, name, stage, lead_score, created_at, updated_at')
+      .eq('venue_id', venueId)
+      .not('stage', 'in', '(lost)')
+      .order('created_at', { ascending: false })
+      .limit(500)
+    if (leadsErr) return null
+    const rawLeads = (leadRows ?? []) as Array<{
+      id: string
+      name: string
+      stage: string
+      lead_score: number
+      created_at: string
+      updated_at: string
+    }>
+    const leads: RevenueOsDigestLeadSlice[] = rawLeads.map((l) => ({
+      id: l.id,
+      name: l.name,
+      stage: l.stage,
+      lead_score: l.lead_score,
+      created_at: l.created_at,
+      updated_at: l.updated_at,
+    }))
+
+    // 3. Message activity reduced to first-outbound / last-inbound.
+    const inboundMap = new Map<string, string | null>()
+    const outboundMap = new Map<string, string | null>()
+    if (leads.length > 0) {
+      const { data: msgRows } = await supabase
+        .from('messages')
+        .select('lead_id, role, created_at')
+        .eq('venue_id', venueId)
+        .in(
+          'lead_id',
+          leads.map((l) => l.id)
+        )
+        .order('created_at', { ascending: true })
+        .limit(5000)
+      for (const m of (msgRows as Array<{
+        lead_id: string
+        role: string
+        created_at: string
+      }> | null) ?? []) {
+        if (m.role === 'ai' || m.role === 'human') {
+          if (!outboundMap.has(m.lead_id)) {
+            outboundMap.set(m.lead_id, m.created_at)
+          }
+        } else if (m.role === 'lead') {
+          inboundMap.set(m.lead_id, m.created_at)
+        }
+      }
+    }
+    const inbound: LeakageInboundActivity[] = leads.map((l) => ({
+      lead_id: l.id,
+      last_inbound_at: inboundMap.get(l.id) ?? null,
+    }))
+    const outbound: LeakageOutboundActivity[] = leads.map((l) => ({
+      lead_id: l.id,
+      first_outbound_at: outboundMap.get(l.id) ?? null,
+    }))
+
+    // 4. Tours scoped to the venue.
+    const { data: tourRows } = await supabase
+      .from('tours')
+      .select('id, lead_id, status, scheduled_at')
+      .eq('venue_id', venueId)
+      .limit(500)
+    const tours = (tourRows ?? []) as LeakageTour[]
+
+    // 5. Phase 8BD — lost leads + per-lead last lead-role message.
+    // We pull these as a SEPARATE batch from the in-flight slice
+    // (above) because the reactivation helper has its own gates
+    // (cooling window, event-date guard, operator-supplied reason)
+    // that the recovery + tour-booking helpers don't share. Bounded
+    // by 500 to keep the job fast on long-tail venues.
+    let lostLeadsForDigest: Array<{
+      id: string
+      name: string
+      stage: string
+      lead_score: number
+      event_date: string | null
+      updated_at: string
+      lost_reason: LostReason | null
+    }> = []
+    const lostLeadLastInbound: Record<string, string | null> = {}
+    try {
+      const { data: lostRows } = await supabase
+        .from('leads')
+        .select(
+          'id, name, stage, lead_score, event_date, updated_at, metadata'
+        )
+        .eq('venue_id', venueId)
+        .eq('stage', 'lost')
+        .order('updated_at', { ascending: false })
+        .limit(500)
+      const lost = ((lostRows ?? []) as Array<{
+        id: string
+        name: string
+        stage: string
+        lead_score: number
+        event_date: string | null
+        updated_at: string
+        metadata: Record<string, unknown> | null
+      }>)
+      lostLeadsForDigest = lost.map((l) => {
+        const block =
+          l.metadata && typeof l.metadata === 'object'
+            ? (l.metadata as { lost_reason?: unknown }).lost_reason
+            : undefined
+        const reason =
+          block &&
+          typeof block === 'object' &&
+          isLostReason((block as { reason?: unknown }).reason)
+            ? ((block as { reason: LostReason }).reason)
+            : null
+        return {
+          id: l.id,
+          name: l.name,
+          stage: l.stage,
+          lead_score: l.lead_score,
+          event_date: l.event_date,
+          updated_at: l.updated_at,
+          lost_reason: reason,
+        }
+      })
+      if (lostLeadsForDigest.length > 0) {
+        const { data: lostMsgRows } = await supabase
+          .from('messages')
+          .select('lead_id, created_at')
+          .eq('venue_id', venueId)
+          .eq('role', 'lead')
+          .in(
+            'lead_id',
+            lostLeadsForDigest.map((l) => l.id)
+          )
+          .order('created_at', { ascending: false })
+        for (const m of (lostMsgRows as Array<{
+          lead_id: string
+          created_at: string
+        }> | null) ?? []) {
+          if (!(m.lead_id in lostLeadLastInbound)) {
+            lostLeadLastInbound[m.lead_id] = m.created_at
+          }
+        }
+        for (const l of lostLeadsForDigest) {
+          if (!(l.id in lostLeadLastInbound)) {
+            lostLeadLastInbound[l.id] = null
+          }
+        }
+      }
+    } catch {
+      // Best-effort — a lost-lead probe failure should not break
+      // the rest of the digest. We just ship reactivation as
+      // empty.
+    }
+
+    return composeRevenueOsDigestSummary({
+      leads,
+      inbound,
+      outbound,
+      tours,
+      settings,
+      now: options?.now,
+      speedToLeadWindowDays: options?.speedToLeadWindowDays,
+      lostLeads: lostLeadsForDigest,
+      lostLeadLastInbound,
+    })
+  } catch (err) {
+    // Defensive: a single probe error must not break the digest.
+    log.warn(
+      { err, venueId },
+      'jobs.operator_activity_digest.revenue_os_fetch_failed'
+    )
+    return null
+  }
+}
+
+// Silence the unused-import warning when no caller reaches the
+// composer's exported `summaryHasActionableContent` from here. The
+// helper is re-exported via the index in case future digest content
+// branches want to short-circuit when there's nothing to surface.
+void summaryHasActionableContent
+
 async function runDigestScan(): Promise<
   RunSummary | { skipped: true; reason: 'disabled' }
 > {
@@ -838,6 +1428,15 @@ async function runDigestScan(): Promise<
     const subscriptionMetadata =
       (subRaw as { metadata?: Record<string, unknown> | null } | null)?.metadata ?? null
     const unsubscribeUrl = tryBuildUnsubscribeUrl(venueId)
+    // Phase 8AU — compute the Revenue OS summary ONCE per venue.
+    // Same summary feeds every recipient's email so the owner +
+    // admin pair sees consistent numbers, and so we don't fan out
+    // expensive joins per-recipient.
+    const revenueOsSummary = await fetchRevenueOsDigestSummary(
+      supabase,
+      venueId,
+      { now: new Date() }
+    )
     const recipients = await findDigestRecipients(supabase, venueId)
     if (recipients.length === 0) {
       venueLog.warn({}, 'operator_digest.skipped_no_email')
@@ -904,6 +1503,11 @@ async function runDigestScan(): Promise<
         cadence: pref.cadence,
         weeklyDay: pref.weeklyDay,
         sendKind: 'cron',
+        // Phase 8AU — Revenue OS summary computed once per venue
+        // (above the recipient loop). Null when the probe failed;
+        // the body builder falls back to the legacy
+        // tour-activity-only template in that case.
+        revenueOs: revenueOsSummary,
       }
       const text = buildOperatorDigestText(bodyArgs)
       const html = buildOperatorDigestHtml(bodyArgs)
@@ -1040,4 +1644,8 @@ export {
   buildDigestBody,
   buildOperatorDigestText,
   // `buildOperatorDigestHtml` is already exported at its definition site.
+  // Phase 8AU exports:
+  //   - `fetchRevenueOsDigestSummary` already exported at its definition site
+  //   - `buildRevenueOsDigestText` + `buildRevenueOsDigestHtml` already
+  //     exported at their alias definitions (`export const`)
 }

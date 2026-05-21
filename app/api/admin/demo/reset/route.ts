@@ -5,6 +5,8 @@ import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
 import { resetDemoVenue } from '@/lib/demo/demo-seed'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 
 /**
  * POST /api/admin/demo/reset (Phase 8A)
@@ -36,6 +38,24 @@ export async function POST(request: NextRequest) {
   try {
     const result = await resetDemoVenue({ venueId, requestId })
     reqLog.info({ venueId, result }, 'admin.demo.reset.completed')
+    // Phase 9B — enterprise audit. Demo reset is a destructive
+    // op (deletes leads / cascades to conversations + tours +
+    // follow_ups). The helper restricts deletion to rows tagged
+    // demo+ / agent=demo-seed; the audit row records counts so a
+    // reviewer can spot an accidentally over-broad reset.
+    void recordAuditEvent({
+      venueId,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/admin/demo/reset',
+      action: AUDIT_ACTIONS.DEMO_RESET,
+      targetTable: null,
+      targetId: null,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      metadata: { counts: result as unknown as Record<string, unknown> },
+    })
     return respond(NextResponse.json({ success: true, ...result }))
   } catch (err) {
     reqLog.error({ err, venueId }, 'admin.demo.reset.failed')

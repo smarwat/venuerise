@@ -215,6 +215,7 @@ export default function EditTourDrawer({
   async function handleCancelTour() {
     if (!tour) return
     if (
+      // UI_INTERACTION_EXEMPT: admin-only tour cancellation — native confirm is intentional friction.
       !window.confirm(
         `Cancel the tour with ${tour.lead?.name ?? 'this lead'}? They won't be auto-notified.`
       )

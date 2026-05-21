@@ -1,3 +1,10 @@
+// AUDIT_EXEMPT: AI qualification updates lead.lead_score via the
+// agent runner; the same operator-driven mutation path through
+// /api/leads/[id] PATCH is audited (lead_update). Per the Phase
+// 9A rule "don't touch agent prompts / decision logic," this
+// route stays out of `audit_events` — its forensic trail lives
+// in `leads.metadata.qualification_result` + the orchestrator's
+// pino logs. Documented in docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'

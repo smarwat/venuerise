@@ -5,6 +5,11 @@ import WeekTourPanel, {
   type WeekTour,
 } from '@/components/dashboard/inbox/WeekTourPanel'
 import { MessageSquare } from 'lucide-react'
+// Phase 8BE-2 — omnichannel inbox loader join. Pulls per-conversation
+// channel metadata (from external_conversations or messages.metadata
+// fallback) so ConversationList rows can light up the source badge
+// for normalized conversations.
+import { loadInboxChannelMap } from '@/lib/integrations/channels/inbox-channels'
 
 /**
  * Phase 8J — week boundary helper. We always anchor to the local start
@@ -32,7 +37,7 @@ export default async function InboxPage() {
     .order('created_at').limit(1).maybeSingle()
   const venueId = (venueRaw as { id?: string } | null)?.id ?? null
 
-  const conversations = venueId
+  const conversationsRaw = venueId
     ? (await supabase
         .from('conversations')
         .select('*, leads(id, name, email, lead_score)')
@@ -40,6 +45,28 @@ export default async function InboxPage() {
         .order('last_message_at', { ascending: false })
       ).data ?? []
     : []
+
+  // Phase 8BE-2 — join the per-conversation channel posture so
+  // ConversationList can light up the source badge. Legacy
+  // conversations with no channel context fall through to null
+  // and the badge hides gracefully.
+  const channelMap = await loadInboxChannelMap(
+    venueId,
+    (conversationsRaw as Array<{ id: string }>).map((c) => c.id)
+  )
+  const conversations = (conversationsRaw as Array<Record<string, unknown> & { id: string }>).map(
+    (c) => {
+      const meta = channelMap.get(c.id)
+      return {
+        ...c,
+        channel_type: meta?.channelType ?? null,
+        manual_reply_required: meta?.manualReplyRequired ?? false,
+        // Phase 8BG — surface the latest-message parse-review
+        // flag so ConversationList can render the warning dot.
+        parse_needs_review: meta?.parseNeedsReview ?? false,
+      }
+    }
+  ) as unknown as typeof conversationsRaw
 
   // Phase 8J — "This week's tours" panel data. Server-side fetch, narrow
   // SELECT, no fan-out: we deliberately keep this to the index page only
@@ -87,8 +114,16 @@ export default async function InboxPage() {
     }))
 
   return (
+    // Phase 8AK — left-rail orientation flip. ConversationList sits on
+    // the left (matches operator expectations from /dashboard/inbox/[id]);
+    // the empty-state panel + week tour panel occupy the remaining
+    // space. On smaller screens the list takes the full viewport — the
+    // empty-state panel hides until the operator picks a conversation.
     <div className="flex h-[calc(100vh-60px)] min-h-[640px] animate-fade-in bg-[#F4F7FB]">
-      <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6 py-6 overflow-y-auto">
+      <ConversationList
+        conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
+      />
+      <div className="hidden lg:flex flex-1 flex-col items-center justify-center px-6 gap-6 py-6 overflow-y-auto">
         {/* Phase 8J — week-at-a-glance panel. Renders ABOVE the empty
             state so the operator's eye lands on actionable tours first
             and the "select a conversation" prompt fills the remaining
@@ -111,9 +146,6 @@ export default async function InboxPage() {
         </div>
       </div>
 
-      <ConversationList
-        conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
-      />
       {/* Phase 8B — non-rendering client component. Subscribes to
           `public.conversations` postgres_changes filtered by venue_id and
           refreshes the page when a new conversation appears OR an

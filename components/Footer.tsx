@@ -2,11 +2,12 @@ import { ArrowUpRight } from 'lucide-react'
 
 const links = [
   { label: 'Home', href: '#hero' },
-  { label: 'How It Works', href: '#how-it-works' },
-  { label: 'Solutions', href: '#solutions' },
-  { label: 'Why VenueRise', href: '#why' },
-  { label: 'Results', href: '#roi' },
-  { label: 'Book Audit', href: '#audit' },
+  { label: 'Revenue leaks', href: '#leaks' },
+  { label: 'How it works', href: '#how-it-works' },
+  { label: 'Operator control', href: '#why' },
+  { label: 'Pilot', href: '#pilot' },
+  { label: 'FAQ', href: '#faq' },
+  { label: 'Book a demo', href: '/demo' },
 ]
 
 function VenueLogo() {
@@ -34,7 +35,7 @@ export default function Footer() {
               </span>
             </div>
             <p className="text-[14.5px] text-[#475569] max-w-sm leading-[1.6] mb-5">
-              Revenue operations for wedding venues. Respond instantly, follow up relentlessly, recover lost leads.
+              AI Revenue OS for wedding venues. Connects your fragmented inquiry channels and helps your team turn more inquiries into booked tours.
             </p>
             <a
               href="mailto:hello@venuerise.com"
@@ -65,13 +66,13 @@ export default function Footer() {
           <div>
             <p className="text-[11px] font-bold text-[#0A0A1A] uppercase tracking-[0.14em] mb-4">Get Started</p>
             <p className="text-[14px] text-[#475569] mb-4 leading-relaxed">
-              A 30-minute review of your inquiry flow. No obligation.
+              30 minutes. Bring your current setup; we&rsquo;ll walk a Revenue OS demo with you.
             </p>
             <a
-              href="#audit"
+              href="/demo"
               className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#1A6FFF] text-white text-[13px] font-semibold rounded-lg hover:bg-[#1058D6] transition-all duration-200 hover:shadow-[0_6px_20px_rgba(26,111,255,0.3)]"
             >
-              Book Free Audit
+              Book a demo
               <ArrowUpRight className="w-3.5 h-3.5" />
             </a>
           </div>

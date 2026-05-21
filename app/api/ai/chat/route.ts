@@ -1,3 +1,10 @@
+// AUDIT_EXEMPT: AI chat is an agent invocation path that writes
+// `messages` rows the inbox surfaces directly. Per the Phase 9A
+// "don't touch agent prompts / decision logic" rule, this route
+// stays out of `audit_events`; the operator-initiated
+// counterpart (operator sends a message) goes through
+// /api/conversations/[id]/messages and IS audited. Documented in
+// docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { handleIncomingMessage } from '@/lib/agents/orchestrator'

@@ -88,10 +88,10 @@ export default function AuditForm() {
               <CheckCircle2 className="w-7 h-7 text-emerald-600" />
             </div>
             <h3 className="font-display text-[26px] font-semibold text-[#0A0A1A] mb-3 tracking-[-0.01em]">
-              Request received.
+              Application received.
             </h3>
             <p className="text-[#475569] text-[15px] max-w-sm mx-auto leading-relaxed">
-              We'll review your venue and reach out within one business day to schedule your free audit.
+              We&rsquo;ll review your venue and reach out within one business day to walk a Revenue OS demo with you.
             </p>
           </motion.div>
         ) : (
@@ -108,10 +108,10 @@ export default function AuditForm() {
           >
             <div>
               <h3 className="font-display text-[24px] font-semibold text-[#0A0A1A] mb-1.5 tracking-[-0.01em]">
-                Request your free audit
+                Apply for a pilot
               </h3>
               <p className="text-[14px] text-[#64748B] leading-relaxed">
-                A 30-minute review of your current inquiry flow. No commitment, no upsell.
+                30-minute Revenue OS walkthrough with your team. No commitment — fit, scope, and what success looks like first.
               </p>
             </div>
 

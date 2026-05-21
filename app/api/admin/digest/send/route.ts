@@ -8,6 +8,7 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
 import { sendEmail } from '@/lib/integrations/email'
 import {
   aggregateEvents,
@@ -15,6 +16,7 @@ import {
   buildOperatorDigestHtml,
   tryBuildUnsubscribeUrl,
   tryBuildResubscribeUrl,
+  fetchRevenueOsDigestSummary,
 } from '@/lib/jobs/functions/operator-activity-digest'
 import { resolveEffectiveDigestPreference } from '@/lib/billing/operator-digest-preferences'
 
@@ -316,6 +318,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   )
   const unsubscribeUrl = tryBuildUnsubscribeUrl(targetVenueId)
   const resubscribeUrl = tryBuildResubscribeUrl(targetVenueId, targetUserId)
+  // Phase 8AU — manual send shares the Revenue OS body with cron +
+  // preview. Helper resolves to null on probe failure; in that case
+  // the legacy tour-activity body still renders.
+  const revenueOsSummary = await fetchRevenueOsDigestSummary(
+    svc,
+    targetVenueId
+  )
   const bodyArgs = {
     venueName,
     venueId: targetVenueId,
@@ -326,6 +335,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     cadence: pref.cadence,
     weeklyDay: pref.weeklyDay,
     sendKind: 'manual' as const,
+    revenueOs: revenueOsSummary,
   }
   const text = buildOperatorDigestText(bodyArgs)
   const html = buildOperatorDigestHtml(bodyArgs)
@@ -438,6 +448,27 @@ export async function POST(request: NextRequest): Promise<Response> {
   // target. Cross-user manual sends return `sent_to: null` so an admin
   // can't enumerate other admins' email addresses through this surface.
   const sentToEcho = targetUserId === user.id ? targetEmail : null
+
+  void recordAuditEvent({
+    venueId: targetVenueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/digest/send',
+    action: 'digest_manual_send',
+    targetTable: 'venue_member_digest_preferences',
+    targetId: targetUserId,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      cadence: pref.cadence,
+      weekly_day: pref.weeklyDay,
+      event_count: agg.total,
+      send_kind: 'manual',
+      respect_cadence: respectCadence,
+      cross_user: targetUserId !== user.id,
+    },
+  })
 
   return respond(
     NextResponse.json({

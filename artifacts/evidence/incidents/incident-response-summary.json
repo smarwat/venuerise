@@ -1,0 +1,45 @@
+{
+  "generatedAt": "2026-05-20T18:29:52.273Z",
+  "disclaimer": "These targets describe VenueRise's intended incident response. VenueRise does NOT currently staff a 24/7 on-call rotation and does NOT offer an uptime SLA contract. Detectors are conservative + operator-triggered; no autonomous remediation occurs. Customer notification for any security event requires legal/operator review before sending.",
+  "severityCount": 4,
+  "postmortemRequiredAtOrAbove": "sev2",
+  "alertRoutes": [
+    {
+      "channel": "slack",
+      "targetLabel": "#incident-alerts",
+      "minSeverity": "sev3"
+    },
+    {
+      "channel": "pagerduty",
+      "targetLabel": "venuerise-platform",
+      "minSeverity": "sev2"
+    },
+    {
+      "channel": "sentry",
+      "targetLabel": "venuerise (issues)",
+      "minSeverity": "sev3"
+    }
+  ],
+  "detectorDefaults": {
+    "abuseSpike": {
+      "windowMinutes": 60,
+      "minRows": 25,
+      "suggestedSeverity": "sev3"
+    },
+    "ssoFailureSpike": {
+      "windowMinutes": 60,
+      "minRows": 10,
+      "suggestedSeverity": "sev3"
+    },
+    "backupPosture": {
+      "windowMinutes": 1440,
+      "minRows": 1,
+      "suggestedSeverity": "sev2"
+    },
+    "healthCheck": {
+      "windowMinutes": 60,
+      "minRows": 1,
+      "suggestedSeverity": "sev2"
+    }
+  }
+}

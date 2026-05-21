@@ -10,6 +10,9 @@ import {
   type TourNotificationKind,
 } from '@/lib/integrations/tour-notifications'
 import { recordTourStatusEvent } from '@/lib/integrations/tour-status-events'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
+import { log } from '@/lib/log'
 import { z } from 'zod'
 
 const UpdateTourSchema = z.object({
@@ -87,6 +90,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return respond(NextResponse.json({ error: err.code }, { status: err.status }))
     }
     throw err
+  }
+
+  // Phase 9F — per-user rate limit.
+  const rl = await rateLimitUserAction(
+    request,
+    `tours:update:${user.id}`,
+    {
+      route: '/api/tours/[id]',
+      method: 'PATCH',
+      userId: user.id,
+      venueId,
+      requestId,
+    }
+  )
+  if (!rl.allowed) {
+    log.warn(
+      { requestId, userId: user.id, retryMs: rl.retryAfterMs },
+      'rate_limit.blocked'
+    )
+    return respond(rateLimitedResponse(rl))
   }
 
   // Phase 7D — billing gate (no-op when BILLING_GATE_ENABLED !== '1').
@@ -231,6 +254,54 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       /* swallowed — helper already logs + Sentry-captures */
     })
   }
+
+  // Phase 9A — best-effort audit row. Action discriminates so the
+  // audit card can chip-filter by `tour_cancel` / `tour_confirm` /
+  // `tour_reschedule` / `tour_update`. We re-derive the verb
+  // here (the existing `auditAction` variable above is the
+  // tour-status-events verb; this one is the enterprise audit
+  // verb namespace — different sinks).
+  const enterpriseAuditVerb = deriveTourAuditAction(
+    { status: tourBefore.status, scheduled_at: tourBefore.scheduled_at },
+    {
+      status:
+        ((data as { status?: string | null }).status ?? tourBefore.status) ?? null,
+      scheduled_at:
+        ((data as { scheduled_at?: string | null }).scheduled_at ??
+          tourBefore.scheduled_at) ?? null,
+    }
+  )
+  const enterpriseAuditAction =
+    enterpriseAuditVerb === 'cancel'
+      ? 'tour_cancel'
+      : enterpriseAuditVerb === 'confirm'
+        ? 'tour_confirm'
+        : enterpriseAuditVerb === 'reschedule'
+          ? 'tour_reschedule'
+          : 'tour_update'
+  void recordAuditEvent({
+    venueId,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/tours/[id]',
+    action: enterpriseAuditAction,
+    targetTable: 'tours',
+    targetId: id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    before: {
+      status: tourBefore.status,
+      scheduled_at: tourBefore.scheduled_at,
+      duration_minutes: tourBefore.duration_minutes,
+    },
+    after: {
+      status: (data as { status?: unknown }).status,
+      scheduled_at: (data as { scheduled_at?: unknown }).scheduled_at,
+      duration_minutes: (data as { duration_minutes?: unknown }).duration_minutes,
+    },
+    metadata: { fields: Object.keys(parsed.data) },
+  })
 
   return respond(NextResponse.json(data))
 }

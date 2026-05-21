@@ -8,6 +8,8 @@ import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
 import { removeSubscriptionMetadataArrayEntries } from '@/lib/billing/subscription-metadata-remove'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 import { z } from 'zod'
 
 /**
@@ -207,6 +209,29 @@ export async function POST(
     },
     'billing.clear_dunning.completed'
   )
+
+  // Phase 9B — enterprise audit. Subscription metadata is
+  // intentionally NOT echoed into the snapshot (it can include
+  // dunning_sent entries with provider message ids and other long-
+  // tail keys); only the targeting fields + the cleared prefix.
+  void recordAuditEvent({
+    venueId: eventRow.venue_id,
+    actorUserId: user.id,
+    actorKind: 'operator',
+    route: '/api/admin/billing-events/[id]/clear-dunning',
+    action: AUDIT_ACTIONS.BILLING_EVENT_CLEAR_DUNNING,
+    targetTable: 'subscriptions',
+    targetId: subRow.id,
+    requestId,
+    ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+    userAgent: request.headers.get('user-agent'),
+    metadata: {
+      billing_event_id: eventRow.id,
+      cleared_prefix: keyPrefix,
+      period_date: periodDate ?? null,
+      operator_reason: reason ?? null,
+    },
+  })
 
   return respond(
     NextResponse.json({

@@ -222,10 +222,30 @@ export default async function ToursPage({
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-7 mb-2">
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                <div key={d} className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider text-center py-1.5">{d}</div>
-              ))}
+            {/* Phase 8AK — weekday strip with subtle separator + slightly
+                more emphasis so the calendar reads as a proper grid (vs.
+                the previous flush-to-cells weekday row). Today's column
+                gets a dot affordance so the eye is drawn to the active
+                column header before scanning down. */}
+            <div className="grid grid-cols-7 mb-1.5 border-b border-[#EEF2F7] pb-1.5">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, idx) => {
+                const isTodayCol = now.getDay() === idx &&
+                  now.getMonth() === displayMonth.getMonth() &&
+                  now.getFullYear() === displayMonth.getFullYear()
+                return (
+                  <div
+                    key={d}
+                    className="text-[10px] font-semibold uppercase tracking-[0.14em] text-center py-1.5 flex items-center justify-center gap-1"
+                  >
+                    <span className={isTodayCol ? 'text-[#0F172A]' : 'text-[#94A3B8]'}>
+                      {d}
+                    </span>
+                    {isTodayCol && (
+                      <span className="w-1 h-1 rounded-full bg-[#1D4ED8]" />
+                    )}
+                  </div>
+                )
+              })}
             </div>
             <div className="grid grid-cols-7 gap-1.5">
               {Array.from({ length: monthStart.getDay() }).map((_, i) => (
@@ -252,9 +272,16 @@ export default async function ToursPage({
                     >
                       {format(day, 'd')}
                     </span>
-                    {dayTours.slice(0, 2).map((tour) => {
+                    {/* Phase 8AK — every chip shows time + first name
+                        (when available); the cell becomes scannable for
+                        single-tour days too, not just multi-tour. The
+                        2nd chip drops the name to stay legible at the
+                        narrower column width. */}
+                    {dayTours.slice(0, 2).map((tour, ti) => {
                       const t = tour as Record<string, unknown>
                       const cfg = STATUS_CONFIG[t.status as TourStatus]
+                      const leadRel = t.leads as { name?: string | null } | null
+                      const showName = ti === 0 && Boolean(leadRel?.name)
                       return (
                         <div
                           key={t.id as string}
@@ -263,8 +290,14 @@ export default async function ToursPage({
                               ? 'bg-white/[0.10] text-white border border-white/[0.10]'
                               : cfg.chip
                           }`}
+                          title={leadRel?.name ?? undefined}
                         >
                           {format(new Date(t.scheduled_at as string), 'h:mma')}
+                          {showName && leadRel?.name ? (
+                            <span className="ml-1 opacity-90">
+                              {leadRel.name.split(' ')[0]}
+                            </span>
+                          ) : null}
                         </div>
                       )
                     })}
@@ -274,7 +307,7 @@ export default async function ToursPage({
                           isToday ? 'text-white/75' : 'text-[#94A3B8]'
                         }`}
                       >
-                        +{dayTours.length - 2}
+                        +{dayTours.length - 2} more
                       </span>
                     )}
                   </div>

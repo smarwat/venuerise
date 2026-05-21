@@ -6,6 +6,8 @@ import { log } from '@/lib/log'
 import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { acceptInvitation, TeamError } from '@/lib/team/team-service'
 import { AcceptInvitationSchema } from '@/lib/team/team-schema'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 
 /**
  * POST /api/team/invitations/accept — any authed user trades a token for
@@ -43,6 +45,23 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       token: parsed.data.token,
       requestId,
+    })
+    // Phase 9B — enterprise audit. The token itself is NEVER
+    // recorded; only the resolved venue_id + user_id + the
+    // already-member flag. This row attributes a new RBAC member
+    // to the venue.
+    void recordAuditEvent({
+      venueId: result.venue_id,
+      actorUserId: user.id,
+      actorKind: 'operator',
+      route: '/api/team/invitations/accept',
+      action: AUDIT_ACTIONS.TEAM_INVITATION_ACCEPT,
+      targetTable: 'venue_members',
+      targetId: user.id,
+      requestId,
+      ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      userAgent: request.headers.get('user-agent'),
+      metadata: { already_member: result.already_member },
     })
     return respond(
       NextResponse.json({

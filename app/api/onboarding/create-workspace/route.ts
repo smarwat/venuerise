@@ -8,6 +8,8 @@ import {
   createWorkspaceForUser,
   OnboardingError,
 } from '@/lib/onboarding/onboarding-service'
+import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import { AUDIT_ACTIONS } from '@/lib/enterprise/audit-actions'
 
 /**
  * POST /api/onboarding/create-workspace
@@ -65,6 +67,28 @@ export async function POST(request: NextRequest) {
       payload: body,
       requestId,
     })
+    // Phase 9B — enterprise audit. Workspace creation is the
+    // moment a venue tenant first comes into being; the audit row
+    // attributes the creating user. We skip the row when the
+    // helper short-circuited on `already_exists` — the original
+    // workspace_create row already exists from the first call.
+    if (!result.already_exists) {
+      void recordAuditEvent({
+        venueId: result.venue_id,
+        actorUserId: user.id,
+        actorKind: 'operator',
+        route: '/api/onboarding/create-workspace',
+        action: AUDIT_ACTIONS.WORKSPACE_CREATE,
+        targetTable: 'venues',
+        targetId: result.venue_id,
+        requestId,
+        ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+        userAgent: request.headers.get('user-agent'),
+        metadata: {
+          owner_user_id: user.id,
+        },
+      })
+    }
     const status = result.already_exists ? 200 : 201
     return respond(NextResponse.json(result, { status }))
   } catch (err) {

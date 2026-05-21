@@ -1,0 +1,45 @@
+﻿id,title,category,soc2_categories,status,artifact_count,limitation_count,recommended_next_count
+rbac-matrix,Role-based access control with documented matrix,access_control,security|confidentiality,implemented,4,1,1
+owner-vs-admin-split,Owner-only mutation gates on billing-class actions,access_control,security,implemented,2,0,0
+enterprise-audit-log,Enterprise audit log over every sensitive write,audit_logging,security|processing_integrity,implemented,6,1,1
+audit-event-mirror,Tamper-evidence mirror table,audit_logging,security,partial,3,2,1
+audit-coverage-scanner,Audit coverage regression guard,audit_logging,security,implemented,2,1,0
+autonomous-sending-disabled,Autonomous sending explicitly disabled,security_operations,security|processing_integrity,implemented,2,0,0
+rate-limit-coverage,Per-route rate limiting with coverage scanner,security_operations,security|availability,implemented,4,1,0
+abuse-monitoring,Abuse event recording on rate-limit blocks,monitoring,security,implemented,4,1,1
+security-headers-csp-report,Security headers + CSP report-only telemetry,security_operations,security|confidentiality,implemented,3,3,1
+no-raw-ip-storage,No raw IP storage anywhere,confidentiality,confidentiality|privacy,implemented,1,1,0
+webhook-signature-verification,Webhook signature verification before mutation,security_operations,security|processing_integrity,implemented,3,0,0
+sso-readiness,Enterprise SSO scaffolding (placeholder adapter),access_control,security,partial,6,1,1
+sso-login-events,SSO login event audit feed,audit_logging,security,implemented,2,1,0
+backup-posture,Backup posture surface with policy targets,availability,availability,partial,5,2,1
+dr-runbook,Disaster recovery runbook with 7 incident classes,incident_response,availability,manual,1,1,1
+restore-intent-audit,Restore intent audit trail (non-destructive),incident_response,availability|security,implemented,4,0,0
+no-destructive-restore-from-app,No destructive restore can be triggered from the product,incident_response,security|availability,implemented,2,0,0
+data-export,Venue-scoped JSON data export,data_lifecycle,privacy|confidentiality,implemented,3,1,1
+lead-pii-redaction,Lead PII soft redaction,data_lifecycle,privacy|confidentiality,implemented,2,2,1
+retention-posture,Retention posture visibility,data_lifecycle,privacy,partial,2,1,1
+health-flags,Health route flag inventory,monitoring,availability|security,implemented,1,1,0
+cross-tenant-probe,Automated cross-tenant probe smoke harness,security_operations,security,partial,1,1,1
+audited-write-paths,Audited migration + write-path lineage,change_management,security|processing_integrity,implemented,2,1,0
+secrets-rotation-runbook,Documented secret rotation cadence,vendor_management,security,manual,1,1,1
+vendor-registry-maintained,Vendor + subprocessor registry maintained in code,vendor_management,security|confidentiality,implemented,7,2,1
+subprocessor-disclosure,Buyer-safe subprocessor disclosure pack,vendor_management,confidentiality|privacy,implemented,3,2,1
+incident-response-records,Incident response records + timeline,incident_response,security|availability,implemented,6,2,1
+incident-alert-routing,Incident alert routing (env-gated),incident_response,security|availability,partial,2,3,1
+post-incident-review-template,Post-incident review template + threshold policy,incident_response,security,manual,3,2,1
+privacy-data-inventory,Privacy data inventory,data_lifecycle,privacy|confidentiality,implemented,5,2,1
+privacy-retention-policy,Retention policy map,data_lifecycle,privacy,partial,2,2,1
+dsr-request-tracking,DSR request tracking + timeline,data_lifecycle,privacy|security,implemented,4,3,1
+dsr-export-preview,DSR export preview (metadata-only),data_lifecycle,privacy|confidentiality,partial,2,1,0
+dsr-deletion-review,DSR deletion review (non-destructive),data_lifecycle,privacy|security,partial,2,1,0
+trust-center-public-summary,Public Trust Center summary,change_management,security|confidentiality,implemented,4,2,1
+trust-center-gated-packets,Gated Trust Center packets,access_control,security|confidentiality,implemented,4,3,2
+trust-access-tracking,Trust Center access event log,audit_logging,security,implemented,3,1,0
+compliance-operations-calendar,Compliance operations calendar,change_management,security|availability,implemented,7,3,1
+evidence-freshness-tracking,Evidence freshness tracking,change_management,security,partial,2,2,0
+recurring-review-workflow,Recurring review operator workflow (manual),change_management,security,manual,2,2,1
+contract-commitments-register,Contract commitments register,change_management,security|confidentiality,implemented,7,3,1
+customer-obligation-tracking,Customer-specific obligation tracking,change_management,security,implemented,2,1,0
+unsupported-commitment-warning-workflow,Unsupported commitment warning workflow,change_management,security,partial,4,2,1
+vendor-assurance-review,Vendor security/legal assurance review (manual),vendor_management,security,manual,1,2,1

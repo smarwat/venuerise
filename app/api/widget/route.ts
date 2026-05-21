@@ -1,3 +1,10 @@
+// public route — anonymous widget intake. No authenticated actor
+// to attribute. Every successful POST writes a `leads` row whose
+// `source` column ('widget') + `created_at` timestamp give the
+// forensic trail; the orchestrator's downstream side effects
+// (qualification, follow-up) emit their own pino + ai_actions
+// records. Per Phase 9A "don't touch widget intake," this stays
+// out of `audit_events`. Documented in docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { enqueueLeadCreated } from '@/lib/jobs/queue'
@@ -6,6 +13,12 @@ import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureApiError } from '@/lib/observability/sentry'
 import { z } from 'zod'
+// Phase 8BH — Lead attribution capture. Parses the optional
+// `attribution` payload submitted by the widget JS (UTM, click
+// ids, landing page, referrer) into the canonical metadata
+// shape so the dashboard can render source labels + the
+// AttributionPerformanceCard.
+import { parseLeadAttribution } from '@/lib/enterprise/attribution/parse'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -62,6 +75,35 @@ function isOriginAllowed(request: Request): boolean {
   return false
 }
 
+// Phase 8BH — optional attribution payload. Every field is
+// optional + length-clamped at the parser layer so a malformed
+// or missing field never blocks intake. UTM aliases (`utm_*`)
+// are accepted so the widget JS can pass through whatever the
+// landing page had without server-side renaming.
+const AttributionSchema = z
+  .object({
+    source: z.string().max(500).optional().nullable(),
+    medium: z.string().max(500).optional().nullable(),
+    campaign: z.string().max(500).optional().nullable(),
+    term: z.string().max(500).optional().nullable(),
+    content: z.string().max(500).optional().nullable(),
+    utm_source: z.string().max(500).optional().nullable(),
+    utm_medium: z.string().max(500).optional().nullable(),
+    utm_campaign: z.string().max(500).optional().nullable(),
+    utm_term: z.string().max(500).optional().nullable(),
+    utm_content: z.string().max(500).optional().nullable(),
+    landing_page: z.string().max(500).optional().nullable(),
+    referrer: z.string().max(500).optional().nullable(),
+    gclid: z.string().max(200).optional().nullable(),
+    fbclid: z.string().max(200).optional().nullable(),
+    msclkid: z.string().max(200).optional().nullable(),
+    ttclid: z.string().max(200).optional().nullable(),
+    captured_at: z.string().max(60).optional().nullable(),
+  })
+  .strict()
+  .optional()
+  .nullable()
+
 const WidgetLeadSchema = z.object({
   venue_id: z.string().uuid(),
   name: z.string().min(1).max(100),
@@ -71,6 +113,7 @@ const WidgetLeadSchema = z.object({
   guest_count: z.number().int().min(1).max(10000).optional().nullable(),
   budget: z.number().min(0).optional().nullable(),
   message: z.string().optional().nullable(),
+  attribution: AttributionSchema,
 })
 
 function devError(error: string, detail?: unknown) {
@@ -133,7 +176,17 @@ export async function POST(request: NextRequest) {
     return respond(NextResponse.json(devError('Invalid payload', parsed.error.flatten()), { status: 400 }))
   }
 
-  const { venue_id, name, email, phone, event_date, guest_count, budget, message } = parsed.data
+  const {
+    venue_id,
+    name,
+    email,
+    phone,
+    event_date,
+    guest_count,
+    budget,
+    message,
+    attribution,
+  } = parsed.data
 
   // 2b. Rate-limit by IP + venue. 10/min sliding (see lib/rate-limit.ts).
   const rl = await rateLimitWidget(request, venue_id)
@@ -204,6 +257,17 @@ export async function POST(request: NextRequest) {
   // — which already drives a 403 path above — not via the subscription
   // table. Subscription state belongs to the OWNER's relationship with us,
   // not to the visitor's relationship with the venue.
+  // Phase 8BH — Always run the attribution parser, even when
+  // the widget didn't submit any UTM fields. The result with
+  // an empty input is the safe `Unknown` shape and we stamp
+  // `channel_type: 'website'` so the dashboard groups the
+  // lead under the Website source label rather than Unknown.
+  const attributionMetadata = parseLeadAttribution({
+    ...(attribution ?? {}),
+    channel_type: 'website',
+    captured_at: attribution?.captured_at ?? new Date().toISOString(),
+  })
+
   const { data: lead, error: leadErr } = await supabase
     .from('leads')
     .insert({
@@ -220,6 +284,7 @@ export async function POST(request: NextRequest) {
       lead_score: 0,
       urgency: 'medium',
       ai_active: true,
+      metadata: { attribution: attributionMetadata },
     })
     .select('id')
     .single()

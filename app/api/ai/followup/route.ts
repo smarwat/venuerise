@@ -1,3 +1,10 @@
+// AUDIT_EXEMPT: follow-up orchestration is an agent invocation
+// path. The orchestrator already writes `follow_up_schedules` +
+// `messages` rows that the inbox + tour pipelines surface
+// directly, and the Phase 9A "don't touch agent decision logic"
+// rule applies. Operator-initiated message sends (the audit-worthy
+// branch) go through /api/conversations/[id]/messages, which IS
+// audited. Documented in docs/AUDIT-COVERAGE.md.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { processPendingFollowUp } from '@/lib/agents/orchestrator'
