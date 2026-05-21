@@ -30,6 +30,7 @@ import BuyerSecuritySummaryCard from '@/components/dashboard/settings/BuyerSecur
 import DemoModeCard from '@/components/dashboard/settings/DemoModeCard'
 import RevenueRecoveryDemoCard from '@/components/dashboard/settings/RevenueRecoveryDemoCard'
 import RevenueRecoveryLoadDemoCard from '@/components/dashboard/settings/RevenueRecoveryLoadDemoCard'
+import InstantResponseTrainingCard from '@/components/dashboard/settings/InstantResponseTrainingCard'
 import EnterpriseReadinessCard from '@/components/dashboard/settings/EnterpriseReadinessCard'
 import VendorRiskCard from '@/components/dashboard/settings/VendorRiskCard'
 import SubprocessorDisclosureCard from '@/components/dashboard/settings/SubprocessorDisclosureCard'
@@ -458,6 +459,12 @@ export default async function BillingSettingsPage() {
             requireAdmin() so a non-admin who somehow lands here
             sees 401/403 on the network call. */}
         {isAdmin && <RevenueOsSettingsCard />}
+        {/* Phase GTM-ILR — Instant Response training. Sibling of
+            RevenueOsSettingsCard above; both write to the same
+            venues.metadata.revenue_os block via the existing
+            settings endpoint. Auto-send defaults OFF and the card
+            explicitly says so. */}
+        {isAdmin && <InstantResponseTrainingCard />}
         {/* Phase 8AR — owner-facing weekly Speed-to-Lead roll-up.
             Server-rendered, derived from existing leads + messages
             tables (no new storage); reads venue settings so the

@@ -6266,3 +6266,66 @@ Marketing QA checklist (run before promoting copy changes):
 3. Confirm `/dashboard` for each shows only its own data.
 4. Reset venue A — venue B's load-seed data remains untouched.
 5. Run the GTM-0A hand-crafted demo seed on venue A — both datasets coexist; reset of GTM-0A doesn't remove GTM-0A.2 rows and vice versa.
+
+---
+
+## Phase GTM-ILR — Instant Lead Response troubleshooting
+
+### "New lead created but no AI response"
+
+1. Check Inngest dashboard — is `lead.created` event firing? If not,
+   the widget enqueue is silently failing; check `widget.job.enqueue_failed`
+   in logs.
+2. Check `ai_actions` table for the lead_id — should have a row with
+   `agent='instant_lead_response'`. If absent, the orchestrator never
+   ran. Look for `orchestrator.handle_new_lead.lead_not_found` or
+   `venue_not_found`.
+3. Check the conversation's `messages` table — if a row with
+   `role='ai'` exists but `metadata.source !== 'instant_lead_response'`,
+   the legacy path ran. Check `venues.metadata.revenue_os.instant_response.enabled` — should be `true`.
+
+### "AI response is generic / off-brand"
+
+1. Confirm the venue has filled in the InstantResponseTrainingCard
+   (sample replies are the single biggest lever).
+2. Check `venues.metadata.revenue_os.instant_response.sample_replies`
+   directly via SQL — values should match what's in the UI.
+3. The model can be capped by the heuristic if the draft is short or
+   lacks a CTA. If `metadata.heuristic_confidence` is low, the model
+   confidence was capped — that's the signal to add more training
+   examples, not to bypass the cap.
+
+### "Auto-send did not happen"
+
+Auto-send is scaffold-only in this phase. The route NEVER sends. It
+only records `auto_send_eligible: true` on the audit row. There is no
+outbound integration wired.
+
+### "Claude API failed"
+
+The helper has its own try/catch and ALWAYS returns either the model
+response or the deterministic warm fallback. If you're seeing
+`orchestrator.handle_new_lead` failures, it's downstream of the
+helper — check `qualifyLead`, `enqueueLeadCreated`, or the
+follow-up scheduler.
+
+### "Duplicate drafts created"
+
+The orchestrator's idempotency guard checks for any `messages.role='ai'`
+row on the conversation. If two `lead.created` events fire and both
+race past the guard, the second insert will fail at the unique-row
+level only if there's a constraint — there isn't one today, so two
+events firing simultaneously CAN produce two messages. In practice,
+Inngest's per-event idempotency on the `lead_id` key handles this; the
+local-fallback path does not. Don't run two `next dev` processes against
+the same DB.
+
+### "Pricing or availability claims are too aggressive"
+
+1. Pull the lead's `messages.metadata.unsupported_claims` array — those
+   are the phrases the model thinks lack KB grounding.
+2. Add the supporting facts to the venue KB (pricing page, availability
+   policy).
+3. As a hard guardrail: add a line to InstantResponseTrainingCard →
+   "Additional venue rules (binding)" — e.g. "Never quote prices over
+   $25k without operator approval." The system prompt enforces these.

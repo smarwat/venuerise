@@ -6396,3 +6396,20 @@ QA log too.
 - [ ] Generated lead emails all end in `@venuerise-demo.test`.
 - [ ] Distribution shows non-zero counts in stages, sources, channels, leakage signals.
 - [ ] Audit feed (`EnterpriseAuditEventsCard`) shows a `revenue_recovery_load_demo_seeded` row with `profile`, `lead_count_clamped`, `duration_ms` in metadata.
+
+---
+
+## Phase GTM-ILR — Instant Lead Response QA
+
+- [ ] InstantResponseTrainingCard renders on /dashboard/settings/billing (admin-only).
+- [ ] Default voice tone = `warm_concierge`, formality = `polished`, autoSendEnabled = OFF, autoSendMinConfidence = 85.
+- [ ] Save persists per-field via POST /api/admin/revenue-os/settings (settings.instantResponse partial).
+- [ ] New widget submission generates an AI message on its conversation within ~15s.
+- [ ] AI message `metadata.source === 'instant_lead_response'` with `confidence`, `needs_human_review`, `auto_send_eligible`, `reasons`, `model`, `latency_ms`.
+- [ ] When venue KB has no pricing rows, a lead asking about pricing generates a draft with `needs_human_review=true` and at least one reason in `pricing_discussed_without_kb` / `model_flagged_review`.
+- [ ] When KB has zero rows and the lead asks about availability, draft does NOT guarantee the date.
+- [ ] Sample replies entered on the card visibly shape the draft tone (manual smoke).
+- [ ] Sending a duplicate `lead.created` event for the same lead does NOT produce a second AI message (orchestrator idempotency).
+- [ ] With ANTHROPIC_API_KEY unset, lead creation still succeeds and the AI message persists as the fallback draft (`fallback_used=true`).
+- [ ] With autoSendEnabled=ON + high confidence + safe content, audit row carries `auto_send_eligible: true` but no actual send happens (scaffold-only).
+- [ ] EnterpriseAuditEventsCard shows `instant_lead_response.generated` (or `.fallback_created`) action.

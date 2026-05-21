@@ -4,6 +4,11 @@ import { generateConversationReply } from './conversation'
 import { generateFollowUpMessage, getFollowUpScheduledAt, FOLLOW_UP_DELAYS_MINUTES } from './followup'
 import { log } from '@/lib/log'
 import { captureAiError } from '@/lib/observability/sentry'
+import { parseRevenueOsSettings } from '@/lib/revenue-os/settings'
+import {
+  generateInstantLeadResponse,
+  INSTANT_LEAD_RESPONSE_SOURCE,
+} from '@/lib/ai/instant-lead-response'
 
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
@@ -16,6 +21,7 @@ async function logAction(supabase: ReturnType<typeof createServiceClient>, param
   tokens_used?: number
   success: boolean
   error_message?: string
+  metadata?: Record<string, unknown>
 }) {
   await supabase.from('ai_actions').insert(params)
 }
@@ -174,43 +180,178 @@ export async function handleNewLead(
       })
     }
 
-    // Generate and save AI first response
-    const aiResponse = await generateConversationReply(
-      {
-        name: lead.name as string,
-        lead_score: qualification.score,
-        urgency: qualification.urgency,
-        event_date: lead.event_date as string | null,
-        guest_count: lead.guest_count as number | null,
-        budget: lead.budget as number | null,
-      },
-      {
-        name: venue.name as string,
-        description: venue.description as string | null,
-        capacity_min: venue.capacity_min as number | null,
-        capacity_max: venue.capacity_max as number | null,
-        base_price: venue.base_price as number | null,
-        style_tags: (venue.style_tags as string[]) ?? [],
-        ai_persona_name: venue.ai_persona_name as string,
-        ai_tone: venue.ai_tone as string,
-      },
-      [],
-      kb,
-      true,
-      requestId
-    )
+    // Phase GTM-ILR — Instant Lead Response.
+    //
+    // The training profile (tone, sample replies, phrases, auto-send
+    // posture) lives at `venues.metadata.revenue_os.instant_response`.
+    // When `enabled` (the default), we run the structured-output
+    // helper that returns a confidence-scored draft + safety gate +
+    // suggested next step. When disabled, fall back to the legacy
+    // `generateConversationReply` path. The fallback path is also
+    // taken automatically if the structured helper itself fell back
+    // (Anthropic failure) — we still persist its safe message + log
+    // the failure so the lead never silently goes unanswered.
+    const settings = parseRevenueOsSettings(venue.metadata)
+    const useInstantResponse = settings.instantResponse.enabled
+
+    type AiMessageMetadata = Record<string, unknown>
+    let aiMessageText: string
+    let aiMessageMetadata: AiMessageMetadata
+    let tokensUsedForAudit: number | undefined
+    let aiActionForAudit: string
+    let aiActionMetadata: Record<string, unknown> | undefined
+
+    if (useInstantResponse) {
+      const ilr = await generateInstantLeadResponse({
+        venue: {
+          name: venue.name as string,
+          description: (venue.description as string | null) ?? null,
+          capacity_min: (venue.capacity_min as number | null) ?? null,
+          capacity_max: (venue.capacity_max as number | null) ?? null,
+          base_price: (venue.base_price as number | null) ?? null,
+          style_tags: (venue.style_tags as string[]) ?? [],
+          ai_persona_name: (venue.ai_persona_name as string) ?? 'the event coordinator',
+          ai_tone: (venue.ai_tone as string | null) ?? null,
+        },
+        lead: {
+          name: lead.name as string,
+          email: (lead.email as string | null) ?? null,
+          phone: (lead.phone as string | null) ?? null,
+          event_date: (lead.event_date as string | null) ?? null,
+          guest_count: (lead.guest_count as number | null) ?? null,
+          budget: (lead.budget as number | null) ?? null,
+          notes: (lead.notes as string | null) ?? null,
+          source: (lead.source as string | null) ?? null,
+          lead_score: qualification.score,
+          stage: qualification.is_qualified ? 'qualified' : 'new_inquiry',
+          most_recent_inbound_message: (lead.notes as string | null) ?? null,
+        },
+        knowledgeBase: kb.map((entry) => ({
+          category: entry.category,
+          title: entry.title,
+          content: entry.content,
+        })),
+        training: settings.instantResponse,
+        brandVoiceConfidenceFloor: settings.brandVoiceConfidenceFloor,
+        requestId,
+      })
+
+      aiMessageText = ilr.response
+      aiMessageMetadata = {
+        source: INSTANT_LEAD_RESPONSE_SOURCE,
+        tokens_used: ilr.tokensUsed,
+        latency_ms: ilr.latencyMs,
+        model: ilr.model,
+        confidence: ilr.confidence,
+        model_confidence: ilr.modelConfidence,
+        heuristic_confidence: ilr.heuristicConfidence,
+        needs_human_review: ilr.needsHumanReview,
+        unsupported_claims: ilr.unsupportedClaims,
+        detected_questions: ilr.detectedQuestions,
+        suggested_next_step: ilr.suggestedNextStep,
+        venue_context_signal: ilr.venueContextSignal,
+        risk_flags: ilr.riskFlags,
+        autopilot_mode: ilr.autopilotMode,
+        fallback_used: ilr.fallbackUsed,
+        auto_send_eligible: ilr.autoSendEligible,
+        // Auto-send is scaffold-only: even when eligible, this phase
+        // never actually sends. Recording the intent here lets a
+        // future outbound integration consume the flag without
+        // re-running the safety gate.
+        auto_send_action_taken: 'draft_only',
+        reasons: ilr.reasons,
+      }
+      tokensUsedForAudit = ilr.tokensUsed ?? undefined
+
+      if (ilr.fallbackUsed) {
+        aiActionForAudit = 'instant_lead_response.fallback_created'
+      } else if (ilr.autoSendEligible) {
+        aiActionForAudit = 'instant_lead_response.auto_send_eligible'
+      } else {
+        aiActionForAudit = 'instant_lead_response.generated'
+      }
+
+      aiActionMetadata = {
+        source: INSTANT_LEAD_RESPONSE_SOURCE,
+        confidence: ilr.confidence,
+        needs_human_review: ilr.needsHumanReview,
+        fallback_used: ilr.fallbackUsed,
+        auto_send_enabled: settings.instantResponse.autoSendEnabled,
+        auto_send_eligible: ilr.autoSendEligible,
+        auto_send_min_confidence: settings.instantResponse.autoSendMinConfidence,
+        suggested_next_step: ilr.suggestedNextStep,
+        autopilot_mode: ilr.autopilotMode,
+        unsupported_claims_count: ilr.unsupportedClaims.length,
+        reasons: ilr.reasons,
+        model: ilr.model,
+        latency_ms: ilr.latencyMs,
+      }
+    } else {
+      // Legacy unstructured path — kept so a venue that explicitly
+      // disables the instant response stays in the old behavior.
+      const aiResponse = await generateConversationReply(
+        {
+          name: lead.name as string,
+          lead_score: qualification.score,
+          urgency: qualification.urgency,
+          event_date: lead.event_date as string | null,
+          guest_count: lead.guest_count as number | null,
+          budget: lead.budget as number | null,
+        },
+        {
+          name: venue.name as string,
+          description: venue.description as string | null,
+          capacity_min: venue.capacity_min as number | null,
+          capacity_max: venue.capacity_max as number | null,
+          base_price: venue.base_price as number | null,
+          style_tags: (venue.style_tags as string[]) ?? [],
+          ai_persona_name: venue.ai_persona_name as string,
+          ai_tone: venue.ai_tone as string,
+        },
+        [],
+        kb,
+        true,
+        requestId
+      )
+      aiMessageText = aiResponse.message
+      aiMessageMetadata = {
+        tokens_used: aiResponse.tokens_used,
+        latency_ms: aiResponse.latency_ms,
+      }
+      tokensUsedForAudit = aiResponse.tokens_used
+      aiActionForAudit = 'handle_new_lead.legacy_path'
+      aiActionMetadata = { reason: 'instant_response_disabled_by_venue_setting' }
+    }
 
     await supabase.from('messages').insert({
       conversation_id: conversation.id,
       lead_id: leadId,
       venue_id: venueId,
       role: 'ai',
-      content: aiResponse.message,
-      metadata: { tokens_used: aiResponse.tokens_used, latency_ms: aiResponse.latency_ms },
+      content: aiMessageText,
+      metadata: aiMessageMetadata,
     })
 
     // Update conversation last_message_at
     await supabase.from('conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conversation.id)
+
+    // Per-call ai_actions audit row. Distinct from the orchestrator
+    // success row at the bottom — this captures the response-
+    // generation step specifically so the dashboard's AI activity
+    // feed can render an "instant response drafted" event regardless
+    // of follow-up scheduling outcome.
+    void logAction(supabase, {
+      venue_id: venueId,
+      lead_id: leadId,
+      agent: 'instant_lead_response',
+      action: aiActionForAudit,
+      input_summary: `Lead: ${lead.name}`,
+      output_summary: aiMessageText.slice(0, 240),
+      latency_ms: Date.now() - start,
+      tokens_used: tokensUsedForAudit,
+      success: true,
+      metadata: aiActionMetadata,
+    })
 
     // 4. Schedule follow-up sequence (5 touches)
     const followUps = FOLLOW_UP_DELAYS_MINUTES.map((_, i) => ({
@@ -231,7 +372,7 @@ export async function handleNewLead(
       input_summary: `Lead: ${lead.name}, source: ${lead.source}`,
       output_summary: `Score: ${qualification.score}, qualified: ${qualification.is_qualified}`,
       latency_ms: Date.now() - start,
-      tokens_used: aiResponse.tokens_used,
+      tokens_used: tokensUsedForAudit,
       success: true,
     })
 

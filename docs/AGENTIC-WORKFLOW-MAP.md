@@ -571,3 +571,62 @@ Operator-facing surfaces:
 No agent prompt changes, no scoring changes, no autonomous
 behaviour changes. Source leakage is purely a prioritization
 lens layered on top of the existing per-lead signals.
+
+---
+
+## Phase GTM-ILR — Instant Lead Response Agent
+
+**Helper:** `lib/ai/instant-lead-response.ts` →
+`generateInstantLeadResponse({ venue, lead, knowledgeBase, training, ... })`
+
+**Trigger path:** widget intake → `enqueueLeadCreated` → orchestrator
+`handleNewLead` → `generateInstantLeadResponse`. Same idempotency
+guard as before (skip if any `messages.role='ai'` exists for the
+conversation).
+
+**Inputs:**
+- `venue` — name, description, capacity, base_price, style_tags, persona
+- `lead` — name, contact, event_date, guest_count, budget, notes,
+  source, lead_score, stage
+- `knowledgeBase` — top-N active KB rows, ranked by lead-keyword
+  overlap (pricing/capacity/availability/catering/...)
+- `training` — `InstantResponseSettings` from
+  `venues.metadata.revenue_os.instant_response`
+
+**Output (structured JSON from Claude):**
+- `response` — draft text
+- `confidence` 0–100 (model self-rating, capped by heuristic)
+- `needs_human_review` boolean
+- `unsupported_claims[]`, `detected_questions[]`
+- `suggested_next_step` ∈ {schedule_tour, ask_clarifying_question,
+  team_follow_up, send_pricing_overview}
+- `venue_context_signal` ∈ {healthy, needs_more_context}
+
+**Safety stack (composed):**
+1. Brand-voice calibration (`computeFinalConfidence`) caps the model
+   self-rating at heuristic + 10.
+2. Autopilot guardrails (`computeAutopilotDecision`) classify the
+   draft as `eligible | review_required | blocked` based on pricing
+   / policy / availability detection + confidence floor.
+3. `auto_send_eligible` requires ALL of: autoSendEnabled,
+   finalConfidence ≥ floor, no unsupported_claims, autopilot=eligible,
+   not fallback, not needsHumanReview.
+
+**Failure path:** Anthropic 503 / timeout / malformed JSON →
+deterministic warm fallback ("A member of our team will review your
+details and follow up shortly"). Lead creation never fails. Fallback
+sets `needs_human_review=true` + `fallback_used=true`.
+
+**Relationship to existing agents:**
+- Sits BEFORE the follow-up scheduler. The orchestrator still
+  schedules the 5-touch sequence after the instant draft is saved.
+- Reuses brand-voice-calibration + autopilot-guardrails — does NOT
+  duplicate them.
+- Replaces the unstructured `generateConversationReply` path inside
+  `handleNewLead`. The legacy path is kept as a fallback for venues
+  that disable instant response via setting.
+
+**Audit:** writes one `ai_actions` row per call. Action is one of
+`instant_lead_response.generated`, `.fallback_created`, or
+`.auto_send_eligible`. Metadata includes confidence, needs_human_review,
+auto_send_enabled, auto_send_eligible, reasons, latency_ms, model.

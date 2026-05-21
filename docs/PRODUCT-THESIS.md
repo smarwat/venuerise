@@ -1065,3 +1065,49 @@ estimated from `leads.budget`. Legacy unattributed leads
 group under `Unknown` so the operator always sees the
 unattributed bucket. Source leakage is an **operator
 prioritization lens**, not an accounting report.
+
+---
+
+## Phase GTM-ILR — Instant Lead Response is the wedge
+
+The core pain VenueRise solves: a couple submits an inquiry, then
+emotionally moves on if no human replies inside ~5 minutes. Wedding
+venues lose deals not because their answer is wrong, but because
+their answer is too late.
+
+**Speed-to-first-reply is the moat.** Everything else (CRM,
+follow-up cadence, attribution) is downstream. We win when the first
+draft is ready in seconds, on-brand, grounded in the venue's KB,
+and safe enough that an operator can approve-and-send in one click.
+
+### Why venue voice training matters
+
+A generic "warm and professional" reply reads as a chatbot. The same
+reply written with the venue's actual phrasing — their preferred
+greeting, their CTA style, two real sample replies the team
+previously sent — reads as a coordinator. The lead can't tell the
+difference. That's the bar.
+
+The training profile lives at
+`venues.metadata.revenue_os.instant_response` and is consumed by
+`lib/ai/instant-lead-response.ts` at draft time. It's intentionally
+small (tone preset, formality, preferred greeting/CTA,
+phrases-to-use/avoid, ≤5 sample replies, safety notes) so a busy
+operator can fill it in 5 minutes, not 5 weeks.
+
+### Why auto-send defaults OFF (and stays scaffold-only here)
+
+The risk profile of auto-sending is asymmetric. A single wrong
+auto-reply about availability or pricing damages the venue's
+reputation far more than a 30-minute delay would. So this phase
+ships:
+
+- **Instant AI DRAFT** on every new lead (the value)
+- **Safety gate scaffolding** that records `auto_send_eligible: true`
+  on the audit row when every check passes (the future plumbing)
+- **No outbound integration**. Every reply still requires operator
+  approval in the dashboard.
+
+A future phase may graduate the scaffold to a real outbound send,
+but only after the calibration panel proves the system can be
+trusted at the per-venue level.

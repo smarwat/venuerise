@@ -21,6 +21,7 @@ import {
   isDefaultRevenueOsSettings,
   REVENUE_OS_CLAMP_BOUNDS,
   type RevenueOsSettings,
+  type PartialRevenueOsSettingsUpdate,
 } from '@/lib/revenue-os/settings'
 
 /**
@@ -51,6 +52,39 @@ import {
  *     `settings` keys + venue id.
  */
 
+// Phase GTM-ILR — Instant Lead Response training. All fields are
+// optional so a partial POST can update just one slice (e.g. the
+// auto-send toggle) without disturbing the rest. The helper's
+// `mergeInstantResponseSettings` re-clamps every value defensively.
+const InstantResponseSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    autoSendEnabled: z.boolean().optional(),
+    autoSendMinConfidence: z.number().int().min(0).max(100).optional(),
+    voiceTone: z
+      .enum(['warm_concierge', 'luxury_formal', 'friendly_casual', 'short_direct'])
+      .optional(),
+    voiceFormality: z.enum(['casual', 'polished', 'luxury']).optional(),
+    preferredGreeting: z.string().max(2000).nullable().optional(),
+    preferredCta: z.string().max(2000).nullable().optional(),
+    phrasesToUse: z.array(z.string().max(2000)).max(100).optional(),
+    phrasesToAvoid: z.array(z.string().max(2000)).max(100).optional(),
+    sampleReplies: z
+      .array(
+        z
+          .object({
+            label: z.string().max(200).nullable().optional(),
+            leadMessage: z.string().min(1).max(5000),
+            idealResponse: z.string().min(1).max(10000),
+          })
+          .strict()
+      )
+      .max(20)
+      .optional(),
+    safetyNotes: z.array(z.string().max(2000)).max(50).optional(),
+  })
+  .strict()
+
 const SettingsSchema = z
   .object({
     firstReplySlaMinutes: z.number().int().min(1).max(10_000).optional(),
@@ -69,6 +103,8 @@ const SettingsSchema = z
     // shape uses; storage flips to snake_case via the merge helper.
     tourDurationMinutes: z.number().int().min(15).max(240).optional(),
     tourBufferMinutes: z.number().int().min(0).max(120).optional(),
+    // Phase GTM-ILR — Instant Lead Response training profile.
+    instantResponse: InstantResponseSchema.optional(),
   })
   .strict()
 
@@ -281,7 +317,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const currentSettings = parseRevenueOsSettings(currentMetadata)
   // mergeRevenueOsSettings clamps each numeric field defensively + preserves
   // every unrelated jsonb key.
-  const nextMetadata = mergeRevenueOsSettings(currentMetadata, parsed.data.settings)
+  // Cast at the boundary — Zod's `optional()` produces `T | undefined`
+  // fields that don't quite match `Partial<T>`, and the sample-reply
+  // shape carries `label?: string | null | undefined` from Zod vs.
+  // `string | null` in the typed shape. The merge helper re-runs
+  // every field through the same coercion the parser uses, so any
+  // mismatch is normalized inside before storage.
+  const nextSettings = parsed.data.settings as unknown as PartialRevenueOsSettingsUpdate
+  const nextMetadata = mergeRevenueOsSettings(currentMetadata, nextSettings)
 
   const { error: updateErr } = await svc
     .from('venues')

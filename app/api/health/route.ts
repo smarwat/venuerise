@@ -343,6 +343,12 @@ interface HealthBody {
     demo_load_250_leads: 'mounted'
     demo_load_source_distribution: 'mounted'
     demo_load_leakage_distribution: 'mounted'
+    instant_lead_response: 'mounted'
+    instant_lead_response_claude: 'mounted'
+    instant_response_venue_voice_training: 'mounted'
+    instant_response_safety_gate: 'mounted'
+    instant_response_settings: 'mounted'
+    instant_response_auto_send_scaffold: 'scaffold-only'
   }
   uptime_ms: number
   ts: string
@@ -2348,6 +2354,36 @@ export async function GET(request: Request) {
       demo_load_250_leads: 'mounted',
       demo_load_source_distribution: 'mounted',
       demo_load_leakage_distribution: 'mounted',
+      // Phase GTM-ILR — Instant Lead Response + Venue Voice Training.
+      //   - instant_lead_response: new `lib/ai/instant-lead-response.ts`
+      //     helper produces a structured Claude draft on every new
+      //     lead inside `handleNewLead`. Reuses brand-voice-calibration
+      //     + autopilot-guardrails for safety math.
+      //   - instant_lead_response_claude: model call routed through the
+      //     existing `withAnthropicRetry` wrapper. Failure path returns
+      //     a deterministic warm fallback so lead intake never fails.
+      //   - instant_response_venue_voice_training: per-venue training
+      //     profile (tone, formality, preferred greeting/CTA, phrases,
+      //     sample replies, safety notes) persisted under
+      //     `venues.metadata.revenue_os.instant_response`.
+      //   - instant_response_safety_gate: structured JSON output now
+      //     carries `needs_human_review`, `unsupported_claims`,
+      //     `detected_questions`, `suggested_next_step`. Auto-send
+      //     defaults OFF — even when ON the helper records only
+      //     `auto_send_eligible: true` on the audit row and never
+      //     actually sends in this phase.
+      //   - instant_response_settings: InstantResponseTrainingCard
+      //     mounted on /dashboard/settings/billing (admin-only). Uses
+      //     the existing /api/admin/revenue-os/settings endpoint.
+      //   - instant_response_auto_send_scaffold: scaffold-only —
+      //     no outbound integration is wired in this phase.
+      //   - ADMIN_ENDPOINT_COUNT unchanged — no new admin routes.
+      instant_lead_response: 'mounted',
+      instant_lead_response_claude: 'mounted',
+      instant_response_venue_voice_training: 'mounted',
+      instant_response_safety_gate: 'mounted',
+      instant_response_settings: 'mounted',
+      instant_response_auto_send_scaffold: 'scaffold-only',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
