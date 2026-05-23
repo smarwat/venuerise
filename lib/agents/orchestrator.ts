@@ -9,6 +9,14 @@ import {
   generateInstantLeadResponse,
   INSTANT_LEAD_RESPONSE_SOURCE,
 } from '@/lib/ai/instant-lead-response'
+import {
+  buildTourAvailabilityContext,
+  renderTourAvailabilityPromptBlock,
+} from '@/lib/revenue-os/tour-availability-context'
+import {
+  getKnownContactSignals,
+  renderContactSignalsPromptBlock,
+} from '@/lib/revenue-os/contact-extraction'
 
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
@@ -432,6 +440,76 @@ export async function handleIncomingMessage(
     content: leadMessage,
   })
 
+  // ── Phase 8BJ — tour availability + contact-info context ──────────
+  //
+  // Two structured blocks fed into the conversation prompt:
+  //
+  //   1. TOUR_AVAILABILITY_CONTEXT — built from scheduling-intent
+  //      detection + the venue's `tour_availability`, existing
+  //      `tours`, and `tour_blackouts`. Fixes the "I don't have
+  //      access to the calendar" bug where the AI claimed no
+  //      calendar access even when the venue had availability
+  //      windows saved.
+  //
+  //   2. KNOWN_CONTACT — derived from the lead row's email/phone
+  //      columns + the latest inbound message + recent transcript.
+  //      Stops the AI from re-asking for contact info the lead
+  //      already shared.
+  //
+  // Both are best-effort. A failure inside either path falls back
+  // to "no extra context" so the reply is never blocked.
+  const recentLeadMessages = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }))
+  const contactSignals = getKnownContactSignals({
+    leadEmail: (lead.email as string | null) ?? null,
+    leadPhone: (lead.phone as string | null) ?? null,
+    latestMessage: leadMessage,
+    recentMessages: recentLeadMessages,
+  })
+
+  // Patch the lead row with anything the lead just typed when those
+  // columns are still null. Safe: we only ever fill null → value,
+  // never overwrite an existing value. Wrapped so the AI reply
+  // continues even if the update fails.
+  const justExtracted = contactSignals.extractedFromMessage
+  const leadUpdatePatch: Record<string, string> = {}
+  if (!lead.email && justExtracted.email) leadUpdatePatch.email = justExtracted.email
+  if (!lead.phone && justExtracted.phone) leadUpdatePatch.phone = justExtracted.phone
+  if (Object.keys(leadUpdatePatch).length > 0) {
+    try {
+      await supabase.from('leads').update(leadUpdatePatch).eq('id', leadId)
+    } catch (err) {
+      log.warn(
+        { err, leadId, fields: Object.keys(leadUpdatePatch) },
+        'orchestrator.handle_incoming.contact_patch_failed'
+      )
+    }
+  }
+
+  // Availability context is async (DB reads) and never throws —
+  // returns the safe "fetch_failed" / "no_availability" branch
+  // when something goes wrong.
+  const tourCtx = await buildTourAvailabilityContext({
+    supabase,
+    venue: {
+      id: venueId,
+      timezone: (venue.timezone as string | null) ?? null,
+      metadata: venue.metadata,
+    },
+    lead: {
+      id: leadId,
+      event_date: (lead.event_date as string | null) ?? null,
+    },
+    latestUserMessage: leadMessage,
+  })
+
+  const extraContextBlocks = [
+    renderTourAvailabilityPromptBlock(tourCtx),
+    renderContactSignalsPromptBlock(contactSignals),
+  ].filter((block) => block.length > 0)
+
   // Generate AI response
   const aiResponse = await generateConversationReply(
     {
@@ -454,17 +532,42 @@ export async function handleIncomingMessage(
     },
     [...messages, { role: 'lead', content: leadMessage }] as { role: 'lead' | 'ai' | 'human' | 'system'; content: string }[],
     kb,
-    false
+    false,
+    undefined,
+    extraContextBlocks
   )
 
   // Save AI response
+  // Phase 8BJ — stamp scheduling context + contact signals into the
+  // message metadata so the dashboard can render a small "Tour
+  // availability context used · N slots" debug chip on the AI draft.
   await supabase.from('messages').insert({
     conversation_id: conversationId,
     lead_id: leadId,
     venue_id: venueId,
     role: 'ai',
     content: aiResponse.message,
-    metadata: { tokens_used: aiResponse.tokens_used, latency_ms: aiResponse.latency_ms },
+    metadata: {
+      tokens_used: aiResponse.tokens_used,
+      latency_ms: aiResponse.latency_ms,
+      scheduling_intent: tourCtx.schedulingIntent.wantsTourAvailability
+        ? {
+            timeframe: tourCtx.schedulingIntent.timeframeLabel,
+            specific_booking: tourCtx.schedulingIntent.wantsSpecificBooking,
+            availability_configured: tourCtx.availabilityConfigured,
+            suggested_slots_count: tourCtx.suggestedSlots.length,
+            unavailable_reason: tourCtx.unavailableReason ?? null,
+          }
+        : null,
+      contact_signals: {
+        email_known: contactSignals.email,
+        phone_known: contactSignals.phone,
+        extracted_from_this_message: {
+          email: !!justExtracted.email,
+          phone: !!justExtracted.phone,
+        },
+      },
+    },
   })
 
   // Update conversation

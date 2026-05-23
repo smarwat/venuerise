@@ -353,6 +353,10 @@ interface HealthBody {
     meta_oauth_callback: 'mounted'
     meta_oauth_token_storage: 'mounted'
     meta_outbound_sending: 'scaffold-only'
+    ai_tour_availability_context: 'mounted'
+    ai_scheduling_intent_detection: 'mounted'
+    ai_available_slot_offering: 'mounted'
+    ai_contact_info_no_repeat_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2419,6 +2423,38 @@ export async function GET(request: Request) {
       meta_oauth_callback: 'mounted',
       meta_oauth_token_storage: 'mounted',
       meta_outbound_sending: 'scaffold-only',
+      // Phase 8BJ — Inbox AI tour availability awareness + contact
+      // info no-repeat guard. Fixes the "I don't have access to the
+      // calendar" bug where the conversation agent claimed no
+      // calendar access even when the venue had availability rows
+      // saved.
+      //   - ai_tour_availability_context: handleIncomingMessage
+      //     builds a TOUR_AVAILABILITY_CONTEXT block from
+      //     tour_availability + tours + tour_blackouts + venue
+      //     metadata settings and injects it into the conversation
+      //     prompt.
+      //   - ai_scheduling_intent_detection: deterministic helper
+      //     (lib/revenue-os/scheduling-intent.ts) classifies the
+      //     lead message for tour/availability intent before any
+      //     DB cost is incurred.
+      //   - ai_available_slot_offering: when slots exist, the
+      //     prompt instructs the model to offer them directly
+      //     ("I have these tour openings available…") and never
+      //     to claim missing calendar access.
+      //   - ai_contact_info_no_repeat_guard: KNOWN_CONTACT block
+      //     tells the model whether email/phone are already known
+      //     (from the lead row OR from the latest message OR from
+      //     the recent transcript). Missing fields can still be
+      //     asked for; present fields never get re-asked. Lead row
+      //     is also patched with newly-extracted email/phone when
+      //     those columns were null.
+      //   - Honesty: nothing here books tours autonomously. The AI
+      //     offers slots; the operator still confirms via
+      //     ScheduleTourDrawer. ADMIN_ENDPOINT_COUNT unchanged.
+      ai_tour_availability_context: 'mounted',
+      ai_scheduling_intent_detection: 'mounted',
+      ai_available_slot_offering: 'mounted',
+      ai_contact_info_no_repeat_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

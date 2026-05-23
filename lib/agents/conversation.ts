@@ -44,12 +44,34 @@ export async function generateConversationReply(
   conversationHistory: Message[],
   knowledgeBase: KnowledgeBaseEntry[],
   isFirstMessage: boolean,
-  requestId?: string
+  requestId?: string,
+  /**
+   * Phase 8BJ — optional structured context blocks the
+   * orchestrator builds before the model call. Currently:
+   *   - tour availability + scheduling intent
+   *   - known contact info (so the AI doesn't re-ask for email
+   *     or phone the lead already provided)
+   *
+   * Each entry is a pre-rendered block (see
+   * `renderTourAvailabilityPromptBlock` +
+   * `renderContactSignalsPromptBlock`). When empty, the prompt
+   * behaves exactly as before — no behavior change for callers
+   * that don't pass extra context.
+   */
+  extraContextBlocks: ReadonlyArray<string> = []
 ): Promise<ConversationResponse> {
   const kbContext = knowledgeBase
     .slice(0, 10)
     .map((kb) => `[${kb.category}] ${kb.title}: ${kb.content}`)
     .join('\n\n')
+
+  // Phase 8BJ — inject structured context blocks (tour
+  // availability + known contact info) when the orchestrator
+  // provided them. Empty array = no behavior change.
+  const extraContextSection =
+    extraContextBlocks.length > 0
+      ? `\n\n${extraContextBlocks.filter((b) => b && b.trim().length > 0).join('\n\n')}`
+      : ''
 
   const systemPrompt = `You are ${venue.ai_persona_name}, the event coordinator at ${venue.name}.
 
@@ -59,7 +81,7 @@ PRICING: ${venue.base_price ? `Starting from $${venue.base_price}` : 'Contact fo
 STYLE: ${venue.style_tags.join(', ') || 'timeless elegance'}
 
 KNOWLEDGE BASE:
-${kbContext || 'No specific FAQs loaded yet.'}
+${kbContext || 'No specific FAQs loaded yet.'}${extraContextSection}
 
 RESPONSE RULES — follow exactly:
 • Never mention you are AI, a bot, or automated
@@ -70,6 +92,18 @@ RESPONSE RULES — follow exactly:
 • If they ask about booking → invite them for a tour first
 • Always address them by first name
 • Build rapport → confirm fit → create gentle urgency → schedule tour
+
+TOUR SCHEDULING RULES (Phase 8BJ):
+• If a TOUR_AVAILABILITY_CONTEXT block is present and lists suggested slots, offer those specific slots directly. Phrase it as "I have these tour openings available…" and ask the lead to pick one.
+• NEVER say "I don't have access to the calendar" or "I can't see the calendar" or anything similar — when slots are provided, use them.
+• If TOUR_AVAILABILITY_CONTEXT says "Availability configured: no" — say the team will confirm available tour times manually. Do NOT invent times. Still do NOT say you lack calendar access; we just don't have availability windows configured yet.
+• If TOUR_AVAILABILITY_CONTEXT says "No open windows found" — say you'll check with the team for the nearest openings. Do NOT invent times.
+• Do NOT say a tour is "confirmed" or "booked" or "scheduled" unless the system explicitly tells you so. Phrase it as "I can get that time prepared for confirmation."
+
+CONTACT INFO RULES (Phase 8BJ):
+• If a KNOWN_CONTACT block says email is "present", do NOT ask the lead for their email.
+• If KNOWN_CONTACT says phone is "present", do NOT ask the lead for their phone.
+• Never re-ask for contact info we already have.
 
 LEAD INTEL (use subtly, don't repeat back mechanically):
 - Name: ${lead.name.split(' ')[0]}
