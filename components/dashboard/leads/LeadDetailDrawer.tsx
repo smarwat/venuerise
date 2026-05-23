@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Trash2,
   CalendarCheck,
+  Calendar,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { Badge } from '../ui/Badge'
@@ -1441,6 +1442,55 @@ export default function LeadDetailDrawer({
   const fresh = isFreshToday(lead.created_at)
   const lastMessage = convo.messages[convo.messages.length - 1] ?? null
 
+  // Phase 8BK — derive the most recent lead-side slot selection from
+  // the loaded conversation messages. The orchestrator stamps
+  // `metadata.tour_slot_selection` on a lead message when the
+  // deterministic detector matched the lead's reply against the
+  // prior AI message's `offered_tour_slots`. We surface that as a
+  // "Tour time selected — Create tour" panel below.
+  //
+  // Skipped when:
+  //   - no selection metadata found
+  //   - the slot itself is already in the past
+  //   - the existing tourSignal already indicates a scheduled tour
+  //     (the operator has already created the tour row; the realtime
+  //     tour refresh will hide the panel naturally)
+  const slotSelection = (() => {
+    for (let i = convo.messages.length - 1; i >= 0; i -= 1) {
+      const m = convo.messages[i]
+      if (m.role !== 'lead') continue
+      const meta = (m.metadata as Record<string, unknown> | null) ?? null
+      const raw = meta?.['tour_slot_selection'] as
+        | Record<string, unknown>
+        | undefined
+      if (!raw || raw['selected'] !== true) continue
+      const startsAt = typeof raw['starts_at'] === 'string' ? raw['starts_at'] : null
+      const endsAt = typeof raw['ends_at'] === 'string' ? raw['ends_at'] : null
+      const label = typeof raw['label'] === 'string' ? raw['label'] : null
+      const confidence =
+        raw['confidence'] === 'high' ||
+        raw['confidence'] === 'medium' ||
+        raw['confidence'] === 'low'
+          ? (raw['confidence'] as 'high' | 'medium' | 'low')
+          : 'medium'
+      if (!startsAt || !endsAt || !label) continue
+      const startsAtMs = new Date(startsAt).getTime()
+      if (!Number.isFinite(startsAtMs)) continue
+      if (startsAtMs <= Date.now()) return null
+      // If the existing tourSignal already indicates a scheduled
+      // tour for this lead, the operator has already acted — hide
+      // the panel.
+      if (
+        tourSignal?.signal === 'tour_scheduled_unconfirmed' ||
+        tourSignal?.signal === 'tour_today'
+      ) {
+        return null
+      }
+      return { startsAt, endsAt, label, confidence, messageId: m.id }
+    }
+    return null
+  })()
+
   // Phase 8AV — Brand Voice escalation gate.
   //
   // `confidenceForSelected` is the per-variant score for whatever the
@@ -1626,6 +1676,64 @@ export default function LeadDetailDrawer({
                 it is. */}
             {speedScore && <SpeedToLeadChip score={speedScore} />}
           </div>
+
+          {/* Phase 8BK — Tour Slot Selection panel. The lead picked
+              one of the slots the AI offered ("Tuesday at 11 works").
+              The deterministic detector matched it against the prior
+              AI message's `offered_tour_slots` and stamped
+              `metadata.tour_slot_selection` on the lead message.
+              This panel turns that detection into a one-click
+              "Create tour" affordance that opens the existing
+              ScheduleTourDrawer prefilled.
+
+              Renders ABOVE TourReadinessPanel because once the lead
+              has named a specific time, that's the most concrete
+              next action available to the operator. */}
+          {slotSelection && (
+            <div className="rounded-2xl border border-[#BFDBFE] bg-gradient-to-br from-[#EFF6FF] to-white p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#1D4ED8] text-white shrink-0">
+                  <Calendar className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-[13px] font-semibold text-[#0F172A]">
+                      Tour time selected
+                    </p>
+                    {slotSelection.confidence === 'medium' && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                        Medium confidence
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[14px] text-[#0F172A]">
+                    {lead.name.split(/\s+/)[0]} selected{' '}
+                    <strong>{slotSelection.label}</strong>.
+                  </p>
+                  {slotSelection.confidence === 'medium' && (
+                    <p className="mt-1 text-[12px] text-[#92400E]">
+                      Medium confidence match — review before scheduling.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setScheduleSeedAt(slotSelection.startsAt)
+                      setScheduleOpen(true)
+                    }}
+                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#0F172A] text-white text-[12.5px] font-semibold hover:bg-[#1E293B] transition-colors shadow-[0_4px_14px_rgba(15,23,42,0.25)]"
+                  >
+                    <Calendar className="h-3.5 w-3.5" />
+                    Create tour
+                  </button>
+                  <p className="mt-2 text-[11px] text-[#94A3B8] leading-relaxed">
+                    Opens the schedule drawer with this time prefilled.
+                    No tour is created until you confirm.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Phase 8AT — Tour Readiness panel. Rendered FIRST when
               present because tour booking is closer to revenue than

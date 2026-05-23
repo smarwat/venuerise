@@ -357,6 +357,10 @@ interface HealthBody {
     ai_scheduling_intent_detection: 'mounted'
     ai_available_slot_offering: 'mounted'
     ai_contact_info_no_repeat_guard: 'mounted'
+    ai_tour_slot_selection_detection: 'mounted'
+    tour_slot_selection_metadata: 'mounted'
+    operator_create_tour_from_selected_slot: 'mounted'
+    tour_selection_confirmation_guardrail: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2455,6 +2459,38 @@ export async function GET(request: Request) {
       ai_scheduling_intent_detection: 'mounted',
       ai_available_slot_offering: 'mounted',
       ai_contact_info_no_repeat_guard: 'mounted',
+      // Phase 8BK — Tour slot selection detection + operator
+      // one-click tour creation. Closes the loop on "AI offered
+      // slots → lead picked one → tour exists" without adding
+      // autonomous booking or a public confirmation link.
+      //   - ai_tour_slot_selection_detection: deterministic helper
+      //     (lib/revenue-os/tour-slot-selection.ts) matches lead
+      //     replies against the prior AI message's
+      //     `offered_tour_slots`. Supports ordinals, weekday+time,
+      //     time-only, weekday-only, and bare-affirmative-with-
+      //     one-slot patterns. Confidence: high / medium / low.
+      //   - tour_slot_selection_metadata: lead message metadata
+      //     stamps `tour_slot_selection` when detected; AI message
+      //     metadata stamps `offered_tour_slots` when slots are
+      //     surfaced so the next inbound reply can match against
+      //     them.
+      //   - operator_create_tour_from_selected_slot: LeadDetailDrawer
+      //     renders a "Tour time selected — Create tour" panel that
+      //     opens the existing ScheduleTourDrawer prefilled with
+      //     `defaultScheduledAt = starts_at`. Operator still confirms;
+      //     no tour row is created until the drawer's save runs.
+      //   - tour_selection_confirmation_guardrail: prompt rule
+      //     forbids the AI from saying the tour is "confirmed" or
+      //     "booked" or "scheduled." The right phrasing is
+      //     "prepared for confirmation." Panel hides itself when an
+      //     existing tour signal already fires for the lead.
+      //   - Honesty: no autonomous booking, no public confirmation
+      //     link, no external calendar integration.
+      //     ADMIN_ENDPOINT_COUNT unchanged.
+      ai_tour_slot_selection_detection: 'mounted',
+      tour_slot_selection_metadata: 'mounted',
+      operator_create_tour_from_selected_slot: 'mounted',
+      tour_selection_confirmation_guardrail: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

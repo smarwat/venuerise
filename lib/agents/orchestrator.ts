@@ -17,6 +17,10 @@ import {
   getKnownContactSignals,
   renderContactSignalsPromptBlock,
 } from '@/lib/revenue-os/contact-extraction'
+import {
+  detectTourSlotSelection,
+  type OfferedTourSlot,
+} from '@/lib/revenue-os/tour-slot-selection'
 
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
@@ -431,13 +435,86 @@ export async function handleIncomingMessage(
   const kb = (kbRes.data ?? []) as { category: string; title: string; content: string }[]
   if (!venue) throw new Error('Venue not found')
 
-  // Save incoming message
+  // ── Phase 8BK — detect selected tour slot BEFORE saving the lead
+  //    message so we can stamp the selection result onto the message
+  //    metadata. We look up the most recent AI message that offered
+  //    slots (Phase 8BJ stamps `offered_tour_slots` into the AI
+  //    message metadata when slots are surfaced) and run the
+  //    deterministic detector against the lead's latest reply.
+  //
+  //    If detected, the lead message lands with
+  //    `metadata.tour_slot_selection` set, which the LeadDetailDrawer
+  //    panel reads to surface a "Create tour" affordance.
+  //
+  //    Best-effort: any failure here degrades to "no selection" — the
+  //    lead message is still saved and the AI reply still runs.
+  type RecentAiMessageRow = {
+    id: string
+    metadata: Record<string, unknown> | null
+  }
+  let detectedSelection: ReturnType<typeof detectTourSlotSelection> | null =
+    null
+  let matchedFromMessageId: string | null = null
+  try {
+    const { data: recentAiRows } = await supabase
+      .from('messages')
+      .select('id, metadata')
+      .eq('conversation_id', conversationId)
+      .eq('role', 'ai')
+      .order('created_at', { ascending: false })
+      .limit(3)
+    for (const row of (recentAiRows ?? []) as RecentAiMessageRow[]) {
+      const raw = row?.metadata?.['offered_tour_slots']
+      if (!Array.isArray(raw) || raw.length === 0) continue
+      const slots = (raw as Array<Record<string, unknown>>)
+        .filter(
+          (s) =>
+            typeof s?.['starts_at'] === 'string' &&
+            typeof s?.['ends_at'] === 'string' &&
+            typeof s?.['label'] === 'string'
+        )
+        .map(
+          (s) =>
+            ({
+              starts_at: s['starts_at'] as string,
+              ends_at: s['ends_at'] as string,
+              label: s['label'] as string,
+              rationale: (s['rationale'] as string | undefined) ?? null,
+            }) satisfies OfferedTourSlot
+        )
+      if (slots.length === 0) continue
+      detectedSelection = detectTourSlotSelection({
+        leadMessage,
+        offeredSlots: slots,
+      })
+      matchedFromMessageId = row.id
+      break
+    }
+  } catch (err) {
+    log.warn({ err, conversationId }, 'orchestrator.slot_selection_lookup_failed')
+  }
+
+  // Save incoming message (with slot-selection metadata when detected)
+  const leadMessageMetadata: Record<string, unknown> = {}
+  if (detectedSelection && detectedSelection.selected && detectedSelection.selectedSlot) {
+    leadMessageMetadata.tour_slot_selection = {
+      selected: true,
+      starts_at: detectedSelection.selectedSlot.startsAt,
+      ends_at: detectedSelection.selectedSlot.endsAt,
+      label: detectedSelection.selectedSlot.label,
+      confidence: detectedSelection.confidence,
+      match_reason: detectedSelection.selectedSlot.matchReason,
+      matched_from_message_id: matchedFromMessageId,
+    }
+  }
   await supabase.from('messages').insert({
     conversation_id: conversationId,
     lead_id: leadId,
     venue_id: venueId,
     role: 'lead',
     content: leadMessage,
+    metadata:
+      Object.keys(leadMessageMetadata).length > 0 ? leadMessageMetadata : null,
   })
 
   // ── Phase 8BJ — tour availability + contact-info context ──────────
@@ -505,9 +582,23 @@ export async function handleIncomingMessage(
     latestUserMessage: leadMessage,
   })
 
+  // Phase 8BK — when the deterministic detector caught a slot
+  // selection in the lead's latest reply, surface it to the agent
+  // so the reply acknowledges the picked time (without claiming
+  // the tour is "confirmed" — see prompt rules in conversation.ts).
+  const slotSelectionBlock =
+    detectedSelection && detectedSelection.selected && detectedSelection.selectedSlot
+      ? renderSlotSelectionPromptBlock(detectedSelection)
+      : detectedSelection &&
+          !detectedSelection.selected &&
+          detectedSelection.confidence === 'low'
+        ? renderAmbiguousSlotSelectionPromptBlock()
+        : ''
+
   const extraContextBlocks = [
     renderTourAvailabilityPromptBlock(tourCtx),
     renderContactSignalsPromptBlock(contactSignals),
+    slotSelectionBlock,
   ].filter((block) => block.length > 0)
 
   // Generate AI response
@@ -541,6 +632,20 @@ export async function handleIncomingMessage(
   // Phase 8BJ — stamp scheduling context + contact signals into the
   // message metadata so the dashboard can render a small "Tour
   // availability context used · N slots" debug chip on the AI draft.
+  // Phase 8BK — when the reply offered concrete slots, also persist
+  // the structured slot list so the NEXT inbound lead message can
+  // detect selection against it (LeadDetailDrawer's "Tour time
+  // selected" panel reads this off the prior AI message's metadata).
+  const aiOfferedSlots =
+    tourCtx.schedulingIntent.wantsTourAvailability &&
+    tourCtx.suggestedSlots.length > 0
+      ? tourCtx.suggestedSlots.map((s) => ({
+          starts_at: s.startsAt,
+          ends_at: s.endsAt,
+          label: s.label,
+          rationale: s.rationale,
+        }))
+      : null
   await supabase.from('messages').insert({
     conversation_id: conversationId,
     lead_id: leadId,
@@ -559,6 +664,8 @@ export async function handleIncomingMessage(
             unavailable_reason: tourCtx.unavailableReason ?? null,
           }
         : null,
+      offered_tour_slots: aiOfferedSlots,
+      tour_availability_context_used: aiOfferedSlots !== null,
       contact_signals: {
         email_known: contactSignals.email,
         phone_known: contactSignals.phone,
@@ -567,6 +674,12 @@ export async function handleIncomingMessage(
           phone: !!justExtracted.phone,
         },
       },
+      slot_selection_ack: detectedSelection?.selected
+        ? {
+            label: detectedSelection.selectedSlot?.label,
+            confidence: detectedSelection.confidence,
+          }
+        : null,
     },
   })
 
@@ -627,4 +740,32 @@ export async function processPendingFollowUp(followUpId: string) {
   }).eq('id', followUpId)
 
   return { success: true, subject: message.subject }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+//  Phase 8BK — slot-selection prompt rendering helpers
+// ──────────────────────────────────────────────────────────────────────
+
+function renderSlotSelectionPromptBlock(
+  selection: ReturnType<typeof detectTourSlotSelection>
+): string {
+  if (!selection.selected || !selection.selectedSlot) return ''
+  const lines: string[] = []
+  lines.push('TOUR_SLOT_SELECTION:')
+  lines.push(`- Lead selected: ${selection.selectedSlot.label}`)
+  lines.push(`- Match confidence: ${selection.confidence}`)
+  lines.push(
+    `- Instruction: Acknowledge the selected time naturally. Say "I can get [time] prepared for confirmation" — do NOT say the tour is confirmed/booked/scheduled. Do NOT ask the lead to pick again.`
+  )
+  return lines.join('\n')
+}
+
+function renderAmbiguousSlotSelectionPromptBlock(): string {
+  const lines: string[] = []
+  lines.push('TOUR_SLOT_SELECTION:')
+  lines.push(`- Lead's reply may be selecting a time, but it's ambiguous.`)
+  lines.push(
+    `- Instruction: Ask the lead to clarify which of the listed slots they meant. Reference the offered times by their labels.`
+  )
+  return lines.join('\n')
 }
