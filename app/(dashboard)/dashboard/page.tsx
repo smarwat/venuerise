@@ -10,6 +10,12 @@ import ExecutiveHero, {
 import TodayPriorityCard, {
   type TodayPriorityRow,
 } from '@/components/dashboard/TodayPriorityCard'
+// GTM-0I — real-time AI activity ticker. Server-renders the latest
+// ai_actions rows for the venue; the component subscribes to
+// postgres_changes for live INSERTs after hydration.
+import AIActivityTicker, {
+  type AIActivityRow,
+} from '@/components/dashboard/AIActivityTicker'
 import WeeklyToursStrip, {
   type WeeklyTourDay,
   type WeeklyTourItem,
@@ -158,7 +164,7 @@ export default async function DashboardPage() {
   // select to also pull `id` + `metadata` so
   // buildAttributionSummary can group rows by source label
   // without a second round-trip.
-  const [leadsRes, recentLeadsRes] = await Promise.all([
+  const [leadsRes, recentLeadsRes, aiActivityRes] = await Promise.all([
     venue
       ? supabase
           .from('leads')
@@ -177,9 +183,23 @@ export default async function DashboardPage() {
     venue
       ? supabase.from('leads').select('*').eq('venue_id', venue.id).order('created_at', { ascending: false }).limit(8)
       : Promise.resolve({ data: [] as { id: string; name: string; email: string; lead_score: number; stage: string; created_at: string; guest_count?: number | null }[] }),
+    // GTM-0I — server-hydrate the AI activity ticker with the last
+    // 8 ai_actions rows. Capped at 8 so the ticker has a small
+    // buffer; the component only ever renders 5. Best-effort: any
+    // RLS denial or query failure collapses to an empty list and
+    // the ticker renders its waiting-state copy.
+    venue
+      ? supabase
+          .from('ai_actions')
+          .select('id, agent, action, input_summary, output_summary, success, lead_id, created_at')
+          .eq('venue_id', venue.id)
+          .order('created_at', { ascending: false })
+          .limit(8)
+      : Promise.resolve({ data: [] as AIActivityRow[] }),
   ])
   const leads = leadsRes.data ?? []
   const recentLeads = recentLeadsRes.data ?? []
+  const initialAiActivity = (aiActivityRes.data ?? []) as AIActivityRow[]
 
   // Phase 8BH — fetch the per-venue tour list so the
   // attribution summary can count tours-scheduled per source.
@@ -622,6 +642,18 @@ export default async function DashboardPage() {
             : undefined
         }
         tiles={heroTiles}
+      />
+
+      {/* GTM-0I — Real-time AI activity ticker. Compact 5-row card
+          that shows what VenueRise is doing in the background
+          (drafting replies, qualifying inquiries, suggesting tour
+          times, preparing follow-ups). Server-rendered for instant
+          paint; subscribes to ai_actions postgres_changes for live
+          INSERTs. Buyer-friendly copy — no autonomous-send claims.
+          Renders even when ai_activity is empty (waiting state). */}
+      <AIActivityTicker
+        initialActions={initialAiActivity}
+        venueId={venue?.id ?? null}
       />
 
       {/* GTM-0D — Today's priority. The "do these things first"

@@ -410,6 +410,10 @@ interface HealthBody {
     settings_knowledge_base_empty_state: 'mounted'
     settings_ai_tour_availability_copy: 'mounted'
     settings_role_guide: 'mounted'
+    overview_ai_activity_ticker: 'mounted'
+    ai_actions_realtime_feed: 'mounted'
+    ai_activity_buyer_friendly_copy: 'mounted'
+    overview_live_ai_work_surface: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2857,6 +2861,35 @@ export async function GET(request: Request) {
       settings_knowledge_base_empty_state: 'mounted',
       settings_ai_tour_availability_copy: 'mounted',
       settings_role_guide: 'mounted',
+      // GTM-0I — Real-time AI activity ticker on /dashboard.
+      // Server-renders the latest 8 ai_actions rows; the client
+      // component subscribes to postgres_changes for live INSERTs.
+      // Sits between ExecutiveHero and TodayPriorityCard.
+      //   - overview_ai_activity_ticker: AIActivityTicker mounted
+      //     on the Overview page with initialActions hydrated
+      //     server-side.
+      //   - ai_actions_realtime_feed: client subscribes to
+      //     `ai_actions:venue:<id>` filtered by venue_id.
+      //     RLS-scoped — only rows the user can SELECT come
+      //     through Realtime.
+      //   - ai_activity_buyer_friendly_copy: describeAction maps
+      //     internal action strings (handle_new_lead, instant_lead
+      //     _response.generated, draft_regenerate, etc) into safe
+      //     buyer copy ("Drafted an instant reply for Sarah",
+      //     "Qualified a new website inquiry", "Suggested tour
+      //     times for a lead"). Never claims sent/booked/recovered
+      //     when the underlying record doesn't prove it.
+      //   - overview_live_ai_work_surface: visual "Live" dot in
+      //     the header — solid emerald when the Realtime channel
+      //     reports SUBSCRIBED, mutes to slate on close/error.
+      //     Cosmetic; no fallback polling.
+      // No new tables, no new API routes, no backend activity
+      // endpoint. Uses existing ai_actions writes from the
+      // orchestrator + qualifier + draft routes.
+      overview_ai_activity_ticker: 'mounted',
+      ai_actions_realtime_feed: 'mounted',
+      ai_activity_buyer_friendly_copy: 'mounted',
+      overview_live_ai_work_surface: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
