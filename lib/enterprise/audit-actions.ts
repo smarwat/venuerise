@@ -204,6 +204,20 @@ export const AUDIT_ACTIONS = {
   // ── Meta / Instagram / Facebook connector (Phase 8BF) ───────────────────
   META_WEBHOOK_TEST_PARSE: 'meta_webhook_test_parse',
 
+  // ── Lead-side tour confirmation links (Phase 8BL) ──────────────────────
+  // Recorded by app/api/tour/confirm-slot/[token]/route.ts after a
+  // lead clicks a confirmation link and we successfully:
+  //   (a) win the single-use claim on the token row,
+  //   (b) re-check the slot is still available, and
+  //   (c) insert the tours row.
+  // metadata.outcome distinguishes the success path from the
+  // post-claim tour-insert failure path; the audit row is written
+  // in both cases so a tracker can correlate redemption attempts
+  // against created tours.
+  // actor_kind is 'system' (no operator clicked anything); the
+  // route is anonymous + token-authenticated.
+  TOUR_CONFIRMED_BY_PUBLIC_LINK: 'tour_confirmed_by_public_link',
+
   // ── Meta OAuth (Phase GTM-Meta-OAuth) ──────────────────────────────────
   // Distinct from `channel_connection_created` (the operator-typed
   // manual connection row). These cover the OAuth-flow side: an

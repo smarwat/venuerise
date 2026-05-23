@@ -316,3 +316,25 @@ The test-parse audit row carries only parser-derived
 signals (`object_type`, `events_parsed`, `events_ignored`,
 `channels`). Raw payload bytes are NEVER stamped into
 audit metadata.
+
+---
+
+## Phase 8BL — Lead-side tour confirmation links
+
+| Route | Method | Audit action |
+|---|---|---|
+| `/api/tour/confirm-slot/[token]` | POST | `tour_confirmed_by_public_link` on both the success path AND the post-claim tour-insert failure path (metadata.outcome distinguishes). `actor_kind = 'system'`. `target_table = 'tours'`, `target_id = <created tour id>` on success; `target_table = 'tour_slot_confirmation_tokens'`, `target_id = <token id>` on the rare failure path. Metadata records `token_id`, `token_redacted` (6-char prefix . 6-char suffix only — NEVER the raw token), `slot_label`, `slot_starts_at`, `slot_ends_at`, `conversation_id`, `offered_by_message_id`. |
+| `/tour/confirm-slot/[token]` | GET | AUDIT_EXEMPT — read-only page render. No mutation, no tour creation. Link previewers crawl this URL; auditing every preview would spam the table. |
+
+The audit row is the operator-visible "the lead booked themselves
+in" signal. `tour_status_events` (Phase 8M) also gets a row
+(`actor_kind = 'lead_token'`, `action = 'confirm'`) so the unified
+activity feed renders the redemption alongside operator-driven tour
+events. The `messages` table receives a `role = 'system'` row in
+the conversation with `metadata.source = 'lead_confirmation_link'`
+so the ConversationThread renders a blue confirmation chip.
+
+The token storage table `tour_slot_confirmation_tokens` is
+deny-all RLS — no operator-readable surface today; cleanup is
+manual or via a future cron that scans `expires_at < now() AND
+status = 'active'`.

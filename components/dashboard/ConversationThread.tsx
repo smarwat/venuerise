@@ -163,9 +163,26 @@ export default function ConversationThread({ conversationId, initialMessages, le
             const isSystem = msg.role === 'system'
 
             if (isSystem) {
+              // Phase 8BL — distinct chip color for system messages
+              // emitted by /api/tour/confirm-slot/[token]. The
+              // orchestrator-written system messages from elsewhere
+              // (re-schedule, etc.) keep the neutral slate chip;
+              // lead-clicked confirmations get a blue accent so the
+              // operator's eye catches them in a long thread.
+              const sysMeta = msg.metadata ?? null
+              const isLeadConfirmation =
+                !!sysMeta && sysMeta.source === 'lead_confirmation_link'
               return (
                 <div key={msg.id} className="flex justify-center">
-                  <div className="bg-[#F8FAFC] border border-[#E6E8EF] rounded-full px-3 py-1 text-[11px] text-[#64748B]">
+                  <div
+                    className={cn(
+                      'rounded-full px-3 py-1 text-[11px] font-medium border',
+                      isLeadConfirmation
+                        ? 'bg-[#EFF6FF] border-[#BFDBFE] text-[#1D4ED8]'
+                        : 'bg-[#F8FAFC] border-[#E6E8EF] text-[#64748B]'
+                    )}
+                  >
+                    {isLeadConfirmation ? '✓ ' : ''}
                     {msg.content}
                   </div>
                 </div>

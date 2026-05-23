@@ -497,3 +497,155 @@ TOUR_SLOT_SELECTION:
   doesn't poll for new lead messages — the operator sees the
   selection state at drawer-load time. Refresh the drawer (or
   re-open the lead) to see updates.
+
+---
+
+# Phase 8BL — Lead-Side Tour Confirmation Links
+
+## What changed
+
+The AI now embeds a **signed, expiring, single-use confirmation
+link** next to each slot it offers. When the lead clicks the link:
+
+1. `GET /tour/confirm-slot/<token>` validates the token + status +
+   expiry server-side and renders a confirm button (NOT a
+   tour-creating side effect — link previewers can't book by
+   accident).
+2. `POST /api/tour/confirm-slot/<token>` validates the token again,
+   re-checks slot availability (blackouts + conflicts + window
+   membership), atomically flips the token to `used` (single-use
+   claim), creates the `tours` row tagged
+   `metadata.source = 'lead_confirmation_link'`, writes a system
+   message into the conversation, and records both a
+   `tour_status_events` row and an `audit_events` row
+   (`tour_confirmed_by_public_link`).
+3. The operator sees the system message render in the
+   ConversationThread with a blue confirmation chip — distinct
+   from neutral system messages — so they can immediately see
+   that a tour was self-confirmed by the lead.
+
+Honesty contract preserved:
+- No autonomous outbound messaging. The lead's click is the
+  trigger; the operator still gates every other reply.
+- No external calendar sync (Google / Calendly etc).
+- No public listing of all venue availability.
+- No raw token storage (DB stores SHA-256 of the URL token).
+- 7-day default expiry, single-use enforced at the DB layer.
+
+## Manual test cases
+
+### 8BL-1 · Happy path: AI offers slot with link → lead clicks → tour created
+
+1. Set `TOUR_ACTION_SECRET` (≥16 chars) and `NEXT_PUBLIC_APP_URL`.
+2. Configure tour_availability (e.g. Mon-Fri 10:00-17:00) and at
+   least one open weekday.
+3. Lead sends "Can I tour next Tuesday?" via the widget.
+4. **Expect AI reply** to include one or more lines shaped like
+   `Tue, May 26 · 11:00 AM — confirm: https://<app-url>/tour/confirm-slot/<token>`
+   — the URL MUST be the exact one provided in the prompt block,
+   not a paraphrase.
+5. Open the URL in a fresh browser window. **Expect** a neutral
+   white card with "Confirm your tour at <venue>" and a single
+   "Confirm this time" button. No tour row should exist yet.
+6. Click "Confirm this time". **Expect** the button → "Confirming…"
+   → "You're all set" copy.
+7. Verify `tours` row exists for `(venue_id, lead_id, scheduled_at)`,
+   `metadata.source = 'lead_confirmation_link'`.
+8. Verify the token row in `tour_slot_confirmation_tokens` flipped
+   `status: 'used'`, `used_at` populated, `used_tour_id` matches.
+9. Verify the inbox conversation now shows a blue-chipped system
+   message: "Lead confirmed tour for Tue, May 26 · 11:00 AM via
+   confirmation link."
+10. Verify `audit_events` has a `tour_confirmed_by_public_link`
+    row with `actor_kind = 'system'`, `target_table = 'tours'`,
+    `target_id = <new tour id>`.
+11. Verify `tour_status_events` has an `action = 'confirm'`,
+    `actor_kind = 'lead_token'`, `metadata.source =
+    'lead_confirmation_link'` row.
+
+### 8BL-2 · Re-click after success: idempotent, no duplicate tour
+
+1. After 8BL-1 succeeds, refresh the confirm-slot page in the
+   same browser.
+2. **Expect** the page to render the `already_used` failure
+   surface: "This tour time is already on hold."
+3. POST the same token directly: `curl -X POST <url>`. **Expect**
+   HTTP 409 with `{ error: 'already_used', ... }`.
+4. Verify no additional `tours` row was created.
+
+### 8BL-3 · Expired token
+
+1. Manually update one token row in psql:
+   `update tour_slot_confirmation_tokens set expires_at = now() - interval '1 hour' where id = '<id>';`
+2. Click the link. **Expect** the "Link expired" failure page.
+3. POST the same token. **Expect** HTTP 410 with
+   `{ error: 'expired', ... }`.
+4. No tour, no audit row.
+
+### 8BL-4 · Revoked by newer AI reply
+
+1. Trigger an AI reply with slots offered (8BL-1 steps 1-4).
+2. Without clicking, send another inbound message that triggers
+   the AI to re-offer slots (e.g. "Actually can I get Tuesday
+   morning?").
+3. **Expect** all prior `active` tokens for this
+   (lead_id, conversation_id) to flip to `revoked` in the DB.
+4. Click the OLD link. **Expect** "This link was replaced by a
+   newer one" page. POST returns HTTP 410 `revoked`.
+5. Click the NEW link. **Expect** happy path 8BL-1 step 6+.
+
+### 8BL-5 · Slot conflict at click time
+
+1. Trigger an AI reply with a slot. Capture the token URL.
+2. As an operator, schedule a different tour that overlaps the
+   offered slot (use the ScheduleTourDrawer).
+3. Click the confirmation link. The SSR page should render the
+   confirm button (the page doesn't re-check at SSR — that's by
+   design, it's a heavy check we run on POST).
+4. Click "Confirm this time". **Expect** HTTP 409 with
+   `{ error: 'slot_unavailable', reason: 'conflict', ... }` and
+   the in-page error: "This time slot is no longer available."
+5. Verify the token row stayed `active` (no `used_at`).
+6. Verify no second tour row was created.
+
+### 8BL-6 · `TOUR_ACTION_SECRET` not configured → graceful fallback
+
+1. Unset `TOUR_ACTION_SECRET` and restart the server.
+2. Lead sends "Can I tour Tuesday?". **Expect** AI reply offers
+   the times in plain text (no `Confirm:` URL lines).
+3. AI message metadata's `confirmation_links_summary` should
+   record `{ issued: 0, skipped_reason: 'secret_not_configured' }`.
+4. No rows in `tour_slot_confirmation_tokens`.
+5. The "team will confirm" pathway still works — operator
+   schedules manually as in 8BK.
+
+## Known limitations (8BL-specific)
+
+- **One token per slot per AI reply.** If the AI offers 3 slots,
+  3 tokens are minted. Each lead click consumes one; the other
+  two stay `active` until the orchestrator's next slot offer
+  revokes them (or the 7-day expiry fires).
+- **No realtime token-status surface for the operator.** The
+  confirmation summary on the AI message metadata snapshots the
+  issue-time state (`issued: N`). To see redemptions / revocations
+  the operator currently has to look at the inbox thread (system
+  message) or `tours` row.
+- **No "click-to-cancel" yet.** Phase 8K's `/tour/cancel?token=...`
+  cancels an EXISTING tour by id. A lead who clicked a slot-
+  confirmation link and now wants to cancel needs to reply to
+  the conversation; the cancel flow re-uses the existing 8K
+  email + token surface.
+- **Future-only.** The SSR page rejects past-time slots before
+  ever rendering the confirm button. The POST route re-checks
+  the same guard.
+- **No tour_action_events row.** The single-use claim lives on
+  `tour_slot_confirmation_tokens` (unique `token_hash`) — we do
+  NOT also write `tour_action_events` because that table is keyed
+  on an existing `tour_id` and is owned by the 8K/8L email-link
+  flow.
+- **`offered_by_message_id` is back-filled.** The token row is
+  inserted before the AI message is saved (we need the URL to
+  paste into the prompt), then the orchestrator updates the
+  token row with `offered_by_message_id` once the message lands.
+  A crash between insert and back-fill leaves the column null;
+  the token still works.

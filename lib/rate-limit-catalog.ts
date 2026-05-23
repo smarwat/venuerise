@@ -119,6 +119,13 @@ export const RATE_LIMIT_DOMAINS = {
     digestResubscribe:  'public:digest-resubscribe',
     tourConfirm:        'public:tour-confirm',
     tourCancel:         'public:tour-cancel',
+    // Phase 8BL — POST /api/tour/confirm-slot/[token]. Anonymous
+    // public POST that converts a signed slot-confirmation token
+    // into a tours row. Per-IP cap protects against link-scrape /
+    // brute-force token forgeries. Burst from a single legitimate
+    // lead is ≤ 3 retries on flaky networks; userAction's 30/min
+    // ceiling leaves plenty of headroom.
+    tourConfirmSlot:    'public:tour-confirm-slot',
   },
 
   // ── SSO / auth (Phase 9G). ─────────────────────────────────────────────

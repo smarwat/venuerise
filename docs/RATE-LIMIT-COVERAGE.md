@@ -409,3 +409,12 @@ runaway test loop should not OOM the limiter. The admin
 test-parse endpoint uses the standard 30/min user bucket.
 
 Catalog entry: `adminIntegrations.metaWebhookTest`.
+
+---
+
+## Phase 8BL — Lead-side tour confirmation links
+
+| Route | Method | Bucket / limiter key | Rationale |
+|---|---|---|---|
+| `/api/tour/confirm-slot/[token]` | POST | `public:tour-confirm-slot:{ip}` via `rateLimitUserAction` | Anonymous public mutating endpoint. Per-IP cap protects against brute-force token forgery and link-scrape. 30/min/IP matches the rest of the public anonymous surface (tour/confirm, tour/cancel). |
+| `/tour/confirm-slot/[token]` | GET | not rate-limited | Read-only SSR page. Server validates the token but does not mutate state. Link previewers + crawlers GET this URL frequently; rate-limiting at the page render would block legitimate previews without protecting any mutation surface. The mutation is gated by the POST limiter. |

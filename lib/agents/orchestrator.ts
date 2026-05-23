@@ -21,6 +21,11 @@ import {
   detectTourSlotSelection,
   type OfferedTourSlot,
 } from '@/lib/revenue-os/tour-slot-selection'
+import {
+  createTourSlotConfirmationToken,
+  revokeActiveTokensForLead,
+  tourSlotConfirmationSecretConfigured,
+} from '@/lib/revenue-os/tour-slot-confirmation-token'
 
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
@@ -595,6 +600,74 @@ export async function handleIncomingMessage(
         ? renderAmbiguousSlotSelectionPromptBlock()
         : ''
 
+  // ── Phase 8BL — mint lead-side confirmation links for each
+  //    suggested slot BEFORE the AI generates its reply. We
+  //    inject the URLs into the prompt so the AI includes them
+  //    verbatim in its message (the prompt rules forbid invention
+  //    or paraphrasing of URLs).
+  //
+  //    Best-effort: if TOUR_ACTION_SECRET is unset, or a single
+  //    token insert fails, we degrade gracefully — the prompt
+  //    block renders without URLs and the AI falls back to the
+  //    "I'll have the team confirm" wording.
+  //
+  //    Before issuing fresh tokens we revoke any still-active
+  //    tokens this lead+conversation had outstanding. Stale links
+  //    from earlier in the conversation become inert immediately —
+  //    a lead who picked a different time can't accidentally
+  //    redeem an older slot offer.
+  let tokenIssuanceSummary: {
+    issued: number
+    skipped_reason: string | null
+  } = { issued: 0, skipped_reason: null }
+  if (
+    tourCtx.schedulingIntent.wantsTourAvailability &&
+    tourCtx.suggestedSlots.length > 0 &&
+    tourSlotConfirmationSecretConfigured()
+  ) {
+    await revokeActiveTokensForLead({
+      supabase,
+      leadId,
+      conversationId,
+    })
+    const mintedSlots: typeof tourCtx.suggestedSlots = []
+    for (const slot of tourCtx.suggestedSlots) {
+      try {
+        const created = await createTourSlotConfirmationToken({
+          supabase,
+          venueId,
+          leadId,
+          conversationId,
+          slot: {
+            startsAt: slot.startsAt,
+            endsAt: slot.endsAt,
+            label: slot.label,
+            rationale: slot.rationale,
+          },
+          timezone: tourCtx.timezone ?? null,
+        })
+        mintedSlots.push({ ...slot, confirmationUrl: created.confirmationUrl })
+        tokenIssuanceSummary.issued += 1
+      } catch (err) {
+        log.warn(
+          { err, leadId, slotStartsAt: slot.startsAt },
+          'orchestrator.tour_slot_confirmation_token.mint_failed'
+        )
+        // Push without confirmationUrl so the slot still gets
+        // offered (just without a clickable link).
+        mintedSlots.push(slot)
+      }
+    }
+    // Replace the context's slots with the URL-decorated versions
+    // so the prompt-block renderer pulls the URLs into the prompt.
+    tourCtx.suggestedSlots = mintedSlots
+  } else if (
+    tourCtx.schedulingIntent.wantsTourAvailability &&
+    tourCtx.suggestedSlots.length > 0
+  ) {
+    tokenIssuanceSummary.skipped_reason = 'secret_not_configured'
+  }
+
   const extraContextBlocks = [
     renderTourAvailabilityPromptBlock(tourCtx),
     renderContactSignalsPromptBlock(contactSignals),
@@ -644,44 +717,86 @@ export async function handleIncomingMessage(
           ends_at: s.endsAt,
           label: s.label,
           rationale: s.rationale,
+          // Phase 8BL — persist the confirmation URL on the slot
+          // so the Lead Detail Drawer + Conversation Thread can
+          // show "X links offered, Y clicked, Z expired" without
+          // re-reading the tokens table.
+          confirmation_url: s.confirmationUrl ?? null,
         }))
       : null
-  await supabase.from('messages').insert({
-    conversation_id: conversationId,
-    lead_id: leadId,
-    venue_id: venueId,
-    role: 'ai',
-    content: aiResponse.message,
-    metadata: {
-      tokens_used: aiResponse.tokens_used,
-      latency_ms: aiResponse.latency_ms,
-      scheduling_intent: tourCtx.schedulingIntent.wantsTourAvailability
-        ? {
-            timeframe: tourCtx.schedulingIntent.timeframeLabel,
-            specific_booking: tourCtx.schedulingIntent.wantsSpecificBooking,
-            availability_configured: tourCtx.availabilityConfigured,
-            suggested_slots_count: tourCtx.suggestedSlots.length,
-            unavailable_reason: tourCtx.unavailableReason ?? null,
-          }
-        : null,
-      offered_tour_slots: aiOfferedSlots,
-      tour_availability_context_used: aiOfferedSlots !== null,
-      contact_signals: {
-        email_known: contactSignals.email,
-        phone_known: contactSignals.phone,
-        extracted_from_this_message: {
-          email: !!justExtracted.email,
-          phone: !!justExtracted.phone,
+  const { data: aiMsgInserted } = await supabase
+    .from('messages')
+    .insert({
+      conversation_id: conversationId,
+      lead_id: leadId,
+      venue_id: venueId,
+      role: 'ai',
+      content: aiResponse.message,
+      metadata: {
+        tokens_used: aiResponse.tokens_used,
+        latency_ms: aiResponse.latency_ms,
+        scheduling_intent: tourCtx.schedulingIntent.wantsTourAvailability
+          ? {
+              timeframe: tourCtx.schedulingIntent.timeframeLabel,
+              specific_booking: tourCtx.schedulingIntent.wantsSpecificBooking,
+              availability_configured: tourCtx.availabilityConfigured,
+              suggested_slots_count: tourCtx.suggestedSlots.length,
+              unavailable_reason: tourCtx.unavailableReason ?? null,
+            }
+          : null,
+        offered_tour_slots: aiOfferedSlots,
+        tour_availability_context_used: aiOfferedSlots !== null,
+        // Phase 8BL — high-level summary of token issuance for
+        // this reply. Operator-readable in the drawer; admin
+        // surfaces can pivot off it without re-joining tokens.
+        confirmation_links_summary:
+          tokenIssuanceSummary.issued > 0 ||
+          tokenIssuanceSummary.skipped_reason
+            ? {
+                issued: tokenIssuanceSummary.issued,
+                skipped_reason: tokenIssuanceSummary.skipped_reason,
+              }
+            : null,
+        contact_signals: {
+          email_known: contactSignals.email,
+          phone_known: contactSignals.phone,
+          extracted_from_this_message: {
+            email: !!justExtracted.email,
+            phone: !!justExtracted.phone,
+          },
         },
+        slot_selection_ack: detectedSelection?.selected
+          ? {
+              label: detectedSelection.selectedSlot?.label,
+              confidence: detectedSelection.confidence,
+            }
+          : null,
       },
-      slot_selection_ack: detectedSelection?.selected
-        ? {
-            label: detectedSelection.selectedSlot?.label,
-            confidence: detectedSelection.confidence,
-          }
-        : null,
-    },
-  })
+    })
+    .select('id')
+    .maybeSingle()
+
+  // Phase 8BL — back-fill offered_by_message_id on the freshly
+  // minted tokens so the drawer can join them back to "the AI
+  // reply that offered this link." Best-effort: if it fails the
+  // tokens still work; we just lose the operator-side link.
+  const newAiMessageId = (aiMsgInserted as { id?: string } | null)?.id ?? null
+  if (newAiMessageId && tokenIssuanceSummary.issued > 0) {
+    try {
+      await supabase
+        .from('tour_slot_confirmation_tokens')
+        .update({ offered_by_message_id: newAiMessageId })
+        .eq('lead_id', leadId)
+        .eq('conversation_id', conversationId)
+        .is('offered_by_message_id', null)
+        .eq('status', 'active')
+    } catch (err) {
+      log.warn(
+        { err, conversationId, leadId, newAiMessageId },
+        'orchestrator.tour_slot_confirmation_token.backfill_msg_id_failed'
+      )
+    }
+  }
 
   // Update conversation
   await supabase.from('conversations').update({

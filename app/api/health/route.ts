@@ -361,6 +361,11 @@ interface HealthBody {
     tour_slot_selection_metadata: 'mounted'
     operator_create_tour_from_selected_slot: 'mounted'
     tour_selection_confirmation_guardrail: 'mounted'
+    lead_side_tour_confirmation_links: 'mounted'
+    tour_slot_confirmation_tokens: 'mounted'
+    public_tour_slot_confirmation_page: 'mounted'
+    tour_confirmation_slot_recheck: 'mounted'
+    tour_confirmation_link_audit: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2491,6 +2496,50 @@ export async function GET(request: Request) {
       tour_slot_selection_metadata: 'mounted',
       operator_create_tour_from_selected_slot: 'mounted',
       tour_selection_confirmation_guardrail: 'mounted',
+      // Phase 8BL — Lead-side tour confirmation links. The AI
+      // includes one signed, expiring, single-use URL per offered
+      // slot in its reply. The lead clicks; a public POST route
+      // validates the token, re-checks slot availability, and
+      // creates the tours row only after the click succeeds.
+      //   - lead_side_tour_confirmation_links: orchestrator wires
+      //     token issuance into handleIncomingMessage when slots
+      //     are offered. Prior active tokens for the same lead are
+      //     revoked first so the latest offer wins.
+      //   - tour_slot_confirmation_tokens: migration 039 added
+      //     `tour_slot_confirmation_tokens` with deny-all RLS,
+      //     unique token_hash (SHA-256 of the raw URL token),
+      //     7-day default expiry, single-use status enum.
+      //   - public_tour_slot_confirmation_page: GET
+      //     /tour/confirm-slot/[token] renders a neutral confirm
+      //     button surface. We deliberately do NOT create the
+      //     tour on page load — that would let a link previewer
+      //     book by accident. POST /api/tour/confirm-slot/[token]
+      //     is the actual mutating route.
+      //   - tour_confirmation_slot_recheck: before creating the
+      //     tour, the POST route re-runs blackout + conflict +
+      //     availability-window checks via
+      //     lib/revenue-os/tour-slot-availability-check.ts. A slot
+      //     that was offered minutes/hours/days ago but is now
+      //     unavailable returns 409 slot_unavailable with no tour
+      //     row created.
+      //   - tour_confirmation_link_audit: every redemption (success
+      //     OR post-claim failure) writes audit_events.action =
+      //     'tour_confirmed_by_public_link' AND tour_status_events
+      //     (actor_kind = 'lead_token', action = 'confirm'). A
+      //     system message also lands in the conversation so the
+      //     operator sees the lead's confirmation in the inbox
+      //     thread.
+      //   - Honesty: NO autonomous outbound messaging — the lead
+      //     clicks, the system creates a tour, the operator still
+      //     decides every other outbound reply. NO Google
+      //     Calendar / Calendly / external sync. NO raw PII or
+      //     raw tokens in DB. ADMIN_ENDPOINT_COUNT unchanged — the
+      //     POST route is public, not admin.
+      lead_side_tour_confirmation_links: 'mounted',
+      tour_slot_confirmation_tokens: 'mounted',
+      public_tour_slot_confirmation_page: 'mounted',
+      tour_confirmation_slot_recheck: 'mounted',
+      tour_confirmation_link_audit: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
