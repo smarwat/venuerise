@@ -147,7 +147,13 @@ export default function ConversationThread({ conversationId, initialMessages, le
   })
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+    // Phase 8BL-Hotfix-2 — `min-h-0` lets this flex-1 child shrink
+    // below its content-derived size so the internal scroll actually
+    // engages (instead of spilling its parent + pushing the composer
+    // past the bottom of the viewport). `overflow-x-hidden` belt-
+    // and-suspenders against any rogue child that escapes the
+    // bubble's own `break-words` wrapping.
+    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 py-5 space-y-5">
       {messages.length === 0 && (
         <div className="text-center py-16">
           <p className="text-[13px] text-[#64748B]">No messages yet. The AI will reply once the lead sends something.</p>

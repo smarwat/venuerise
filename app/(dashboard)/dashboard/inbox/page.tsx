@@ -119,11 +119,25 @@ export default async function InboxPage() {
     // the empty-state panel + week tour panel occupy the remaining
     // space. On smaller screens the list takes the full viewport — the
     // empty-state panel hides until the operator picks a conversation.
-    <div className="flex h-[calc(100vh-60px)] min-h-[640px] animate-fade-in bg-[#F4F7FB]">
+    //
+    // Phase 8BL-Hotfix-2 — inbox scroll container fix.
+    //   - `100dvh` (was `100vh`) handles mobile/iOS browser chrome
+    //     correctly — `vh` includes the URL bar height that gets
+    //     hidden on scroll, which left a stale gap.
+    //   - `min-h-0` lets flex children shrink below their
+    //     content-derived size so the internal scroll regions
+    //     (conversation list + thread + composer) work correctly.
+    //   - `overflow-hidden` is the safety net: even when a banner
+    //     (BillingBanner, DemoModeBanner) pushes us down a few
+    //     pixels, the inbox can't leak into body-scroll territory.
+    //   - Removed `min-h-[640px]` — it forced the inbox taller than
+    //     the viewport on small laptops, which manifested as the
+    //     "huge blank whitespace below messages" bug.
+    <div className="flex h-[calc(100dvh-60px)] min-h-0 overflow-hidden animate-fade-in bg-[#F4F7FB]">
       <ConversationList
         conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
       />
-      <div className="hidden lg:flex flex-1 flex-col items-center justify-center px-6 gap-6 py-6 overflow-y-auto">
+      <div className="hidden lg:flex flex-1 min-h-0 flex-col items-center justify-center px-6 gap-6 py-6 overflow-y-auto">
         {/* Phase 8J — week-at-a-glance panel. Renders ABOVE the empty
             state so the operator's eye lands on actionable tours first
             and the "select a conversation" prompt fills the remaining

@@ -213,7 +213,11 @@ export default function TourLifecycleStrip({ lead, tour }: TourLifecycleStripPro
       {/* Phase 8AJ — restyled lifecycle strip: uppercase eyebrow,
           editorial spacing, navy primary action, softer borders that
           match the dashboard card vocabulary. */}
-      <div className="border-b border-[#E6E8EF] bg-white px-6 py-3 flex items-center gap-3">
+      {/* Phase 8BL-Hotfix-2 — `shrink-0` so the strip keeps its
+          natural height regardless of how the inbox column flexes.
+          Without it, a long thread could compress the strip and
+          rip the eyebrow/CTA padding. */}
+      <div className="shrink-0 border-b border-[#E6E8EF] bg-white px-6 py-3 flex items-center gap-3">
         <div className="w-9 h-9 rounded-[10px] bg-[#F8FAFC] border border-[#E6E8EF] flex items-center justify-center shrink-0">
           {hasUpcoming ? (
             <CalendarCheck className="w-4 h-4 text-[#1D4ED8]" />

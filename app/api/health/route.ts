@@ -375,6 +375,9 @@ interface HealthBody {
     premium_tour_slot_message_format: 'mounted'
     inbox_message_overflow_guard: 'mounted'
     operator_tour_creation_flow_preserved: 'mounted'
+    inbox_thread_scroll_container_fix: 'mounted'
+    inbox_composer_bottom_anchor: 'mounted'
+    inbox_blank_whitespace_regression_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2579,6 +2582,31 @@ export async function GET(request: Request) {
       premium_tour_slot_message_format: 'mounted',
       inbox_message_overflow_guard: 'mounted',
       operator_tour_creation_flow_preserved: 'mounted',
+      // Phase 8BL-Hotfix-2 — inbox scroll container fix. The
+      // dashboard layout's banner stack (BillingBanner +
+      // DemoModeBanner) sits between the sticky topbar and main,
+      // which broke the inbox's `h-[calc(100vh-60px)]` assumption
+      // (only 60px of overhead). Symptom: big blank whitespace
+      // below the thread + the composer floating mid-page.
+      //   - inbox_thread_scroll_container_fix: inbox root now uses
+      //     `h-[calc(100dvh-60px)] min-h-0 overflow-hidden`; the
+      //     `<main>` element in the dashboard layout gained
+      //     `min-h-0` so flex children can constrain themselves.
+      //   - inbox_composer_bottom_anchor: MessageComposer +
+      //     TourLifecycleStrip + lead header all gain `shrink-0`;
+      //     ConversationThread's scroll area gains `min-h-0
+      //     overflow-x-hidden`. Composer is pinned to the bottom
+      //     of the inbox column for thread page only (the
+      //     composer is a sibling of ConversationThread inside the
+      //     same flex column, so it stays in the same flex flow).
+      //   - inbox_blank_whitespace_regression_guard: removed
+      //     `min-h-[640px]` which forced the inbox taller than
+      //     the available viewport on smaller laptops. Layout-only
+      //     change; message fetching, manual-channel logic, tour
+      //     scheduling, and AI prompt all untouched.
+      inbox_thread_scroll_container_fix: 'mounted',
+      inbox_composer_bottom_anchor: 'mounted',
+      inbox_blank_whitespace_regression_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

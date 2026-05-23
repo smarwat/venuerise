@@ -45,7 +45,11 @@ export default function MessageComposer({ conversationId, aiActive }: Props) {
   }
 
   return (
-    <div className="border-t border-[#F1F5F9] bg-white px-6 py-4 space-y-2.5">
+    // Phase 8BL-Hotfix-2 — `shrink-0` pins the composer to its
+    // natural height. Without it, flex contention in the inbox
+    // column could compress the textarea + footer hint when long
+    // threads + a busy strip competed for vertical space.
+    <div className="shrink-0 border-t border-[#F1F5F9] bg-white px-6 py-4 space-y-2.5">
       <div className="flex items-center gap-2 mb-1">
         <div className="flex bg-[#F1F5F9] border border-[#E2E8F0] rounded-full p-0.5">
           <button

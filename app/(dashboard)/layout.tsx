@@ -139,7 +139,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
             {/* Banner is fail-open: if the subscription read throws, it renders
                 nothing and the dashboard keeps working. See BillingBanner. */}
             <BillingBanner venueId={venueId} />
-            <main className="flex-1 w-full overflow-x-hidden">
+            {/* Phase 8BL-Hotfix-2 — `min-h-0` on the flex-1 main lets
+                children that opt into a constrained-height layout
+                (e.g. the inbox: `h-[calc(100dvh-60px)] overflow-hidden`)
+                actually constrain themselves. Without `min-h-0`, a
+                flex-1 child uses content-derived sizing as its
+                floor, which lets the inbox's internal scroll area
+                spill its parent and push the dashboard column past
+                the viewport. The constraint is a no-op for pages
+                that don't set an explicit height — overview, leads,
+                tours, analytics, settings all keep natural
+                body-scroll behavior. */}
+            <main className="flex-1 min-h-0 w-full overflow-x-hidden">
               {children}
             </main>
           </div>

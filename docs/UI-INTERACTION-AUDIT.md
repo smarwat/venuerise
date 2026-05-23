@@ -301,3 +301,27 @@ Before promoting to production:
 - **Annual / monthly toggle on SubscriptionPlansCard** — route +
   catalog already support `interval=annual`; UI defaults to
   monthly today.
+
+---
+
+## Phase 8BL-Hotfix-2 — Inbox thread layout regression
+
+Symptom: `/dashboard/inbox/[leadId]` rendered the composer
+mid-page with massive blank whitespace below the thread when a
+banner (BillingBanner, DemoModeBanner) was active.
+
+Root cause: inbox root used `h-[calc(100vh-60px)]` assuming
+only the 60px topbar consumed viewport; banners pushed total
+page height past viewport, body scrolled, composer's flex
+position left a visible gap.
+
+Fix: `100vh` → `100dvh`, removed `min-h-[640px]`, added
+`min-h-0 overflow-hidden` to inbox roots + dashboard `<main>`,
+added `shrink-0` to MessageComposer + TourLifecycleStrip +
+lead header, added `min-h-0` to ConversationThread scroll
+root. Layout-only; no backend / data-fetching / AI-prompt
+changes.
+
+Regression guard: composer must remain pinned, message list
+must be the only vertical scroll region, no blank whitespace
+below message history.

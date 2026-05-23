@@ -816,3 +816,116 @@ preserved. To re-enable in a future phase:
    yet.
 
 Until those four pieces are in place, leave the flag off.
+
+---
+
+# Phase 8BL-Hotfix-2 — Inbox thread layout regression
+
+## Bug
+
+`/dashboard/inbox` and `/dashboard/inbox/[leadId]` rendered the
+conversation thread with a massive blank whitespace below the
+messages. The composer floated mid-page; the right-side scroll
+continued well past the actual thread content. Visible on any
+viewport where a banner (BillingBanner, DemoModeBanner) was active.
+
+## Root cause
+
+Layout chain failure. The inbox roots used
+`h-[calc(100vh-60px)] min-h-[640px]`, which assumes ONLY the 60px
+sticky topbar consumes viewport. When a banner renders between
+the topbar and `<main>`, the inbox is pushed down by the banner
+height but still claims `100vh-60px` of its own height. Total
+page height exceeds viewport → body scrolls → the inbox's
+composer (pinned at the bottom of its flex column) leaves visible
+empty space below itself as the user scrolls.
+
+Compounding factors:
+- `<main>` in `app/(dashboard)/layout.tsx` lacked `min-h-0`, so a
+  flex-1 child using viewport math couldn't constrain itself.
+- The inbox thread inner column (`<div className="flex-1 flex
+  flex-col bg-white">`) lacked `min-h-0`, so
+  `ConversationThread`'s internal `flex-1 overflow-y-auto`
+  couldn't engage — message list grew to content size.
+- `MessageComposer` lacked `shrink-0`, leaving it vulnerable
+  to flex contention compression.
+- `min-h-[640px]` forced the inbox taller than available
+  viewport on smaller laptops, magnifying the overflow.
+
+## What changed (layout-only)
+
+| File | Change |
+|---|---|
+| `app/(dashboard)/layout.tsx` | `<main>` adds `min-h-0` (defensive — no-op for pages without explicit height). |
+| `app/(dashboard)/dashboard/inbox/page.tsx` | Root: `h-[calc(100vh-60px)] min-h-[640px]` → `h-[calc(100dvh-60px)] min-h-0 overflow-hidden`. Empty-state column gains `min-h-0`. |
+| `app/(dashboard)/dashboard/inbox/[leadId]/page.tsx` | Root: same swap. Inner column adds `min-h-0 overflow-hidden`. Lead header div adds `shrink-0`. |
+| `components/dashboard/ConversationThread.tsx` | Scroll root adds `min-h-0 overflow-x-hidden`. |
+| `components/dashboard/MessageComposer.tsx` | Root adds `shrink-0`. |
+| `components/dashboard/inbox/TourLifecycleStrip.tsx` | Root adds `shrink-0`. |
+
+## Expected behavior
+
+- The whole page does not scroll. Only the message list inside
+  the thread scrolls.
+- The composer is pinned at the bottom of the inbox column.
+- Banners (BillingBanner, DemoModeBanner) appearing above the
+  inbox do NOT introduce blank whitespace below the thread —
+  they trim the inbox's visible height instead.
+- Conversation list scrolls independently from the thread.
+- Long URLs from pre-hotfix historical messages still wrap
+  inside the bubble (Phase 8BL-Hotfix-1 wrapping classes
+  preserved).
+- Mobile/iOS viewport math now uses `100dvh`, which excludes
+  the dynamic browser chrome (URL bar) instead of including
+  it — the inbox no longer has a stale gap after the URL bar
+  collapses on scroll.
+
+## Manual QA — `/dashboard/inbox`
+
+1. Open `/dashboard/inbox` with no conversation selected.
+2. Confirm conversation list on the left + empty-state card on
+   the right. No body scrollbar visible.
+3. Resize browser shorter (~700px). Empty-state stays centered;
+   no blank whitespace appears below.
+
+## Manual QA — `/dashboard/inbox/[leadId]`
+
+1. Open a conversation with 2–5 messages.
+2. Scroll inside the thread. Only the message list scrolls;
+   the composer stays pinned at the bottom of the column.
+3. Confirm NO blank whitespace below the thread.
+4. Open a long conversation (20+ messages). Scroll up and down.
+   Composer remains pinned; body never scrolls.
+5. Resize browser to a small laptop height (~720px). Still no
+   overflow.
+6. Trigger DemoModeBanner (toggle demo mode on in settings) or
+   simulate a billing banner. Re-open the inbox. Confirm the
+   inbox trims to fit below the banner — no whitespace below.
+7. Click a deep-link `?message=<id>` URL to verify scroll-to-
+   message + highlight still works.
+8. Send a message via the composer. Confirm the new bubble
+   appears and the thread scrolls to the bottom automatically
+   (the existing bottom-ref `scrollIntoView` still works).
+9. Verify the manual-channel banner + tour lifecycle strip
+   render in their normal positions (above the thread, not
+   compressed).
+10. Verify the Tour-time-selected drawer panel still opens (8BK
+    flow preserved).
+
+## Known limitations
+
+- We use `100dvh` which is ES-modern (~95% browser support).
+  Older Safari (<15.4) falls back to acting as `100vh`. The
+  same overflow bug would re-appear on those browsers when a
+  banner renders, but they're well below the venue-operator
+  user-base threshold.
+- The `h-[calc(100dvh-60px)]` assumes the topbar is always
+  exactly 60px. If a future redesign changes the topbar
+  height, this calc has to be updated. Pulling the value into
+  a Tailwind theme constant would be a cleaner long-term fix
+  but is out of scope for a hotfix.
+- We did NOT convert the dashboard column to `h-screen
+  overflow-hidden` because that would break natural body
+  scroll on every other dashboard page (overview, leads,
+  tours, analytics, settings). The fix is intentionally
+  inbox-local.

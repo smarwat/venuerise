@@ -115,15 +115,28 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
     // list collapses (single-column) so the active thread owns the
     // viewport — operators on phones land directly in the conversation
     // they tapped from /dashboard/inbox.
-    <div className="flex h-[calc(100vh-60px)] min-h-[640px] animate-fade-in bg-[#F4F7FB]">
+    //
+    // Phase 8BL-Hotfix-2 — inbox scroll container fix. See the index
+    // page (app/(dashboard)/dashboard/inbox/page.tsx) for the full
+    // rationale on the root container changes. Additionally:
+    //   - The inner column (`<div className="flex-1 flex flex-col
+    //     bg-white">`) gets `min-h-0 overflow-hidden` so that
+    //     ConversationThread's internal `flex-1 overflow-y-auto`
+    //     actually constrains. Without `min-h-0`, the message list
+    //     grew to fit all content and pushed the composer past the
+    //     bottom of the viewport.
+    //   - The lead header div and TourLifecycleStrip wrapper both
+    //     get `shrink-0` so they keep their natural height and never
+    //     compress under flex contention.
+    <div className="flex h-[calc(100dvh-60px)] min-h-0 overflow-hidden animate-fade-in bg-[#F4F7FB]">
       <div className="hidden lg:flex">
         <ConversationList
           conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
           activeLeadId={leadId}
         />
       </div>
-      <div className="flex-1 flex flex-col bg-white">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[#E6E8EF]">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-white">
+        <div className="shrink-0 flex items-center gap-3 px-6 py-4 border-b border-[#E6E8EF]">
           <div className="relative shrink-0">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#1E293B] to-[#0F172A] flex items-center justify-center text-white text-[13px] font-bold">
               {(lead.name as string).charAt(0)}
