@@ -405,6 +405,11 @@ interface HealthBody {
     analytics_source_leakage_priority: 'mounted'
     analytics_buyer_friendly_kpis: 'mounted'
     analytics_funnel_dropoff_insight: 'mounted'
+    settings_workspace_control_center: 'mounted'
+    settings_ai_behavior_preview: 'mounted'
+    settings_knowledge_base_empty_state: 'mounted'
+    settings_ai_tour_availability_copy: 'mounted'
+    settings_role_guide: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2818,6 +2823,40 @@ export async function GET(request: Request) {
       analytics_source_leakage_priority: 'mounted',
       analytics_buyer_friendly_kpis: 'mounted',
       analytics_funnel_dropoff_insight: 'mounted',
+      // GTM-0H — Settings page workspace control center polish.
+      // Header reframed "Settings" → "Workspace settings" with a
+      // champagne explanation card teaching that each tab maps to a
+      // real revenue surface.
+      //   - settings_workspace_control_center: PageHeader updated +
+      //     champagne explanation card mounted above the tabs.
+      //   - settings_ai_behavior_preview: AI Config tab gains a
+      //     dynamic "How your AI will behave" preview that renders
+      //     the owner's persona + tone choices in a one-sentence
+      //     summary, plus an AI reply rules block listing the
+      //     orchestrator's actual guardrails (no autonomous send,
+      //     no final pricing without KB support, etc).
+      //   - settings_knowledge_base_empty_state: KB empty state
+      //     reframed as "your AI does not have venue knowledge yet"
+      //     with 5 example first-entry prompts so the operator has a
+      //     starting point. No fake entries seeded.
+      //   - settings_ai_tour_availability_copy: Availability tab
+      //     reframed as "AI tour availability" with explanation card
+      //     ("when a couple asks 'what times are available?'...") +
+      //     active days / blackout count summary derived from
+      //     existing data. Blackout copy says "block holidays,
+      //     private events, or unavailable days."
+      //   - settings_role_guide: Team page gains a role guide card
+      //     above the Members table (Owner / Admin / Coordinator /
+      //     Viewer one-line definitions). Members subtitle grammar
+      //     fixed: "1 person has access" vs "N people have access."
+      // Billing card relabeled "Billing & plans" + Stripe honesty
+      // line. UI/copy only — no backend routes, no RBAC changes,
+      // no Stripe pricing changes, no migrations.
+      settings_workspace_control_center: 'mounted',
+      settings_ai_behavior_preview: 'mounted',
+      settings_knowledge_base_empty_state: 'mounted',
+      settings_ai_tour_availability_copy: 'mounted',
+      settings_role_guide: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

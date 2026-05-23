@@ -73,34 +73,48 @@ function VenueProfileTab({ venue }: { venue: Record<string, unknown> | null }) {
 
   return (
     <div className="max-w-2xl space-y-5">
+      {/* GTM-0H — Venue intelligence framing. Reframes the tab from
+          "raw database form" to "how the AI represents your venue." */}
       <div>
-        <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Venue Name</label>
-        <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="The Ivy Estate" />
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">
+          Venue intelligence
+        </h3>
+        <p className="text-[12.5px] text-[#475569] mt-0.5">
+          These details help VenueRise qualify leads, guide pricing conversations, and understand which couples are a strong fit.
+        </p>
       </div>
       <div>
-        <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Description</label>
+        <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Venue name</label>
+        <Input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="The Ivy Estate" />
+        <p className="text-[11px] text-[#64748B] mt-1">Used in AI replies and customer-facing messages.</p>
+      </div>
+      <div>
+        <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Venue positioning</label>
         <textarea
           value={form.description}
           onChange={(e) => set('description', e.target.value)}
           rows={4}
-          placeholder="Describe your venue…"
+          placeholder="A luxury garden venue for modern couples seeking an indoor-outdoor wedding experience."
           className="w-full bg-white border border-[#E2E8F0] rounded-xl px-3.5 py-2.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#1D4ED8] focus:ring-[3px] focus:ring-[#3B82F6]/15 resize-none transition-all"
         />
+        <p className="text-[11px] text-[#64748B] mt-1">A short description of your venue style, atmosphere, and ideal couple.</p>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Min Capacity</label>
+          <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Min capacity</label>
           <Input type="number" value={form.capacity_min} onChange={(e) => set('capacity_min', e.target.value)} placeholder="50" />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Max Capacity</label>
+          <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Max capacity</label>
           <Input type="number" value={form.capacity_max} onChange={(e) => set('capacity_max', e.target.value)} placeholder="300" />
         </div>
       </div>
+      <p className="text-[11px] text-[#64748B] -mt-2">Used to identify leads that are too small, too large, or a strong fit for your space.</p>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Base Price ($)</label>
+          <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Starting venue investment</label>
           <Input type="number" value={form.base_price} onChange={(e) => set('base_price', e.target.value)} placeholder="5000" />
+          <p className="text-[11px] text-[#64748B] mt-1">Used for safe pricing guidance. VenueRise should not quote final packages unless your knowledge base supports it.</p>
         </div>
         <div>
           <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Timezone</label>
@@ -115,6 +129,7 @@ function VenueProfileTab({ venue }: { venue: Record<string, unknown> | null }) {
               <SelectItem value="Pacific/Honolulu">Hawaii (HI)</SelectItem>
             </SelectContent>
           </Select>
+          <p className="text-[11px] text-[#64748B] mt-1">Used for tour availability, reminders, and scheduling suggestions.</p>
         </div>
       </div>
       <SaveButton onClick={handleSave} saving={saving} saved={saved} />
@@ -136,17 +151,41 @@ function AIConfigTab({ venue }: { venue: Record<string, unknown> | null }) {
 
   if (!venue) return <NoVenueState />
 
+  // GTM-0H — tone label lookup for the behavior preview card.
+  const toneLabel = ((): string => {
+    switch (form.ai_tone) {
+      case 'luxury_concierge': return 'Luxury Concierge'
+      case 'casual_friendly': return 'Casual & Friendly'
+      case 'formal_elegant': return 'Formal & Elegant'
+      case 'warm_professional':
+      default: return 'Warm & Professional'
+    }
+  })()
+  const personaName = (form.ai_persona_name || 'Your AI coordinator').trim() || 'Your AI coordinator'
+
   return (
     <div className="max-w-2xl space-y-5">
+      {/* GTM-0H — AI behavior controls intro. Frames the tab around
+          trust: the owner controls how the AI represents the venue,
+          and the safety rules card below makes the no-overclaim
+          posture explicit. */}
+      <div>
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">
+          AI behavior controls
+        </h3>
+        <p className="text-[12.5px] text-[#475569] mt-0.5">
+          Set how your AI coordinator introduces the venue, handles pricing questions, and guides couples toward tours.
+        </p>
+      </div>
       <Card>
         <CardContent className="pt-5 space-y-4">
           <div>
-            <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">AI Persona Name</label>
+            <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">AI persona name</label>
             <Input value={form.ai_persona_name} onChange={(e) => set('ai_persona_name', e.target.value)} placeholder="Alex" />
             <p className="text-xs text-[#94A3B8] mt-1">This is the name your AI coordinator will sign with.</p>
           </div>
           <div>
-            <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Conversation Tone</label>
+            <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Conversation tone</label>
             <Select value={form.ai_tone} onValueChange={(v) => set('ai_tone', v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -159,7 +198,7 @@ function AIConfigTab({ venue }: { venue: Record<string, unknown> | null }) {
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">
-              Response Time Target (minutes)
+              Response time target (minutes)
             </label>
             <Input
               type="number"
@@ -172,6 +211,55 @@ function AIConfigTab({ venue }: { venue: Record<string, unknown> | null }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* GTM-0H — Behavior preview. Dynamically renders the owner's
+          current persona + tone choices in a one-line summary so the
+          owner sees exactly how the AI will present itself. */}
+      <section className="rounded-2xl border border-[#E8DCC4] bg-[#FAF7F0] shadow-card overflow-hidden">
+        <div className="px-5 py-4">
+          <div className="text-[10.5px] uppercase tracking-[0.16em] text-[#92763C] font-semibold mb-1">
+            How your AI will behave
+          </div>
+          <p className="text-[13px] text-[#0F172A] leading-relaxed">
+            <strong className="font-semibold">{personaName}</strong> will respond in a{' '}
+            <strong className="font-semibold">{toneLabel}</strong> tone, prioritize tour booking, avoid hard final-price claims, and keep operators in control before anything is sent on manual channels.
+          </p>
+        </div>
+      </section>
+
+      {/* GTM-0H — Safety rules block. UI/copy only — these mirror
+          the actual orchestrator + conversation prompt guardrails
+          shipped in earlier phases. No AI prompt changes here. */}
+      <section className="rounded-2xl border border-[#E6E8EF] bg-white shadow-card overflow-hidden">
+        <div className="px-5 py-4">
+          <div className="text-[10.5px] uppercase tracking-[0.16em] text-[#475569] font-semibold mb-2">
+            AI reply rules
+          </div>
+          <ul className="space-y-1.5 text-[12.5px] text-[#475569] leading-relaxed">
+            <li className="flex items-start gap-2">
+              <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+              Uses your venue profile and knowledge base
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+              Offers tour times only from saved availability
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+              Does not claim a tour is confirmed until confirmation happens
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+              Does not auto-send on manual channels like The Knot, WeddingWire, or Instagram
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+              Avoids final package pricing unless your knowledge base supports it
+            </li>
+          </ul>
+        </div>
+      </section>
+
       <SaveButton onClick={() => save({ ai_persona_name: form.ai_persona_name, ai_tone: form.ai_tone, response_time_target: parseInt(form.response_time_target) })} saving={saving} saved={saved} />
     </div>
   )
@@ -490,12 +578,21 @@ function KnowledgeBaseTab({
         </Button>
       </div>
 
+      {/* GTM-0H — AI Knowledge Base intro. Reframes the tab as
+          "the AI's brain" rather than a CMS. */}
+      <div>
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">
+          AI knowledge base
+        </h3>
+        <p className="text-[12.5px] text-[#475569] mt-0.5">
+          Teach VenueRise how to answer pricing, policies, amenities, and booking questions accurately.
+        </p>
+      </div>
+
       <div className="rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-4 py-3">
         <p className="text-[12.5px] text-[#92400E] leading-relaxed">
-          <span className="font-semibold">Heads up.</span>{' '}
-          These entries guide AI replies. Avoid pasting secrets,
-          credentials, or anything you wouldn&rsquo;t want surfaced in
-          a reply. Edits are audited.
+          <span className="font-semibold">Heads up:</span>{' '}
+          These entries guide AI replies. Avoid secrets, credentials, private contract terms, or anything you would not want surfaced in a customer reply. Edits are audited.
         </p>
       </div>
 
@@ -580,9 +677,47 @@ function KnowledgeBaseTab({
       )}
 
       {kb.length === 0 && !addOpen && (
-        <div className="text-center py-12 text-sm text-[#475569]">
-          No knowledge entries yet. Add pricing, policies, FAQs, and
-          amenities so your AI can respond accurately.
+        // GTM-0H — richer KB empty state. Frames it as "your AI does
+        // not have venue knowledge yet" + concrete example prompts so
+        // the owner has a starting point. No fake entries are seeded;
+        // operator clicks Add entry to write the first one.
+        <div className="rounded-2xl border border-[#E8DCC4] bg-[#FAF7F0] px-5 py-6 shadow-card">
+          <div className="text-[10.5px] uppercase tracking-[0.16em] text-[#92763C] font-semibold mb-1">
+            Untrained
+          </div>
+          <h4 className="text-[15px] font-semibold text-[#0F172A] leading-tight">
+            Your AI does not have custom venue knowledge yet.
+          </h4>
+          <p className="text-[12.5px] text-[#475569] mt-1.5 leading-relaxed max-w-2xl">
+            Add entries for pricing, policies, amenities, catering, parking, rain plans, and booking steps so replies stay accurate.
+          </p>
+          <div className="mt-4">
+            <div className="text-[10.5px] uppercase tracking-[0.12em] text-[#64748B] font-semibold mb-2">
+              Good first entries
+            </div>
+            <ul className="space-y-1 text-[12.5px] text-[#475569] leading-relaxed">
+              <li className="flex items-start gap-2">
+                <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+                What is included in the starting venue fee?
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+                What is the maximum guest count?
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+                Can couples bring outside vendors?
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+                What happens if it rains?
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#92763C] font-bold leading-none mt-1">·</span>
+                How do tours and proposals work?
+              </li>
+            </ul>
+          </div>
         </div>
       )}
 
@@ -1260,16 +1395,44 @@ function AvailabilityTab({
     return <NoVenueState />
   }
 
+  // GTM-0H — derive a small summary line from existing data so the
+  // tab tells the owner at a glance how much availability the AI
+  // can offer. Active days = days of week with at least one active
+  // slot. Blackout count comes from props.
+  const activeDays = new Set(
+    slots.filter((s) => s.is_active).map((s) => s.day_of_week)
+  ).size
+  const blackoutCount = blackouts.length
+
   return (
     <div className="max-w-3xl space-y-4">
       <div>
+        {/* GTM-0H — reframed around AI scheduling. The tab is no longer
+            "a calendar setting" — it's "what the AI can safely offer." */}
         <h3 className="text-[15px] font-semibold text-[#0F172A]">
-          Tour availability
+          AI tour availability
         </h3>
         <p className="text-[13px] text-[#475569] mt-0.5">
-          Set the days and hours when tours can be scheduled.
+          Set the windows your AI can safely offer when couples ask for tour times.
         </p>
       </div>
+
+      {/* GTM-0H — explanation card teaching the owner exactly when
+          and how the AI uses these windows. */}
+      <section className="rounded-xl border border-[#E8DCC4] bg-[#FAF7F0] px-4 py-3 shadow-card">
+        <div className="text-[10.5px] uppercase tracking-[0.16em] text-[#92763C] font-semibold mb-1">
+          How the AI uses availability
+        </div>
+        <p className="text-[12px] text-[#475569] leading-relaxed">
+          When a couple asks &ldquo;what times are available?&rdquo;, VenueRise suggests times from these windows while respecting blackout dates and existing tours.
+        </p>
+        {(activeDays > 0 || blackoutCount > 0) && (
+          <p className="text-[11px] text-[#92763C] font-semibold mt-1.5 tabular-nums">
+            {activeDays} active {activeDays === 1 ? 'day' : 'days'}
+            {blackoutCount > 0 ? ` · ${blackoutCount} blackout ${blackoutCount === 1 ? 'date' : 'dates'}` : ''}
+          </p>
+        )}
+      </section>
 
       {topLevelError && (
         <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-3 py-2.5 flex items-start gap-2 text-[12.5px] text-[#B91C1C]">
@@ -1425,7 +1588,7 @@ function AvailabilityTab({
           Blackout dates
         </h3>
         <p className="text-[13px] text-[#475569] mt-0.5">
-          Block days when tours should not be suggested.
+          Block holidays, private events, or unavailable days so the AI does not suggest them.
         </p>
       </div>
 
@@ -1603,7 +1766,11 @@ export default function SettingsTabs({ venue, knowledgeBase, tourAvailability, t
 // of server-only billing imports.
 function BillingTabLink() {
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl space-y-3">
+      {/* GTM-0H — billing card reframed with clearer copy + a Stripe
+          honesty note so the buyer knows where payment data lives.
+          Still routes to /dashboard/settings/billing — that subpage
+          owns the real billing UI (plans, invoices, payment method). */}
       <Link
         href="/dashboard/settings/billing"
         className="group flex items-center gap-4 rounded-2xl border border-[#E2E8F0] bg-white px-5 py-4 hover:border-[#CBD5E1] hover:bg-[#F8FAFC] transition-colors"
@@ -1613,14 +1780,20 @@ function BillingTabLink() {
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold text-[#0F172A]">
-            Subscription & billing
+            Billing &amp; plans
           </div>
           <div className="text-[12px] text-[#64748B] mt-0.5">
-            View your plan, manage payment method, download invoices.
+            Manage your subscription, payment method, plan limits, and invoices.
           </div>
         </div>
-        <ArrowRight className="h-4 w-4 text-[#94A3B8] group-hover:text-[#0F172A] transition-colors" />
+        <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[#1D4ED8] shrink-0">
+          Open billing center
+          <ArrowRight className="h-3 w-3" />
+        </span>
       </Link>
+      <p className="text-[11px] text-[#94A3B8] leading-relaxed px-1">
+        Payment details are handled securely through Stripe. VenueRise never stores full card numbers.
+      </p>
     </div>
   )
 }

@@ -126,13 +126,49 @@ export default function TeamManagementClient({
         </div>
       )}
 
+      {/* GTM-0H — role guide card teaches the buyer the access
+          model at a glance, so the Team page reads as "who can
+          manage the revenue pipeline" rather than a generic
+          permissions table. */}
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Role guide</CardTitle>
+            <CardSubtitle>
+              Each role gets a different slice of the revenue pipeline.
+            </CardSubtitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <ul className="space-y-2 text-[12.5px] text-[#475569] leading-relaxed">
+            <li className="flex items-baseline gap-2">
+              <span className="text-[11px] uppercase tracking-[0.12em] text-[#0F172A] font-semibold min-w-[88px]">Owner</span>
+              <span>Billing, team, and workspace control.</span>
+            </li>
+            <li className="flex items-baseline gap-2">
+              <span className="text-[11px] uppercase tracking-[0.12em] text-[#0F172A] font-semibold min-w-[88px]">Admin</span>
+              <span>Manage venue settings and revenue workflows.</span>
+            </li>
+            <li className="flex items-baseline gap-2">
+              <span className="text-[11px] uppercase tracking-[0.12em] text-[#0F172A] font-semibold min-w-[88px]">Coordinator</span>
+              <span>Handle leads, inbox, and tours.</span>
+            </li>
+            <li className="flex items-baseline gap-2">
+              <span className="text-[11px] uppercase tracking-[0.12em] text-[#0F172A] font-semibold min-w-[88px]">Viewer</span>
+              <span>Read-only access across the workspace.</span>
+            </li>
+          </ul>
+        </CardContent>
+      </Card>
+
       {/* Members */}
       <Card>
         <CardHeader>
           <div>
             <CardTitle>Members</CardTitle>
             <CardSubtitle>
-              {members.length} {members.length === 1 ? 'person' : 'people'} have access today.
+              {/* GTM-0H — grammar fix: "person has" vs "people have". */}
+              {members.length} {members.length === 1 ? 'person has' : 'people have'} access today.
             </CardSubtitle>
           </div>
         </CardHeader>
