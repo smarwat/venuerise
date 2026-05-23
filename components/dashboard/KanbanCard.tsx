@@ -183,23 +183,142 @@ export default function KanbanCard({
         </div>
       )}
 
-      {/* Budget row — separated by a divider for editorial calm */}
-      {lead.budget != null && lead.budget > 0 && (
-        <div className="mt-2.5 pt-2.5 border-t border-[#F1F5F9] flex items-center justify-between text-[11px]">
-          <span className="text-[#94A3B8] uppercase tracking-[0.12em] font-semibold">
-            {/* Phase 8BI — relabel for booked leads so the
-                value reads as "Est. booked" rather than just
-                "Budget". Keeps card density unchanged. */}
-            {lead.stage === 'booked' ? 'Est. booked' : 'Budget'}
-          </span>
-          <span className={cn(
-            'font-semibold tabular-nums',
-            lead.stage === 'booked' ? 'text-[#047857]' : 'text-[#0F172A]'
-          )}>
-            ${(lead.budget / 1000).toFixed(0)}k
-          </span>
-        </div>
-      )}
+      {/* GTM-0E — Next action pill. Visible on every card so the
+          operator immediately knows what to do, not just where the
+          lead is in the funnel. Tone shifts to warm amber for
+          urgent ("Reply now") actions, navy for forward-motion,
+          slate for terminal states. */}
+      <div className="mt-2.5 pt-2.5 border-t border-[#F1F5F9] flex items-center justify-between gap-2 text-[11px]">
+        <NextActionPill lead={lead} slaMinutes={slaMinutes} />
+        {lead.budget != null && lead.budget > 0 && (
+          <div className="flex items-baseline gap-1 shrink-0">
+            <span className="text-[9.5px] text-[#94A3B8] uppercase tracking-[0.12em] font-semibold">
+              {/* GTM-0E — reframe the dollar figure as pipeline VALUE
+                  rather than the lead's reported BUDGET. Venue owners
+                  buy on revenue impact, not on customer wallet share.
+                  Booked leads read as realized value; lost leads
+                  carry the "what we missed" framing. */}
+              {lead.stage === 'booked'
+                ? 'Est. booked'
+                : lead.stage === 'lost'
+                  ? 'Est. lost'
+                  : 'Est. value'}
+            </span>
+            <span className={cn(
+              'font-semibold tabular-nums text-[11.5px]',
+              lead.stage === 'booked'
+                ? 'text-[#047857]'
+                : lead.stage === 'lost'
+                  ? 'text-[#94A3B8]'
+                  : 'text-[#0F172A]'
+            )}>
+              ${(lead.budget / 1000).toFixed(0)}k
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+// ── GTM-0E — NextActionPill ────────────────────────────────────────────
+// Stateless map from (stage, age, score) to a one-line next-best-action.
+// Each card renders one, sized to NOT compete with the lead name.
+
+interface NextActionPillProps {
+  lead: Lead
+  slaMinutes: number
+}
+
+function NextActionPill({ lead, slaMinutes }: NextActionPillProps) {
+  const next = deriveNextAction(lead, slaMinutes)
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border tabular-nums min-w-0',
+        next.tone
+      )}
+      title={next.title}
+    >
+      <span className="text-[8.5px] uppercase tracking-[0.12em] opacity-70">
+        Next
+      </span>
+      <span className="truncate">{next.label}</span>
+    </span>
+  )
+}
+
+function deriveNextAction(
+  lead: Lead,
+  slaMinutes: number
+): { label: string; title: string; tone: string } {
+  const TONE_URGENT = 'bg-[#FFFBEB] text-[#B45309] border-[#FCD9A1]'
+  const TONE_NAVY = 'bg-[#F1F5F9] text-[#0F172A] border-[#E2E8F0]'
+  const TONE_BLUE = 'bg-[#EFF6FF] text-[#1D4ED8] border-[#BFDBFE]'
+  const TONE_AMBER = 'bg-[#FAF7F0] text-[#92763C] border-[#E8DCC4]'
+  const TONE_GREEN = 'bg-[#ECFDF5] text-[#047857] border-[#A7F3D0]'
+  const TONE_MUTE = 'bg-[#F8FAFC] text-[#94A3B8] border-[#E2E8F0]'
+
+  switch (lead.stage) {
+    case 'new_inquiry': {
+      const createdMs = new Date(lead.created_at).getTime()
+      if (Number.isFinite(createdMs)) {
+        const ageMin = (Date.now() - createdMs) / 60000
+        if (ageMin > slaMinutes) {
+          return {
+            label: 'Reply now',
+            title: 'New inquiry past your reply SLA.',
+            tone: TONE_URGENT,
+          }
+        }
+      }
+      return {
+        label: 'Send first reply',
+        title: 'New inquiry — open and send the first response.',
+        tone: TONE_BLUE,
+      }
+    }
+    case 'qualified':
+      return {
+        label: 'Offer tour times',
+        title: 'Qualified lead with no tour booked yet.',
+        tone: TONE_NAVY,
+      }
+    case 'tour_scheduled':
+      return {
+        label: 'Confirm attendance',
+        title: 'Tour is on the calendar — confirm with the couple.',
+        tone: TONE_BLUE,
+      }
+    case 'tour_completed':
+      return {
+        label: 'Send proposal',
+        title: 'Tour is done — send the proposal while the visit is fresh.',
+        tone: TONE_AMBER,
+      }
+    case 'negotiation':
+      return {
+        label: 'Revive around fit',
+        title: 'In negotiation — keep the fit story front and center.',
+        tone: TONE_AMBER,
+      }
+    case 'booked':
+      return {
+        label: 'Protect relationship',
+        title: 'Booked — keep the couple warm through the planning cycle.',
+        tone: TONE_GREEN,
+      }
+    case 'lost':
+      return {
+        label: 'Reactivate softly',
+        title: 'Lost — a soft check-in may re-open the conversation.',
+        tone: TONE_MUTE,
+      }
+    default:
+      return {
+        label: 'Review',
+        title: 'Open the lead to decide the next step.',
+        tone: TONE_NAVY,
+      }
+  }
 }

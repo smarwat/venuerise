@@ -8,14 +8,19 @@ import type { Database, LeadStage } from '@/types/database'
 
 type Lead = Database['public']['Tables']['leads']['Row']
 
+// GTM-0E — column labels reworded to owner-friendly language. Each
+// label describes the stage as a business state, not a CRM internal:
+//   "New Inquiry" → "New inquiries" (plural, what the operator sees)
+//   "Qualified" → "Qualified, needs next step" (what to do)
+//   "Lost" → "Lost / recovery" (signals the column is still actionable)
 const STAGE_CONFIG: Record<LeadStage, { label: string; dot: string }> = {
-  new_inquiry:    { label: 'New Inquiry',     dot: 'bg-[#94A3B8]' },
-  qualified:      { label: 'Qualified',       dot: 'bg-[#64748B]' },
-  tour_scheduled: { label: 'Tour Scheduled',  dot: 'bg-[#1D4ED8]' },
-  tour_completed: { label: 'Tour Completed',  dot: 'bg-[#059669]' },
-  negotiation:    { label: 'Negotiation',     dot: 'bg-[#D97706]' },
-  booked:         { label: 'Booked',          dot: 'bg-[#047857]' },
-  lost:           { label: 'Lost',            dot: 'bg-[#CBD5E1]' },
+  new_inquiry:    { label: 'New inquiries',             dot: 'bg-[#94A3B8]' },
+  qualified:      { label: 'Qualified, needs next step', dot: 'bg-[#64748B]' },
+  tour_scheduled: { label: 'Tours scheduled',           dot: 'bg-[#1D4ED8]' },
+  tour_completed: { label: 'Tours completed',           dot: 'bg-[#059669]' },
+  negotiation:    { label: 'Proposal / negotiation',    dot: 'bg-[#D97706]' },
+  booked:         { label: 'Booked weddings',           dot: 'bg-[#047857]' },
+  lost:           { label: 'Lost / recovery',           dot: 'bg-[#CBD5E1]' },
 }
 
 interface KanbanColumnProps {

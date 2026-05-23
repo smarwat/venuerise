@@ -761,8 +761,15 @@ export default function KanbanBoard({ initialLeads }: KanbanBoardProps) {
   return (
     <div className="flex flex-col">
       <div className="flex items-center justify-between gap-3 mb-4">
-        <p className="text-[13px] text-[#475569]">
-          {filtered.length} of {leads.length} leads shown
+        {/* GTM-0E — the LeadsPipelineSummary above the board now
+            carries the headline framing ("tracked / need action /
+            open pipeline"). This in-board line is the live filter
+            counter, deliberately quieter and only meaningful when
+            search/filter narrows the view. */}
+        <p className="text-[12.5px] text-[#64748B]">
+          {filtered.length === leads.length
+            ? `Showing all ${leads.length} ${leads.length === 1 ? 'lead' : 'leads'}`
+            : `Showing ${filtered.length} of ${leads.length} ${leads.length === 1 ? 'lead' : 'leads'}`}
         </p>
         <div className="flex items-center gap-2">
           <div className="hidden md:flex items-center gap-2 bg-white border border-[#E2E8F0] rounded-full pl-3 pr-2 h-9 w-64">
@@ -770,7 +777,7 @@ export default function KanbanBoard({ initialLeads }: KanbanBoardProps) {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search leads…"
+              placeholder="Search couple, email, or source…"
               className="flex-1 bg-transparent text-[13px] outline-none text-[#0F172A] placeholder:text-[#94A3B8]"
             />
           </div>

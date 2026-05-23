@@ -390,6 +390,11 @@ interface HealthBody {
     today_priority_card: 'mounted'
     demo_billing_banner_neutralized: 'mounted'
     buyer_friendly_metric_copy: 'mounted'
+    leads_revenue_pipeline_positioning: 'mounted'
+    leads_needs_attention_summary: 'mounted'
+    leads_next_action_cards: 'mounted'
+    leads_value_framing: 'mounted'
+    leads_attention_view: 'scaffold-only'
   }
   uptime_ms: number
   ts: string
@@ -2695,6 +2700,37 @@ export async function GET(request: Request) {
       today_priority_card: 'mounted',
       demo_billing_banner_neutralized: 'mounted',
       buyer_friendly_metric_copy: 'mounted',
+      // GTM-0E — Leads page revenue pipeline clarity pass.
+      // Header reframed "Leads" → "Revenue pipeline" with the subtitle
+      // "Prioritize overdue replies, hot leads without tours, scheduled
+      // visits, and recovery opportunities across every source."
+      //   - leads_revenue_pipeline_positioning: PageHeader updated +
+      //     KanbanBoard's "X of Y leads shown" line reframed.
+      //   - leads_needs_attention_summary: new LeadsPipelineSummary
+      //     server component renders "N tracked · N need action ·
+      //     $X open pipeline" + 5 action buckets (Reply overdue,
+      //     Hot leads idle, No tour booked, Tours to confirm,
+      //     Recoverable lost) that deep-link into the existing
+      //     leakage filters via /dashboard/leads?leakage=<key>.
+      //   - leads_next_action_cards: KanbanCard gains a NextActionPill
+      //     pinned to the bottom-left of every card. Tone shifts
+      //     by urgency (urgent amber for "Reply now", blue for
+      //     forward-motion, green for "Protect relationship",
+      //     mute for "Reactivate softly").
+      //   - leads_value_framing: card dollar figure relabeled from
+      //     "Budget" → "Est. value" / "Est. booked" / "Est. lost"
+      //     so the operator reads pipeline impact, not customer
+      //     wallet share.
+      //   - leads_attention_view: scaffold-only. The 5-bucket
+      //     summary deep-links into the existing leakage filters,
+      //     which gives operators the "needs attention" experience
+      //     without a full parallel Kanban view. A future phase can
+      //     promote this to a full bucket-Kanban toggle.
+      leads_revenue_pipeline_positioning: 'mounted',
+      leads_needs_attention_summary: 'mounted',
+      leads_next_action_cards: 'mounted',
+      leads_value_framing: 'mounted',
+      leads_attention_view: 'scaffold-only',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
