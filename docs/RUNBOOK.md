@@ -6329,3 +6329,29 @@ the same DB.
 3. As a hard guardrail: add a line to InstantResponseTrainingCard →
    "Additional venue rules (binding)" — e.g. "Never quote prices over
    $25k without operator approval." The system prompt enforces these.
+
+---
+
+## Phase GTM-0C — Sales asset pack
+
+Created `docs/gtm/` with 12 sales asset files. No product code changes.
+
+### Operator checklist
+
+- [ ] Read `docs/gtm/README.md` to understand the asset map
+- [ ] Pre-demo: seed the dashboard with the load-demo (Settings → Billing →
+      Revenue Recovery load / stress demo → 250 leads / `sales_demo` /
+      reset existing). See `docs/gtm/DEMO-SCRIPT.md` for the full setup.
+- [ ] Personalize `docs/gtm/ONE-PAGE-PITCH.md` calendar link + email
+      before sending to a prospect
+- [ ] Track every call in the `docs/gtm/SALES-CALL-SCORECARD.md` format
+- [ ] Weekly review every Friday (pattern: which subject lines, objections,
+      channels)
+- [ ] After 30 venue conversations, evaluate against GTM-1 sprint targets
+      (10+ proposals sent, 3+ pilots signed)
+
+### What's intentionally not in this phase
+
+- No new code, no admin routes, no DB migrations
+- No public pricing page (pilot pricing stays conversation-first)
+- No new claims that aren't already in `docs/GTM-POSITIONING.md`

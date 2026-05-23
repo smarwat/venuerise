@@ -6413,3 +6413,20 @@ QA log too.
 - [ ] With ANTHROPIC_API_KEY unset, lead creation still succeeds and the AI message persists as the fallback draft (`fallback_used=true`).
 - [ ] With autoSendEnabled=ON + high confidence + safe content, audit row carries `auto_send_eligible: true` but no actual send happens (scaffold-only).
 - [ ] EnterpriseAuditEventsCard shows `instant_lead_response.generated` (or `.fallback_created`) action.
+
+---
+
+## Phase GTM-0C — Sales asset pack QA
+
+- [ ] `docs/gtm/` directory exists with 12 files (README + 11 assets)
+- [ ] Every CTA in the sales scripts routes to a real destination
+      (`/demo`, mailto, calendar link placeholder) — no broken refs
+- [ ] No sales script claims "SOC 2", "GDPR", "guaranteed revenue",
+      "fully autonomous", or "official partner" anywhere
+- [ ] Pricing in `docs/gtm/PILOT-OFFER.md` is marked INTERNAL only
+- [ ] The "one-extra-wedding" framing appears in DEMO-SCRIPT, COLD-CALL,
+      ROI-FRAMING, and PILOT-OFFER — consistent across all four
+- [ ] `docs/GTM-POSITIONING.md` is updated with a pointer to the sales
+      asset pack
+- [ ] No admin routes added, `ADMIN_ENDPOINT_COUNT` unchanged
+- [ ] Build clean

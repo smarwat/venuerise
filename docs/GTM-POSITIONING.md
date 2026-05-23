@@ -194,3 +194,28 @@ When this changes, ripple the change through:
    `docs/BILLING-QA.md`
 
 **Update this doc first; everything else follows.**
+
+---
+
+## Sales asset pack (Phase GTM-0C)
+
+The canonical positioning above is enforced by the assets in
+`docs/gtm/`:
+
+- `docs/gtm/README.md` — index
+- `docs/gtm/GTM-PLAYBOOK.md` — ICP, channels, daily activity, sprint plan
+- `docs/gtm/DEMO-SCRIPT.md` — 10-min walkthrough with timestamps
+- `docs/gtm/COLD-CALL-SCRIPT.md` — opener, branching responses, voicemail, gatekeeper
+- `docs/gtm/COLD-EMAIL-SEQUENCE.md` — 5-email sequence (Day 1/3/7/12/18)
+- `docs/gtm/INSTAGRAM-DM-SCRIPTS.md` — short DM + voice note + story reply
+- `docs/gtm/DISCOVERY-QUESTIONS.md` — categorized questions for discovery calls
+- `docs/gtm/OBJECTION-HANDLING.md` — 12 objections + responses
+- `docs/gtm/PILOT-OFFER.md` — 30-day pilot offer + 3 internal pricing tiers
+- `docs/gtm/ROI-FRAMING.md` — formulas + the one-extra-wedding framing
+- `docs/gtm/POST-DEMO-FOLLOW-UP.md` — recap, no-show, objection, pricing, nurture, kickoff
+- `docs/gtm/SALES-CALL-SCORECARD.md` — 100-point qualification scoring
+- `docs/gtm/ONE-PAGE-PITCH.md` — printable one-pager
+
+**Rule:** if any sales script contradicts the approved claims / forbidden
+claims tables in this doc, **this doc wins.** Update the script, not
+the positioning.

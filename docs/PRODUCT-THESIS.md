@@ -1111,3 +1111,27 @@ ships:
 A future phase may graduate the scaffold to a real outbound send,
 but only after the calibration panel proves the system can be
 trusted at the per-venue level.
+
+---
+
+## Phase GTM-0C — sales is now a documented motion
+
+Before this phase, sales lived in the founder's head. After this phase,
+the playbook is on disk:
+
+- `docs/gtm/GTM-PLAYBOOK.md` is the operating manual
+- `docs/gtm/DEMO-SCRIPT.md` is the canonical walkthrough
+- `docs/gtm/PILOT-OFFER.md` defines what we sell + tier pricing
+- `docs/gtm/SALES-CALL-SCORECARD.md` makes qualification repeatable
+
+This matters for two reasons:
+
+1. **A second seller (or part-time SDR) can ramp from these docs alone.**
+   The founder doesn't have to be the only person who knows how to pitch.
+2. **The pitch is auditable.** Every claim in the scripts can be traced
+   back to a row in `docs/GTM-POSITIONING.md`. No "where did that
+   number come from" mystery.
+
+The next phase (GTM-1 — 30 Venue Validation Sprint) is the first real
+test of whether the playbook produces signed pilots when applied at
+volume.
