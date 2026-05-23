@@ -19,6 +19,11 @@ import TourSchedulingClient from '@/components/dashboard/tours/TourSchedulingCli
 import MonthNavClient from '@/components/dashboard/tours/MonthNavClient'
 import TourInteractionClient from '@/components/dashboard/tours/TourInteractionClient'
 import TourPausedBanner from '@/components/dashboard/tours/TourPausedBanner'
+// GTM-0F — tour protection polish. TourProtectionSummary sits at
+// the top with 5 risk tiles. CompletedTourFollowupList surfaces
+// the "toured but not booked" queue the page was missing.
+import TourProtectionSummary from '@/components/dashboard/tours/TourProtectionSummary'
+import CompletedTourFollowupList from '@/components/dashboard/tours/CompletedTourFollowupList'
 
 type TourStatus = 'scheduled' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
 
@@ -83,6 +88,33 @@ export default async function ToursPage({
         .gte('scheduled_at', monthStart.toISOString())
         .lte('scheduled_at', monthEnd.toISOString())
         .order('scheduled_at')
+      ).data ?? []
+    : []
+
+  // GTM-0F — separate broader-window fetch for the protection summary
+  // and completed-follow-up queue. The month-scoped `tours` query above
+  // powers the calendar grid; the summary tiles + follow-up list care
+  // about a wider time band (last 60 days through next 30 days) and
+  // need lead.stage + lead.budget + lead.lead_score for accurate
+  // counts and "Est. value" framing.
+  // Best-effort: a query failure collapses both surfaces to empty.
+  const SUMMARY_BACK_DAYS = 60
+  const SUMMARY_FORWARD_DAYS = 30
+  const summaryFrom = new Date(now)
+  summaryFrom.setDate(summaryFrom.getDate() - SUMMARY_BACK_DAYS)
+  const summaryTo = new Date(now)
+  summaryTo.setDate(summaryTo.getDate() + SUMMARY_FORWARD_DAYS)
+  const summaryTours = venueId
+    ? (await supabase
+        .from('tours')
+        .select(
+          'id, scheduled_at, status, lead_id, leads(name, stage, lead_score, budget)'
+        )
+        .eq('venue_id', venueId)
+        .gte('scheduled_at', summaryFrom.toISOString())
+        .lte('scheduled_at', summaryTo.toISOString())
+        .order('scheduled_at', { ascending: false })
+        .limit(500)
       ).data ?? []
     : []
 
@@ -159,9 +191,13 @@ export default async function ToursPage({
 
   return (
     <div className="p-6 lg:p-8 animate-slide-up">
+      {/* GTM-0F — header reframe. "Tours" → "Tour pipeline" with a
+          revenue-protection subtitle. The page now reads as the
+          place where wedding bookings are won or lost, not as a
+          generic calendar view. */}
       <PageHeader
-        title="Tours"
-        subtitle="Schedule, confirm, and track every venue tour"
+        title="Tour pipeline"
+        subtitle="Confirm upcoming tours, prevent no-shows, and turn completed visits into booked weddings."
         actions={
           <div className="flex items-center gap-2">
             {/* Phase 8E — URL-based month nav. Clicking chevrons or "Today"
@@ -186,26 +222,54 @@ export default async function ToursPage({
         <TourPausedBanner pausedAt={toursPausedAt} pausedCount={toursPausedCount} />
       )}
 
-      {/* Stats — Phase 8AI editorial cards: uppercase eyebrow + big
-          tabular number + status badge below. Matches the Overview
-          metric tiles' rhythm without bringing in the sparkline. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* GTM-0F — Tour protection summary band. Sits at the top of
+          the page hierarchy: header → protection summary → calendar +
+          action queues → secondary stats. Tiles only render when
+          their value is meaningful. */}
+      <TourProtectionSummary
+        tours={summaryTours as Parameters<typeof TourProtectionSummary>[0]['tours']}
+        displayMonth={displayMonth}
+      />
+
+      {/* GTM-0F — reduced visual weight on the per-status counters.
+          The protection summary above already carries the headline;
+          these are now secondary "by-status" reference numbers with
+          owner-friendly helper copy below the count. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         {(['scheduled', 'confirmed', 'completed', 'no_show'] as TourStatus[]).map((s) => {
           const cfg = STATUS_CONFIG[s]
+          // GTM-0F — owner-friendly relabel + one-line helper.
+          const ownerLabel: Record<TourStatus, string> = {
+            scheduled: 'Scheduled tours',
+            confirmed: 'Confirmed visits',
+            completed: 'Completed tours',
+            cancelled: 'Cancelled',
+            no_show: 'No-shows',
+          }
+          const helperCopy: Record<TourStatus, string> = {
+            scheduled: 'Need confirmation before the visit.',
+            confirmed: 'Ready for the couple.',
+            completed: 'Follow up while interest is warm.',
+            cancelled: 'Out of the funnel.',
+            no_show: 'Recover or reschedule quickly.',
+          }
           return (
             <div
               key={s}
-              className="bg-white border border-[#E6E8EF] rounded-[18px] p-5 shadow-card flex flex-col gap-3"
+              className="bg-white border border-[#E6E8EF] rounded-[14px] p-4 shadow-card flex flex-col gap-2"
             >
-              <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#64748B] font-semibold">
-                {cfg.label}
-              </div>
-              <div className="text-[32px] sm:text-[36px] font-semibold text-[#0F172A] tracking-[-0.025em] leading-none tabular-nums">
-                {countByStatus(s)}
-              </div>
-              <div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10.5px] uppercase tracking-[0.14em] text-[#64748B] font-semibold truncate">
+                  {ownerLabel[s]}
+                </span>
                 <Badge variant={cfg.variant}>{cfg.label}</Badge>
               </div>
+              <div className="text-[26px] font-semibold text-[#0F172A] tracking-[-0.022em] leading-none tabular-nums">
+                {countByStatus(s)}
+              </div>
+              <p className="text-[11px] text-[#64748B] leading-snug">
+                {helperCopy[s]}
+              </p>
             </div>
           )
         })}
@@ -314,23 +378,62 @@ export default async function ToursPage({
                 )
               })}
             </div>
+            {/* GTM-0F — calendar legend. Subtle row beneath the grid
+                so first-time viewers can decode the chip colors at a
+                glance. Tones match STATUS_CONFIG above. */}
+            <div className="mt-3 pt-3 border-t border-[#F1F5F9] flex items-center gap-x-4 gap-y-1.5 flex-wrap text-[10.5px] text-[#64748B]">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#1D4ED8]" />
+                Scheduled
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#0F172A]" />
+                Confirmed
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#047857]" />
+                Completed
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#92763C]" />
+                Needs follow-up
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#B91C1C]" />
+                No-show
+              </span>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Upcoming — now interactive via Phase 8E client wrapper.
-            Renders the same shape as before but click → opens EditTourDrawer,
-            and scheduled rows get an inline "Mark confirmed" action. */}
+        {/* GTM-0F — Upcoming Tours card relabeled "Tours needing
+            protection." Same interactive component (drawer, mark
+            confirmed, audit). The next-action framing now lives at
+            the page level via the protection summary above. */}
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Upcoming Tours</CardTitle>
-              <CardSubtitle>Next on your calendar</CardSubtitle>
+              <CardTitle>Tours needing protection</CardTitle>
+              <CardSubtitle>
+                Upcoming visits that need confirmation, reminders, or a clean handoff.
+              </CardSubtitle>
             </div>
           </CardHeader>
           <CardContent>
             <TourInteractionClient tours={upcomingTours} />
           </CardContent>
         </Card>
+      </div>
+
+      {/* GTM-0F — Completed-tour follow-up queue. Sits below the
+          calendar row so the operator sees the "you toured them,
+          now close them" workflow alongside the visual calendar.
+          Reads from the broader summaryTours window so leads that
+          toured last month and are still un-booked stay visible. */}
+      <div className="mt-4">
+        <CompletedTourFollowupList
+          tours={summaryTours as Parameters<typeof CompletedTourFollowupList>[0]['tours']}
+        />
       </div>
       {/* Phase 8C — non-rendering client component (except for a toast).
           Subscribes to public.tours postgres_changes filtered by venue_id

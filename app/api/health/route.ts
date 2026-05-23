@@ -395,6 +395,11 @@ interface HealthBody {
     leads_next_action_cards: 'mounted'
     leads_value_framing: 'mounted'
     leads_attention_view: 'scaffold-only'
+    tours_revenue_protection_positioning: 'mounted'
+    tour_risk_summary: 'mounted'
+    completed_tour_followup_queue: 'mounted'
+    tour_next_action_rows: 'mounted'
+    tour_value_framing: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2731,6 +2736,41 @@ export async function GET(request: Request) {
       leads_next_action_cards: 'mounted',
       leads_value_framing: 'mounted',
       leads_attention_view: 'scaffold-only',
+      // GTM-0F — Tours page revenue protection polish.
+      // Header reframed "Tours" → "Tour pipeline" with the subtitle
+      // "Confirm upcoming tours, prevent no-shows, and turn completed
+      // visits into booked weddings."
+      //   - tours_revenue_protection_positioning: PageHeader updated;
+      //     calendar gets a small legend underneath; existing 4
+      //     status cards reduced to secondary "by-status" reference
+      //     numbers with owner-friendly helper copy.
+      //   - tour_risk_summary: new TourProtectionSummary server
+      //     component renders 5 tiles (Tours to confirm /
+      //     Tours this week / Needs follow-up / Upcoming tour value /
+      //     No-shows this month) above the calendar. Tiles hide when
+      //     their value isn't meaningful — never shows "0" risks.
+      //   - completed_tour_followup_queue: new
+      //     CompletedTourFollowupList surfaces the previously missing
+      //     "toured but not booked yet" workflow. Top 5 most recent
+      //     completed tours where the linked lead stage is not booked
+      //     and not lost.
+      //   - tour_next_action_rows: TourInteractionClient's "Upcoming
+      //     Tours" card renamed "Tours needing protection" with
+      //     subtitle "Upcoming visits that need confirmation,
+      //     reminders, or a clean handoff." Existing per-row actions
+      //     (Mark confirmed, Audit, Open lead) preserved.
+      //   - tour_value_framing: CompletedTourFollowupList rows show
+      //     "Est. value $42k" champagne pill when budget is known.
+      //     The protection summary's "Upcoming tour value" tile sums
+      //     budgets across upcoming scheduled+confirmed tours.
+      // Pure UI/copy polish. No backend route changes, no DB
+      // migrations, no AI prompt changes, no autonomous sends, no
+      // auto-confirming tours.
+      tours_revenue_protection_positioning: 'mounted',
+      tour_risk_summary: 'mounted',
+      completed_tour_followup_queue: 'mounted',
+      tour_next_action_rows: 'mounted',
+      tour_value_framing: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
