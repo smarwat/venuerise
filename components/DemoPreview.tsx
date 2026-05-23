@@ -85,8 +85,8 @@ export default function DemoPreview() {
           <div>
             <div className="section-label">A real demo</div>
             <h2 className="font-display text-[40px] sm:text-[52px] font-bold text-[#0A0A1A] leading-[1.05] tracking-[-0.02em] mb-6">
-              See exactly where{' '}
-              <span className="text-gradient">your revenue is leaking.</span>
+              See which inquiries{' '}
+              <span className="text-gradient">are slipping — and what they&rsquo;re worth.</span>
             </h2>
             <p className="text-[#475569] text-[18px] leading-[1.6] mb-6 max-w-[520px]">
               In a demo, we load a realistic wedding venue pipeline and

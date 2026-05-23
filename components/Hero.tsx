@@ -44,7 +44,10 @@ const trustSignals = [
   'AI drafts. Your team approves.',
   'No autonomous sending.',
   'Connects website, Instagram, The Knot, WeddingWire, Meta Ads.',
-  'Pilot setup in days, not quarters.',
+  // Aligned with the FAQ answer ("most venues are operating the daily
+  // workflow within the first week") so the page doesn't promise a
+  // vaguer "days" timeline than support copy can back.
+  'Pilot setup in the first week, not quarters.',
 ]
 
 function LeakCard({
@@ -139,7 +142,7 @@ function RevenueAtRiskCard() {
       <div className="mt-3 pt-3 border-t border-[#F1F5F9] flex items-center justify-between text-[11px]">
         <span className="text-[#475569]">Top source</span>
         <span className="font-semibold text-[#047857]">
-          Google Ads · ~$42k booked
+          Google Ads · $42k booked
         </span>
       </div>
     </div>
@@ -215,7 +218,7 @@ export default function Hero() {
               className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-[#4D90FF]/35 bg-[#1A6FFF]/[0.10] backdrop-blur-md text-[#9BBEFF] text-[11px] font-bold uppercase tracking-[0.18em] mb-7"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[#4D90FF] animate-pulse" />
-              AI Revenue OS · Built for Wedding Venues
+              AI Revenue OS · Built for wedding venues
             </motion.div>
 
             <motion.h1
@@ -238,7 +241,8 @@ export default function Hero() {
               VenueRise is an AI Revenue OS for wedding venues. It
               connects your website, Instagram, The Knot, WeddingWire,
               Meta Ads, and inbox inquiries into one revenue dashboard,
-              then shows which leads need action before they go cold.
+              then shows which leads need action &mdash; and what
+              they&rsquo;re worth &mdash; before they go cold.
             </motion.p>
 
             <motion.div

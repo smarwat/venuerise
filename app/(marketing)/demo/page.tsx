@@ -51,14 +51,14 @@ export default function DemoPage() {
               </div>
 
               <h1 className="font-display text-[44px] sm:text-[54px] lg:text-[64px] font-bold text-[#0A0A1A] leading-[1.04] tracking-[-0.02em] mb-6">
-                See where your venue&rsquo;s{' '}
+                See where your wedding venue&rsquo;s{' '}
                 <span className="text-gradient">revenue is leaking.</span>
               </h1>
 
               <p className="text-[17px] text-[#475569] leading-[1.6] mb-8 max-w-[520px]">
                 30 minutes. We&rsquo;ll walk the Revenue OS dashboard
                 with your team, map your real lead sources, and talk
-                pilot scope. No commitment. No high-pressure pitch.
+                pilot scope. No commitment. Conversation first.
               </p>
 
               <ul className="space-y-3 mb-8 max-w-[480px]">

@@ -78,12 +78,15 @@ export default function Footer() {
           </div>
         </div>
 
-        {/* Bottom bar */}
-        <div className="pt-6 border-t border-black/[0.05] flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p className="text-[12px] text-[#94A3B8]">
+        {/* Bottom bar.
+            Privacy Policy + Terms of Service links removed until those
+            pages are actually published — rendering them as text-only
+            without functional links was misleading. Re-add as real
+            <a> elements once /privacy and /terms ship. */}
+        <div className="pt-6 border-t border-black/[0.05]">
+          <p className="text-[12px] text-[#94A3B8] text-center sm:text-left">
             © {new Date().getFullYear()} VenueRise. All rights reserved.
           </p>
-          <p className="text-[12px] text-[#94A3B8]">Privacy Policy · Terms of Service</p>
         </div>
       </div>
     </footer>
