@@ -378,6 +378,10 @@ interface HealthBody {
     inbox_thread_scroll_container_fix: 'mounted'
     inbox_composer_bottom_anchor: 'mounted'
     inbox_blank_whitespace_regression_guard: 'mounted'
+    dashboard_shell_viewport_lock: 'mounted'
+    inbox_uses_parent_height_not_viewport_calc: 'mounted'
+    inbox_body_scroll_eliminated: 'mounted'
+    inbox_independent_scroll_regions: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2607,6 +2611,34 @@ export async function GET(request: Request) {
       inbox_thread_scroll_container_fix: 'mounted',
       inbox_composer_bottom_anchor: 'mounted',
       inbox_blank_whitespace_regression_guard: 'mounted',
+      // Phase 8BL-Hotfix-3 — dashboard shell viewport lock. The
+      // dashboard route group now OWNS the viewport
+      // (`h-dvh overflow-hidden`), the content column inside is
+      // `h-full min-h-0 flex-col overflow-hidden`, topbar +
+      // BillingBanner + DemoModeBanner are `shrink-0` wrappers,
+      // and `<main>` is `flex-1 min-h-0 overflow-y-auto`. Non-
+      // inbox pages (overview, leads, tours, analytics, settings)
+      // scroll INSIDE `<main>` instead of the body — body scroll
+      // is eliminated on every dashboard route. Inbox pages claim
+      // `h-full overflow-hidden` and own their internal scroll
+      // regions (conversation list + thread). No more viewport
+      // math (`100dvh - 60px`) inside any page — height inherits
+      // from the shell.
+      //   - dashboard_shell_viewport_lock: layout claims the
+      //     viewport via h-dvh + overflow-hidden.
+      //   - inbox_uses_parent_height_not_viewport_calc: inbox
+      //     roots are h-full, not h-[calc(100dvh-60px)].
+      //   - inbox_body_scroll_eliminated: body never scrolls on
+      //     inbox pages; only the message list + conversation
+      //     list scroll internally.
+      //   - inbox_independent_scroll_regions: ConversationList
+      //     gains h-full min-h-0 with internal flex-1 min-h-0
+      //     overflow-y-auto so the list scrolls independently of
+      //     the thread.
+      dashboard_shell_viewport_lock: 'mounted',
+      inbox_uses_parent_height_not_viewport_calc: 'mounted',
+      inbox_body_scroll_eliminated: 'mounted',
+      inbox_independent_scroll_regions: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

@@ -107,7 +107,23 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <div className={`${inter.variable} font-sans`}>
       <DashboardProvider initialVenue={venue}>
-        <div className="min-h-screen w-full bg-[#F4F7FB] text-slate-950">
+        {/* Phase 8BL-Hotfix-3 — shell viewport lock.
+            The dashboard now OWNS the viewport: `h-dvh overflow-hidden`
+            means the browser/body never scrolls on any dashboard route.
+            The content column inside is `h-full min-h-0 flex-col
+            overflow-hidden`, with topbar/banners as `shrink-0` and
+            `<main>` as `flex-1 min-h-0 overflow-y-auto`. That gives:
+              - Non-inbox pages (overview, leads, tours, analytics,
+                settings) scroll inside `<main>` automatically when
+                their content is tall — main provides the scroll
+                context, not the body.
+              - Inbox pages can use `h-full min-h-0 overflow-hidden`
+                to claim the full main height and own their internal
+                scroll regions (conversation list + thread) without
+                ever leaking into body scroll.
+            No more `100dvh - 60px` math anywhere inside pages —
+            children just use `h-full` and inherit main's height. */}
+        <div className="h-dvh w-full overflow-hidden bg-[#F4F7FB] text-slate-950">
           <DashboardSidebar
             leadCount={counts.leads}
             inboxCount={counts.inbox}
@@ -116,41 +132,43 @@ export default async function DashboardLayout({ children }: { children: React.Re
             ownerName={ownerName}
             ownerSubtitle={ownerSubtitle}
           />
-          <div className="lg:ml-[260px] min-w-0 flex flex-col min-h-screen">
-            <DashboardTopBar />
+          <div className="lg:ml-[260px] min-w-0 flex h-full min-h-0 flex-col overflow-hidden">
+            {/* Phase 8BL-Hotfix-3 — `shrink-0` on every above-main
+                element so the flex column allocates exactly the
+                remaining space to main. Topbar's `sticky top-0` is
+                now redundant inside an overflow-hidden flex column
+                (sticky needs a scrollable ancestor), but harmless;
+                we leave it for compatibility if a future redesign
+                re-introduces vertical scroll above the inbox. */}
+            <div className="shrink-0">
+              <DashboardTopBar />
+            </div>
             {/* Phase 9J — demo mode banner. Reads venues.demo_mode_*
                 from the venue row already fetched above; renders a
                 "DEMO MODE" badge below the topbar when enabled.
                 Visual marker only; does NOT anonymize production
                 data. Owner-only toggle on /dashboard/settings/billing
                 via the DemoModeCard. */}
-            <DemoModeBanner
-              enabled={
-                Boolean(
-                  (venue as { demo_mode_enabled?: boolean } | null)
-                    ?.demo_mode_enabled
-                )
-              }
-              label={
-                (venue as { demo_mode_label?: string | null } | null)
-                  ?.demo_mode_label ?? null
-              }
-            />
+            <div className="shrink-0">
+              <DemoModeBanner
+                enabled={
+                  Boolean(
+                    (venue as { demo_mode_enabled?: boolean } | null)
+                      ?.demo_mode_enabled
+                  )
+                }
+                label={
+                  (venue as { demo_mode_label?: string | null } | null)
+                    ?.demo_mode_label ?? null
+                }
+              />
+            </div>
             {/* Banner is fail-open: if the subscription read throws, it renders
                 nothing and the dashboard keeps working. See BillingBanner. */}
-            <BillingBanner venueId={venueId} />
-            {/* Phase 8BL-Hotfix-2 — `min-h-0` on the flex-1 main lets
-                children that opt into a constrained-height layout
-                (e.g. the inbox: `h-[calc(100dvh-60px)] overflow-hidden`)
-                actually constrain themselves. Without `min-h-0`, a
-                flex-1 child uses content-derived sizing as its
-                floor, which lets the inbox's internal scroll area
-                spill its parent and push the dashboard column past
-                the viewport. The constraint is a no-op for pages
-                that don't set an explicit height — overview, leads,
-                tours, analytics, settings all keep natural
-                body-scroll behavior. */}
-            <main className="flex-1 min-h-0 w-full overflow-x-hidden">
+            <div className="shrink-0">
+              <BillingBanner venueId={venueId} />
+            </div>
+            <main className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden">
               {children}
             </main>
           </div>

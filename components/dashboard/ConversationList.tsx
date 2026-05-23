@@ -184,8 +184,13 @@ export default function ConversationList({ conversations, activeLeadId }: Props)
   const showMessageBlock = trimmed.length >= 2
 
   return (
-    <aside className="w-[320px] shrink-0 bg-white border-r border-[#E6E8EF] flex flex-col">
-      <div className="px-4 py-3.5 border-b border-[#F1F5F9]">
+    // Phase 8BL-Hotfix-3 — explicit height ownership. `h-full
+    // min-h-0` lets the internal `flex-1 overflow-y-auto` engage
+    // (without `min-h-0`, the search-header div + list grow to
+    // content size and spill the parent). `overflow-hidden` is
+    // belt-and-suspenders against rogue overflow.
+    <aside className="w-[320px] shrink-0 h-full min-h-0 bg-white border-r border-[#E6E8EF] flex flex-col overflow-hidden">
+      <div className="shrink-0 px-4 py-3.5 border-b border-[#F1F5F9]">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[14px] font-semibold text-[#0F172A]">All messages</h2>
           <button className="text-[11px] font-medium text-[#1D4ED8] hover:underline">All Platforms ▾</button>
@@ -205,7 +210,7 @@ export default function ConversationList({ conversations, activeLeadId }: Props)
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {/* Conversation rows — locally filtered. */}
         {conversations.length === 0 && (
           <div className="p-6 text-center text-[13px] text-[#64748B]">No conversations yet.</div>

@@ -325,3 +325,44 @@ changes.
 Regression guard: composer must remain pinned, message list
 must be the only vertical scroll region, no blank whitespace
 below message history.
+
+---
+
+## Phase 8BL-Hotfix-3 — Dashboard shell viewport lock
+
+The 8BL-Hotfix-2 fix kept page-level viewport math
+(`h-[calc(100dvh-60px)]`) inside the inbox roots. That math
+broke whenever the banner stack height drifted (subscription
+state changes, demo mode toggle, future banners). The deeper
+fix: **the dashboard shell owns the viewport; pages just claim
+`h-full`.**
+
+What changed:
+- `app/(dashboard)/layout.tsx` — outer dashboard div is
+  `h-dvh w-full overflow-hidden`; content column is
+  `h-full min-h-0 flex flex-col overflow-hidden`; topbar /
+  DemoModeBanner / BillingBanner each wrapped in `shrink-0`
+  divs; `<main>` is `flex-1 min-h-0 overflow-y-auto`.
+- Inbox roots — `h-[calc(100dvh-60px)] min-h-0` → `h-full min-h-0`.
+- `ConversationList.tsx` — aside gains `h-full min-h-0 overflow-hidden`;
+  list scroll region gains `min-h-0`.
+
+Result:
+- Body/window never scrolls on any dashboard route.
+- Non-inbox pages scroll INSIDE `<main>` (overflow-y-auto)
+  instead of the body — same UX from the user's perspective,
+  but the layout primitive is consistent.
+- Inbox pages own their own scroll regions; banners can come
+  and go without breaking inbox layout because the shell
+  already gave main the right height.
+
+Regression guard:
+- `document.documentElement.scrollHeight` should equal
+  `document.documentElement.clientHeight` on every dashboard
+  route — no body scroll.
+- Only `<main>` (non-inbox) OR the inbox's internal
+  ConversationList + ConversationThread scroll regions should
+  produce scrollbars.
+- No `100vh` / `100dvh` / `calc(100…)` literals inside any
+  dashboard page or component except the layout's own
+  `h-dvh`.
