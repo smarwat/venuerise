@@ -237,33 +237,189 @@ export default async function AnalyticsPage() {
   }))
 
   const totalLeads30d = leads.length
-  const avgScore = leads.length > 0 ? Math.round(leads.reduce((s, l) => s + l.lead_score, 0) / leads.length) : 0
   const conversionRate = allLeads.length > 0 ? Math.round((allLeads.filter((l) => l.stage === 'booked').length / allLeads.length) * 100) : 0
-  const pipelineValue = allLeads.filter((l) => !['lost', 'booked'].includes(l.stage)).length * 15000
   const toursCompleted = tours.filter((t) => t.status === 'completed').length
   const avgResponseMs = aiActions.length > 0 ? Math.round(aiActions.reduce((s, a) => s + (a.latency_ms ?? 0), 0) / aiActions.length) : 0
 
-  const kpis = [
-    { label: 'Leads (30d)', value: totalLeads30d },
-    { label: 'Avg Score', value: avgScore },
-    { label: 'Conversion', value: `${conversionRate}%` },
-    { label: 'Pipeline', value: `$${(pipelineValue / 1000).toFixed(0)}k` },
-    { label: 'Tours Done', value: toursCompleted },
-    { label: 'AI Latency', value: avgResponseMs > 0 ? `${(avgResponseMs / 1000).toFixed(1)}s` : '—' },
-  ]
+  // GTM-0G — buyer-facing KPI computation. Replaces internal metrics
+  // (Avg score / AI latency) with revenue-owner numbers (Booked
+  // weddings, Open pipeline, Est. booked value).
+  // Honest sources only — every value derives from data already on
+  // the page; we hide a card when its value isn't meaningful.
+  const bookedCount = attributionLeads.filter((l) => l.stage === 'booked').length
+  const openPipelineValue = attributionLeads
+    .filter((l) => l.stage && !['lost', 'booked'].includes(l.stage))
+    .reduce((sum, l) => sum + (typeof l.budget === 'number' ? l.budget : 0), 0)
+  const bookedValueTracked = attributionLeads
+    .filter((l) => l.stage === 'booked')
+    .reduce((sum, l) => sum + (typeof l.budget === 'number' ? l.budget : 0), 0)
+
+  function moneyShort(n: number): string {
+    if (n <= 0) return '—'
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`
+    if (n >= 10_000) return `$${Math.round(n / 1000)}k`
+    return `$${n.toLocaleString()}`
+  }
+
+  type KpiTile = { label: string; value: string | number; helper?: string }
+  const kpis: KpiTile[] = [
+    { label: 'New inquiries · 30d', value: totalLeads30d },
+    { label: 'Tours completed', value: toursCompleted },
+    { label: 'Booked weddings', value: bookedCount },
+    { label: 'Lead → booked', value: `${conversionRate}%` },
+    {
+      label: 'Open pipeline',
+      value: moneyShort(openPipelineValue),
+      helper: 'Estimated from couple budgets',
+    },
+    {
+      label: 'Est. booked value',
+      value: moneyShort(bookedValueTracked),
+      helper: 'From booked leads with entered budgets',
+    },
+  ].filter((k) => k.value !== '—' || k.label === 'Est. booked value' || k.label === 'Open pipeline') as KpiTile[]
+  // Note: we still surface money cards even when "—" so the operator
+  // sees the slot exists; their budget-entry workflow lights them up.
+
+  // ── GTM-0G — Key insight this month ────────────────────────────────────
+  // Deterministic, no model call. Reads the source leakage + attribution
+  // summaries already computed above and picks the most operationally
+  // useful one-line insight for the buyer demo. Falls back to a generic
+  // honest line when data is sparse.
+  const keyInsight = (() => {
+    type Insight = {
+      headline: string
+      ctaLabel: string
+      ctaHref: string
+    }
+    const fallback: Insight = {
+      headline:
+        'Connect at least 20 attributed inquiries to see source-level intelligence here.',
+      ctaLabel: 'Open leads',
+      ctaHref: '/dashboard/leads',
+    }
+    if (sourceLeakageSummary.rows.length === 0) return fallback
+
+    // Rank sources by pipeline value. The top-pipeline source with
+    // any at-risk leads is the most useful prioritization signal.
+    const ranked = [...sourceLeakageSummary.rows]
+      .filter((r) => r.sourceLabel !== 'Unknown')
+      .sort(
+        (a, b) => b.estimatedPipelineValue - a.estimatedPipelineValue
+      )
+    const topPipeline = ranked[0]
+    const topAtRisk = [...sourceLeakageSummary.rows]
+      .filter((r) => r.sourceLabel !== 'Unknown' && r.atRiskCount > 0)
+      .sort((a, b) => b.atRiskCount - a.atRiskCount)[0]
+
+    if (topPipeline && topAtRisk && topAtRisk.atRiskCount >= 3) {
+      const second = ranked.find((r) => r.sourceLabel !== topPipeline.sourceLabel)
+      const lead = second
+        ? `${topPipeline.sourceLabel} and ${second.sourceLabel} created the most pipeline`
+        : `${topPipeline.sourceLabel} created the most pipeline`
+      return {
+        headline: `${lead}, but ${topAtRisk.sourceLabel} has ${topAtRisk.atRiskCount} at-risk leads. Prioritize follow-up recovery there first.`,
+        ctaLabel: 'Recover leads',
+        ctaHref: `/dashboard/leads?source=${encodeURIComponent(topAtRisk.sourceLabel)}`,
+      } as Insight
+    }
+    if (topPipeline && bookedRevenueSummary.totals.bookedCount > 0) {
+      const topBooked = [...bookedRevenueSummary.rows]
+        .filter((r) => r.sourceLabel !== 'Unknown' && r.bookedCount > 0)
+        .sort((a, b) => b.estimatedBookedValue - a.estimatedBookedValue)[0]
+      if (topBooked && topBooked.sourceLabel !== topPipeline.sourceLabel) {
+        return {
+          headline: `${topBooked.sourceLabel} has the strongest booked value so far, while ${topPipeline.sourceLabel} is creating the most inquiries but fewer booked weddings.`,
+          ctaLabel: 'View source leaks',
+          ctaHref: `/dashboard/leads?source=${encodeURIComponent(topPipeline.sourceLabel)}`,
+        } as Insight
+      }
+    }
+    if (topPipeline) {
+      return {
+        headline: `${topPipeline.sourceLabel} is currently your highest-value pipeline source. Keep response speed tight on inbound from this channel.`,
+        ctaLabel: 'Open leads',
+        ctaHref: `/dashboard/leads?source=${encodeURIComponent(topPipeline.sourceLabel)}`,
+      } as Insight
+    }
+    return fallback
+  })()
+
+  // ── GTM-0G — Biggest funnel drop-off ───────────────────────────────────
+  // Pure deterministic computation over the funnel counts. We look at the
+  // ratio drop between each consecutive stage; the largest gap becomes
+  // the insight. Falls back to a "more data needed" line when counts
+  // are too sparse to be informative.
+  const funnelDropoff = (() => {
+    const stageMessages: Record<string, string> = {
+      qualified_to_tour_scheduled:
+        'Qualified leads are not getting onto tour slots fast enough.',
+      tour_scheduled_to_tour_completed:
+        'Tours are being scheduled but not showing up. Confirmation reminders matter here.',
+      tour_completed_to_negotiation:
+        'Couples tour the venue but the proposal handoff is delayed.',
+      negotiation_to_booked:
+        'Proposals are landing but final close needs a stronger nudge.',
+      new_inquiry_to_qualified:
+        'First-reply speed and qualification questions need a tighter rhythm.',
+    }
+    const counts = funnelStages.map((s) => s.count)
+    const total = counts[0] ?? 0
+    if (total < 10) {
+      return {
+        headline:
+          'More data is needed before identifying a reliable funnel drop-off.',
+        title: 'Biggest funnel drop-off',
+      }
+    }
+    let biggestDrop = 0
+    let dropAt = ''
+    let dropFromLabel = ''
+    let dropToLabel = ''
+    for (let i = 0; i < counts.length - 1; i++) {
+      const a = counts[i]
+      const b = counts[i + 1]
+      if (a === 0) continue
+      const dropPct = 1 - b / a
+      if (dropPct > biggestDrop) {
+        biggestDrop = dropPct
+        dropAt = `${stagesInOrder[i]}_to_${stagesInOrder[i + 1]}`
+        dropFromLabel = stageLabels[stagesInOrder[i]] ?? stagesInOrder[i]
+        dropToLabel = stageLabels[stagesInOrder[i + 1]] ?? stagesInOrder[i + 1]
+      }
+    }
+    if (!dropAt || biggestDrop < 0.05) {
+      return {
+        headline: 'Funnel conversion is consistent stage-to-stage right now.',
+        title: 'Funnel health',
+      }
+    }
+    const pct = Math.round(biggestDrop * 100)
+    const detail = stageMessages[dropAt] ?? ''
+    return {
+      headline: `${dropFromLabel} → ${dropToLabel} loses ${pct}% of the pipeline.${detail ? ` ${detail}` : ''}`,
+      title: 'Biggest funnel drop-off',
+    }
+  })()
 
   return (
     <div className="p-6 lg:p-8 animate-slide-up">
+      {/* GTM-0G — header reframe. "Analytics" → "Revenue Intelligence"
+          with a buyer-focused subtitle. Reads as the place to answer
+          "which sources make me money and where am I leaking
+          bookings?" rather than a generic performance dashboard. */}
       <PageHeader
-        title="Analytics"
-        subtitle="30-day performance and conversion funnel"
+        title="Revenue intelligence"
+        subtitle="See which sources create booked weddings and where revenue leaks from the funnel."
         actions={<Button variant="outline" size="sm" className="rounded-full">Last 30 days</Button>}
       />
 
-      {/* Phase 8AI — editorial KPI tiles: uppercase eyebrow above
-          tabular number, soft border, no icon clutter. Matches the
-          Overview metric strip's rhythm. */}
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+      {/* GTM-0G — KPI tiles now lead with revenue outcomes (booked
+          weddings, open pipeline, est. booked value) instead of
+          internal metrics (avg score, AI latency). Helper line under
+          money cards keeps the "estimated, not contracted" framing
+          honest. */}
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-6">
         {kpis.map((kpi) => (
           <div
             key={kpi.label}
@@ -275,9 +431,42 @@ export default async function AnalyticsPage() {
             <div className="text-[22px] sm:text-[24px] font-semibold text-[#0F172A] tracking-[-0.02em] leading-none tabular-nums mt-2">
               {kpi.value}
             </div>
+            {kpi.helper && (
+              <div className="text-[10.5px] text-[#64748B] mt-1.5 leading-snug">
+                {kpi.helper}
+              </div>
+            )}
           </div>
         ))}
       </div>
+
+      {/* GTM-0G — Key insight this month. Champagne-accented card
+          that surfaces the single most useful operating insight from
+          the leakage + attribution data. Deterministic — no model
+          call — and includes a one-click CTA into the corresponding
+          filtered surface. */}
+      <section className="rounded-2xl border border-[#E6E8EF] bg-white shadow-card overflow-hidden mb-6">
+        <div className="relative px-5 py-4 lg:px-6 lg:py-5 bg-gradient-to-br from-white via-white to-[#FAF7F0]">
+          <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-[#C5A572] via-[#92763C] to-[#C5A572]" />
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="min-w-0 flex-1">
+              <div className="text-[10.5px] uppercase tracking-[0.16em] text-[#92763C] font-semibold mb-1">
+                Key insight this month
+              </div>
+              <p className="text-[14px] text-[#0F172A] leading-relaxed max-w-3xl">
+                {keyInsight.headline}
+              </p>
+            </div>
+            <Link
+              href={keyInsight.ctaHref}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-[12.5px] font-medium rounded-[10px] bg-[#0F172A] text-white hover:bg-[#1E293B] transition-colors shrink-0"
+            >
+              {keyInsight.ctaLabel}
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        </div>
+      </section>
 
       {/* Phase 8A — soft empty-state hint when nothing has been intaked yet.
           Renders ABOVE the charts so an empty graph doesn't look broken. */}
@@ -305,24 +494,57 @@ export default async function AnalyticsPage() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <div>
-              <CardTitle>Leads Over Time</CardTitle>
-              <CardSubtitle>Last 30 days</CardSubtitle>
+              {/* GTM-0G — buyer-facing rename. */}
+              <CardTitle>Inquiry volume over time</CardTitle>
+              <CardSubtitle>New inquiry flow for the selected period.</CardSubtitle>
             </div>
           </CardHeader>
           <CardContent>
             <LeadsOverTimeChart data={leadsOverTime} />
+            {totalLeads30d > 0 && (
+              <div className="mt-3 pt-3 border-t border-[#F1F5F9] text-[11px] text-[#64748B] flex items-center justify-between gap-3">
+                <span>
+                  <span className="font-semibold text-[#0F172A] tabular-nums">{totalLeads30d}</span> inquiries in the last 30 days
+                </span>
+                {(() => {
+                  // GTM-0G — peak day annotation. Deterministic from the
+                  // same leadsOverTime series rendered in the chart.
+                  let peak = leadsOverTime[0]
+                  for (const d of leadsOverTime) {
+                    if (d.leads > peak.leads) peak = d
+                  }
+                  return peak.leads > 0 ? (
+                    <span className="text-[#475569]">
+                      Peak day · <span className="font-semibold text-[#0F172A]">{peak.date}</span> · {peak.leads} {peak.leads === 1 ? 'inquiry' : 'inquiries'}
+                    </span>
+                  ) : null
+                })()}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Conversion Funnel</CardTitle>
+              <CardTitle>Conversion funnel</CardTitle>
               <CardSubtitle>All-time stage flow</CardSubtitle>
             </div>
           </CardHeader>
           <CardContent>
             <FunnelChart stages={funnelStages} />
+            {/* GTM-0G — deterministic drop-off insight beneath the
+                funnel. Reads the same stage counts the chart uses;
+                renders a "more data needed" line on sparse venues
+                instead of fake certainty. */}
+            <div className="mt-3 pt-3 border-t border-[#F1F5F9]">
+              <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#92763C] font-semibold mb-1">
+                {funnelDropoff.title}
+              </div>
+              <p className="text-[12px] text-[#475569] leading-snug">
+                {funnelDropoff.headline}
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -334,9 +556,10 @@ export default async function AnalyticsPage() {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>Attribution breakdown</CardTitle>
+            {/* GTM-0G — buyer-facing title swap. */}
+            <CardTitle>Which sources create real opportunities</CardTitle>
             <CardSubtitle>
-              Leads, tours, and estimated pipeline by source · Top {attributionSummary.rows.length}
+              Lead source, tours booked, and estimated inquiry value by channel · Top {attributionSummary.rows.length}
               {attributionSummary.totalSources > attributionSummary.rows.length
                 ? ` / ${attributionSummary.totalSources}`
                 : ''}
@@ -357,7 +580,7 @@ export default async function AnalyticsPage() {
                     <th className="font-semibold py-2 text-right">Leads</th>
                     <th className="font-semibold py-2 text-right">Tours</th>
                     <th className="font-semibold py-2 text-right">Booked</th>
-                    <th className="font-semibold py-2 text-right pr-1">Est. pipeline</th>
+                    <th className="font-semibold py-2 text-right pr-1">Est. inquiry value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -405,9 +628,10 @@ export default async function AnalyticsPage() {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>Booked revenue by source</CardTitle>
+            {/* GTM-0G — title + subtitle reframe. */}
+            <CardTitle>Which sources are turning into booked weddings</CardTitle>
             <CardSubtitle>
-              Which channels convert to booked weddings · Top {bookedRevenueSummary.rows.length}
+              Estimated booked value by source, based on booked leads and entered budgets · Top {bookedRevenueSummary.rows.length}
             </CardSubtitle>
           </div>
         </CardHeader>
@@ -426,10 +650,10 @@ export default async function AnalyticsPage() {
                     <th className="font-semibold py-2 text-right">Leads</th>
                     <th className="font-semibold py-2 text-right">Tours</th>
                     <th className="font-semibold py-2 text-right">Booked</th>
-                    <th className="font-semibold py-2 text-right">Est. pipeline</th>
-                    <th className="font-semibold py-2 text-right">Est. booked</th>
-                    <th className="font-semibold py-2 text-right">L → Tour</th>
-                    <th className="font-semibold py-2 text-right pr-1">L → Booked</th>
+                    <th className="font-semibold py-2 text-right">Est. inquiry value</th>
+                    <th className="font-semibold py-2 text-right">Est. booked value</th>
+                    <th className="font-semibold py-2 text-right">Lead → tour</th>
+                    <th className="font-semibold py-2 text-right pr-1">Lead → booked</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -489,13 +713,15 @@ export default async function AnalyticsPage() {
           source label. Operators get a one-line per-source view
           of "where the leak is + how many leads + a click into
           the leads board pre-filtered to that source". */}
+      {/* GTM-0G — Source leakage repositioned as the central VenueRise
+          intelligence surface. Champagne accent on the section title
+          marks it as the page's revenue-recovery thesis. */}
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>Source leakage breakdown</CardTitle>
+            <CardTitle>Where each source is leaking revenue</CardTitle>
             <CardSubtitle>
-              Top leak + at-risk count per source · operator
-              prioritization lens, not an accounting report
+              See which channels create at-risk leads and what kind of follow-up each source needs.
             </CardSubtitle>
           </div>
         </CardHeader>
@@ -570,11 +796,14 @@ export default async function AnalyticsPage() {
                         )}
                       </td>
                       <td className="py-2 text-right pr-1">
+                        {/* GTM-0G — stronger CTA copy on the leakage
+                            table: "Recover leads" reads as the
+                            operating workflow, not a passive lookup. */}
                         <Link
                           href={`/dashboard/leads?source=${encodeURIComponent(r.sourceLabel)}`}
-                          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[#1D4ED8] hover:underline"
+                          className="inline-flex items-center gap-1 text-[11.5px] font-medium text-[#92763C] hover:text-[#0F172A] hover:underline"
                         >
-                          View leads
+                          Recover leads
                           <ArrowUpRight className="w-3 h-3" />
                         </Link>
                       </td>
@@ -590,29 +819,43 @@ export default async function AnalyticsPage() {
         </CardContent>
       </Card>
 
-      {/* AI insights card — restrained, no gradient */}
-      <Card>
-        <CardContent className="pt-5">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-[#0F172A] flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(15,23,42,0.20)]">
-              <Sparkles className="w-5 h-5 text-white" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-[14px] font-semibold text-[#0F172A] mb-1">AI Performance Insight</h3>
-              <p className="text-[13px] text-[#475569] leading-relaxed">
-                Your average AI response time is <strong className="text-[#0F172A]">{avgResponseMs > 0 ? `${(avgResponseMs / 1000).toFixed(1)}s` : '—'}</strong>.
-                Better client communication can boost tips and repeat work — try faster responses and more follow-ups.
-              </p>
-              <div className="flex items-center gap-2 mt-3">
-                <Button size="sm" variant="primary">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  Run Analysis
-                </Button>
+      {/* GTM-0G — Response speed insight (was "AI Performance Insight").
+          Removed the "tips and repeat work" copy which is wrong for
+          wedding venues. Replaced the vague "Run Analysis" CTA with
+          a real deep-link into the slow-first-reply leakage filter
+          so the operator can act on the insight immediately. The
+          card hides entirely when no AI actions have been recorded
+          yet so we don't claim a speed we can't measure. */}
+      {avgResponseMs > 0 && (
+        <Card>
+          <CardContent className="pt-5">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-[#0F172A] flex items-center justify-center shrink-0 shadow-[0_4px_12px_rgba(15,23,42,0.20)]">
+                <Sparkles className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-[14px] font-semibold text-[#0F172A] mb-1">Response speed insight</h3>
+                <p className="text-[13px] text-[#475569] leading-relaxed">
+                  Your average AI draft time is{' '}
+                  <strong className="text-[#0F172A]">
+                    {`${(avgResponseMs / 1000).toFixed(1)}s`}
+                  </strong>
+                  . Faster first replies help protect high-intent inquiries before couples move on to another venue.
+                </p>
+                <div className="flex items-center gap-2 mt-3">
+                  <Link
+                    href="/dashboard/leads?leakage=slow_first_reply"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium rounded-[10px] bg-[#0F172A] text-white hover:bg-[#1E293B] transition-colors"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    View slow-reply leads
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

@@ -400,6 +400,11 @@ interface HealthBody {
     completed_tour_followup_queue: 'mounted'
     tour_next_action_rows: 'mounted'
     tour_value_framing: 'mounted'
+    analytics_revenue_intelligence_positioning: 'mounted'
+    analytics_key_insight_card: 'mounted'
+    analytics_source_leakage_priority: 'mounted'
+    analytics_buyer_friendly_kpis: 'mounted'
+    analytics_funnel_dropoff_insight: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2771,6 +2776,48 @@ export async function GET(request: Request) {
       completed_tour_followup_queue: 'mounted',
       tour_next_action_rows: 'mounted',
       tour_value_framing: 'mounted',
+      // GTM-0G — Analytics page revenue intelligence polish.
+      // Header reframed "Analytics" → "Revenue intelligence" with the
+      // subtitle "See which sources create booked weddings and where
+      // revenue leaks from the funnel." KPI cards rebuilt around
+      // revenue-owner metrics (New inquiries 30d / Tours completed /
+      // Booked weddings / Lead → booked / Open pipeline / Est. booked
+      // value). Internal metrics (Avg score / AI latency) removed from
+      // the headline row.
+      //   - analytics_revenue_intelligence_positioning: PageHeader
+      //     updated; section titles + column headers reworded across
+      //     attribution / booked revenue / source leakage cards.
+      //   - analytics_key_insight_card: new champagne-accented hero
+      //     card surfaces a deterministic one-line insight from the
+      //     leakage + attribution helpers ("Website created the most
+      //     pipeline, but Meta Ads has 19 at-risk leads — prioritize
+      //     follow-up recovery there first."). No model call, no fake
+      //     certainty — sparse data falls back to a safe "connect
+      //     more inquiries to unlock source intelligence" line.
+      //   - analytics_source_leakage_priority: source-leakage table
+      //     gets a "Recover leads" champagne CTA in the right column
+      //     to surface it as the central VenueRise thesis surface.
+      //   - analytics_buyer_friendly_kpis: KPI tiles drop internal
+      //     metrics; money tiles render an honest "Estimated from
+      //     couple budgets" / "From booked leads with entered
+      //     budgets" helper line.
+      //   - analytics_funnel_dropoff_insight: deterministic biggest-
+      //     drop computation under the funnel chart ("Tour Scheduled
+      //     → Tour Completed loses 42% of the pipeline. Confirmation
+      //     reminders matter here."). Hides on sparse venues with a
+      //     "More data is needed" fallback. Inquiry-volume chart
+      //     gets a peak-day annotation. AI Performance Insight card
+      //     copy fixed (the wrong "tips and repeat work" line is gone;
+      //     the vague Run Analysis button is replaced with a deep-link
+      //     into the slow-first-reply filter).
+      // No backend route changes, no DB migrations, no AI prompt
+      // changes, no autonomous sends. Attribution disclaimers
+      // preserved verbatim ("not ROAS — ad spend is not connected").
+      analytics_revenue_intelligence_positioning: 'mounted',
+      analytics_key_insight_card: 'mounted',
+      analytics_source_leakage_priority: 'mounted',
+      analytics_buyer_friendly_kpis: 'mounted',
+      analytics_funnel_dropoff_insight: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),
