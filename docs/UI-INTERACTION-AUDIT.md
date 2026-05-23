@@ -366,3 +366,48 @@ Regression guard:
 - No `100vh` / `100dvh` / `calc(100…)` literals inside any
   dashboard page or component except the layout's own
   `h-dvh`.
+
+---
+
+## Phase 8BL-Hotfix-4 — ConversationThread phantom height
+
+Symptom: after Hotfix-3 the inbox shell was viewport-locked, but
+selecting a conversation STILL produced blank whitespace below the
+thread, and the whitespace grew with message count.
+
+Root cause: `bottomRef.scrollIntoView({ behavior: 'smooth' })` ran
+on every `messages` change. scrollIntoView walks the ancestor chain
+and scrolls EVERY scrollable ancestor — including `<main>` (which
+Hotfix-3 made `overflow-y-auto` to let non-inbox pages scroll
+inside main). The more messages, the further scrollIntoView
+scrolled, and main got scrolled along with the internal container.
+The "blank whitespace" was main's content offset.
+
+Fix:
+- `ConversationThread` restructured into a strict three-layer flex
+  column:
+  ```tsx
+  <div className="flex flex-1 min-h-0 flex-col overflow-hidden">       // outer
+    <div ref={scrollContainerRef}
+         className="relative flex-1 min-h-0 overflow-y-auto …">         // scroll
+      <div className="px-6 py-5 space-y-5">                              // padding
+        {messages}
+        <div ref={bottomRef} className="h-px shrink-0" />
+      </div>
+    </div>
+    <VariantReplayDrawer … />   // outside scroll region
+  </div>
+  ```
+- Auto-scroll-to-bottom now uses
+  `scrollContainerRef.current.scrollTo({ top: scrollHeight,
+  behavior: 'smooth' })`. Container has `position: relative` so
+  `target.offsetTop` math anchors to the container for deep-link
+  centering.
+- `TourLifecycleStrip` recent-activity panel (second sibling in
+  its fragment root) gains `shrink-0` so it never competes with
+  the thread's `flex-1` slot.
+
+Regression guard: ConversationThread phantom-height regression —
+selecting longer conversations must not increase document/body
+scroll height. Message count should only affect the internal
+message scroll container.

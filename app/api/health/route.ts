@@ -382,6 +382,9 @@ interface HealthBody {
     inbox_uses_parent_height_not_viewport_calc: 'mounted'
     inbox_body_scroll_eliminated: 'mounted'
     inbox_independent_scroll_regions: 'mounted'
+    conversation_thread_phantom_height_fix: 'mounted'
+    conversation_thread_container_scroll: 'mounted'
+    inbox_message_count_no_body_growth: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2639,6 +2642,34 @@ export async function GET(request: Request) {
       inbox_uses_parent_height_not_viewport_calc: 'mounted',
       inbox_body_scroll_eliminated: 'mounted',
       inbox_independent_scroll_regions: 'mounted',
+      // Phase 8BL-Hotfix-4 — ConversationThread phantom height fix.
+      // Hotfix-3 made `<main>` `overflow-y-auto` so non-inbox pages
+      // could scroll inside main. That introduced a regression in
+      // the inbox: `bottomRef.scrollIntoView()` walked the ancestor
+      // chain and scrolled `<main>` too. The body scroll scaled with
+      // message count because more messages → more distance to
+      // scroll → main got scrolled further. Visible symptom: large
+      // blank whitespace below the thread on long conversations,
+      // none on empty conversations.
+      //   - conversation_thread_phantom_height_fix: ConversationThread
+      //     restructured into a strict three-layer flex column
+      //     (outer flex container → scroll region → padding wrapper).
+      //     VariantReplayDrawer moved outside the scroll region.
+      //   - conversation_thread_container_scroll: both auto-scroll-
+      //     to-bottom and deep-link scroll now call
+      //     `scrollContainerRef.current.scrollTo` directly — ancestor
+      //     scroll is impossible. Container has `position: relative`
+      //     so message-row `offsetTop` math anchors to the container.
+      //   - inbox_message_count_no_body_growth: document.body
+      //     scrollHeight equals clientHeight on every inbox load
+      //     regardless of message count. Only the internal
+      //     ConversationThread scroll region grows with message
+      //     count. TourLifecycleStrip's second sibling (recent-
+      //     activity panel) gained `shrink-0` so it never steals
+      //     flex space from the thread.
+      conversation_thread_phantom_height_fix: 'mounted',
+      conversation_thread_container_scroll: 'mounted',
+      inbox_message_count_no_body_growth: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

@@ -302,7 +302,12 @@ export default function TourLifecycleStrip({ lead, tour }: TourLifecycleStripPro
               silently hide so the panel never leaks the admin endpoint's
               existence to non-admin roles. */}
       {recentVisible && recentEvents && tourIdForAudit && (
-        <div className="border-b border-[#F1F5F9] bg-white px-6 py-3">
+        // Phase 8BL-Hotfix-4 — `shrink-0` on this second sibling
+        // root so it never competes with ConversationThread's
+        // `flex-1` slot in the inbox column. Without it, leads
+        // with many recent tour events would expand this panel
+        // and squeeze the message scroll region.
+        <div className="shrink-0 border-b border-[#F1F5F9] bg-white px-6 py-3">
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#475569] uppercase tracking-wider">
               <History className="w-3 h-3 text-[#94A3B8]" />

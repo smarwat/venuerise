@@ -57,6 +57,16 @@ interface Props {
 export default function ConversationThread({ conversationId, initialMessages, leadName }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages)
   const bottomRef = useRef<HTMLDivElement>(null)
+  // Phase 8BL-Hotfix-4 — explicit ref to the internal scroll
+  // container. Auto-scroll-to-bottom and deep-link scroll both
+  // call `scrollContainerRef.current.scrollTo` directly instead
+  // of `bottomRef.current.scrollIntoView`. Reason: scrollIntoView
+  // walks the ancestor chain and scrolls EVERY scrollable
+  // ancestor (including `<main>` which Hotfix-3 made
+  // `overflow-y-auto`). The phantom whitespace bug scaled with
+  // message count because more messages → more distance to scroll →
+  // main got scrolled further. Container-scope scroll is bounded.
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   // Phase 8AM — per-message refs so the inbox `?message=<id>` deep-
   // link (from a CommandPalette message search result) can scroll
   // the matching bubble into view + flash a brief highlight ring.
@@ -76,9 +86,16 @@ export default function ConversationThread({ conversationId, initialMessages, le
   // Default scroll-to-bottom — suppressed when a deep-link target is
   // present so the user lands on the requested message instead of
   // being shoved to the latest reply.
+  //
+  // Phase 8BL-Hotfix-4 — container.scrollTo (NOT scrollIntoView)
+  // so ONLY the internal scroll container moves. scrollIntoView's
+  // ancestor traversal was scrolling main + body and producing the
+  // phantom whitespace bug.
   useEffect(() => {
     if (targetMessageId) return
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const c = scrollContainerRef.current
+    if (!c) return
+    c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' })
   }, [messages, targetMessageId])
 
   // Phase 8AM — deep-link scroll + highlight. Runs whenever messages
@@ -89,11 +106,18 @@ export default function ConversationThread({ conversationId, initialMessages, le
     if (!targetMessageId) return
     if (consumedDeepLinkRef.current === targetMessageId) return
     const el = rowRefs.current.get(targetMessageId)
-    if (!el) return
+    const c = scrollContainerRef.current
+    if (!el || !c) return
     consumedDeepLinkRef.current = targetMessageId
     // Defer to next paint so the layout settles before we measure.
     const t1 = setTimeout(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Phase 8BL-Hotfix-4 — container-scope scroll, not
+      // scrollIntoView. `el.offsetTop` is anchored to the scroll
+      // container because the container has `position: relative`
+      // (set as a className on the scroll div below), making it
+      // the offsetParent of every message row.
+      const top = el.offsetTop - (c.clientHeight - el.clientHeight) / 2
+      c.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
       setHighlightedId(targetMessageId)
     }, 60)
     // Strip the param from the URL after consuming so a refresh
@@ -147,13 +171,30 @@ export default function ConversationThread({ conversationId, initialMessages, le
   })
 
   return (
-    // Phase 8BL-Hotfix-2 — `min-h-0` lets this flex-1 child shrink
-    // below its content-derived size so the internal scroll actually
-    // engages (instead of spilling its parent + pushing the composer
-    // past the bottom of the viewport). `overflow-x-hidden` belt-
-    // and-suspenders against any rogue child that escapes the
-    // bubble's own `break-words` wrapping.
-    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 py-5 space-y-5">
+    // Phase 8BL-Hotfix-4 — strict three-layer structure:
+    //
+    //   1) Outer flex column (this div). Slots into the parent
+    //      flex column via `flex-1 min-h-0`; `overflow-hidden`
+    //      prevents any leak into ancestor scroll.
+    //   2) Scroll container (next div). The ONLY vertical scroll
+    //      region inside this thread. `relative` makes it the
+    //      offsetParent of every message row so deep-link
+    //      `target.offsetTop` math anchors here. Container.scrollTo
+    //      is bounded to this element — ancestors NEVER scroll.
+    //   3) Content padding wrapper. Holds messages + bottom
+    //      sentinel. Padding lives here so the scroll container's
+    //      scrollHeight = content height + padding.
+    //
+    // Inbox layout invariant: message history must be the only
+    // vertical scroll region. Do not move the composer inside this
+    // scroll container or add bottom spacers — both regress the
+    // phantom-whitespace bug (Hotfix-1 → Hotfix-4 journey).
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
+      <div
+        ref={scrollContainerRef}
+        className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+      >
+        <div className="px-6 py-5 space-y-5">
       {messages.length === 0 && (
         <div className="text-center py-16">
           <p className="text-[13px] text-[#64748B]">No messages yet. The AI will reply once the lead sends something.</p>
@@ -307,11 +348,19 @@ export default function ConversationThread({ conversationId, initialMessages, le
         </div>
       ))}
 
-      <div className="sr-only">Conversation with {leadName}</div>
-      <div ref={bottomRef} />
+          <div className="sr-only">Conversation with {leadName}</div>
+          {/* Phase 8BL-Hotfix-4 — explicit `h-px shrink-0` so the
+              sentinel never reserves layout space and never grows
+              into a phantom spacer. Container.scrollTo uses
+              scrollHeight, not this element's geometry. */}
+          <div ref={bottomRef} className="h-px shrink-0" />
+        </div>
+      </div>
 
       {/* Phase 8AN — variant replay drawer. Mounted once; the bubble
-          buttons set `variantContext` to open it. */}
+          buttons set `variantContext` to open it. Phase 8BL-Hotfix-4 —
+          rendered OUTSIDE the scroll container so its mounted state
+          can never affect the message scroll geometry. */}
       <VariantReplayDrawer
         open={variantContext !== null}
         context={variantContext}
