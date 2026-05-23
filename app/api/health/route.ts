@@ -366,6 +366,15 @@ interface HealthBody {
     public_tour_slot_confirmation_page: 'mounted'
     tour_confirmation_slot_recheck: 'mounted'
     tour_confirmation_link_audit: 'mounted'
+    // Phase 8BL-Hotfix — rollback flags. The 8BL infrastructure
+    // remains mounted (DB, helpers, public route) but the AI no
+    // longer pastes raw confirmation URLs into the chat bubble.
+    // Operator-confirmed 8BK flow is the user-facing path.
+    lead_side_confirmation_links_hidden_from_ai: 'mounted'
+    ai_tour_links_hidden_from_chat: 'mounted'
+    premium_tour_slot_message_format: 'mounted'
+    inbox_message_overflow_guard: 'mounted'
+    operator_tour_creation_flow_preserved: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2540,6 +2549,36 @@ export async function GET(request: Request) {
       public_tour_slot_confirmation_page: 'mounted',
       tour_confirmation_slot_recheck: 'mounted',
       tour_confirmation_link_audit: 'mounted',
+      // Phase 8BL-Hotfix — link injection rolled back. The 8BL
+      // infrastructure (DB table, helper, public page, POST route)
+      // stays mounted but is no longer reached from the AI inbox
+      // path:
+      //   - lead_side_confirmation_links_hidden_from_ai +
+      //     ai_tour_links_hidden_from_chat: orchestrator's
+      //     LEAD_SIDE_CONFIRMATION_LINKS_ENABLED constant is
+      //     false; no tokens minted; no URLs in prompt.
+      //   - premium_tour_slot_message_format: AI offers slots as
+      //     plain bullets ("• Saturday, May 23 at 9:00 AM") and
+      //     asks the lead to pick. Conversation prompt explicitly
+      //     forbids any URL paste.
+      //   - inbox_message_overflow_guard: ConversationThread
+      //     bubble adds `break-words whitespace-pre-wrap
+      //     overflow-hidden min-w-0` so long historical URLs from
+      //     pre-hotfix messages wrap instead of pushing the
+      //     thread horizontally.
+      //   - operator_tour_creation_flow_preserved: 8BK detector,
+      //     drawer panel, and ScheduleTourDrawer prefill all
+      //     unchanged. Lead picks a slot → operator clicks Create
+      //     tour → tour exists.
+      //   - Honesty: AI still never claims confirmed/booked/
+      //     scheduled. Public confirmation route stays dormant —
+      //     no AI message advertises it. A future phase may
+      //     re-enable links with a premium embedded card UX.
+      lead_side_confirmation_links_hidden_from_ai: 'mounted',
+      ai_tour_links_hidden_from_chat: 'mounted',
+      premium_tour_slot_message_format: 'mounted',
+      inbox_message_overflow_guard: 'mounted',
+      operator_tour_creation_flow_preserved: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

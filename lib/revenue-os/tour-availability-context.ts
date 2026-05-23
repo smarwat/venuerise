@@ -306,34 +306,20 @@ export function renderTourAvailabilityPromptBlock(
     return lines.join('\n')
   }
 
-  // Phase 8BL — if any slot has a confirmation URL attached, render
-  // the URL on the same line as the label and add a stricter
-  // instruction about preserving + never inventing URLs. If no URLs
-  // are attached (TOUR_ACTION_SECRET unset, or the orchestrator
-  // skipped link generation for any reason), fall back to the
-  // original "offer the times" wording.
-  const anyUrlPresent = ctx.suggestedSlots.some(
-    (s) => typeof s.confirmationUrl === 'string' && s.confirmationUrl.length > 0
-  )
-
+  // Phase 8BL-Hotfix — link injection is currently disabled. We
+  // deliberately do NOT render `confirmationUrl` even if the
+  // orchestrator somehow attached one (defense-in-depth on top of
+  // the LEAD_SIDE_CONFIRMATION_LINKS_ENABLED flag). The AI gets
+  // slots as plain labels only; the operator-confirmed 8BK flow
+  // handles the rest.
   lines.push(`- Available suggested slots:`)
   ctx.suggestedSlots.forEach((slot, i) => {
-    if (slot.confirmationUrl) {
-      lines.push(`  ${i + 1}. ${slot.label}  —  Confirm: ${slot.confirmationUrl}`)
-    } else {
-      lines.push(`  ${i + 1}. ${slot.label}`)
-    }
+    lines.push(`  ${i + 1}. ${slot.label}`)
   })
 
-  if (anyUrlPresent) {
-    lines.push(
-      `- Instruction: Offer these specific slots to the lead and include each slot's "Confirm:" link EXACTLY as written above. Do NOT invent, paraphrase, or shorten the URLs. Phrase it like "Here are a couple of tour openings — tap the one that works and you'll get a confirmation page." Do NOT say the tour is confirmed/booked/scheduled until the lead actually clicks a link. A tour record only exists after the lead's click is processed (or an operator schedules it).`
-    )
-  } else {
-    lines.push(
-      `- Instruction: Offer these specific slots to the lead and ask them to pick one. Phrase it as "I have these tour openings available…" — never say "I don't have access to the calendar." Do NOT say the tour is confirmed; a tour record only exists after an operator schedules it.`
-    )
-  }
+  lines.push(
+    `- Instruction: Offer these specific slots to the lead as a clean bulleted list and ask which one works best. Phrase it as "I have these tour openings available…" — never say "I don't have access to the calendar." NEVER include URLs, links, or "https://" of any kind. Do NOT say the tour is confirmed; a tour record only exists after an operator schedules it.`
+  )
   return lines.join('\n')
 }
 

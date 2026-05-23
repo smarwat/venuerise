@@ -27,6 +27,37 @@ import {
   tourSlotConfirmationSecretConfigured,
 } from '@/lib/revenue-os/tour-slot-confirmation-token'
 
+/**
+ * Phase 8BL-Hotfix — feature flag for lead-side public confirmation
+ * links. Set to `false` to roll the AI back to the cleaner 8BK
+ * operator-confirmed flow:
+ *
+ *   AI offers slots as plain bullets → lead picks → detector stamps
+ *   `tour_slot_selection` → operator clicks "Create tour" in the
+ *   LeadDetailDrawer's prefilled ScheduleTourDrawer.
+ *
+ * When `false`:
+ *   - The orchestrator does NOT mint `tour_slot_confirmation_tokens`
+ *     rows.
+ *   - The TOUR_AVAILABILITY_CONTEXT prompt block has NO Confirm URLs.
+ *   - The AI is instructed to never paste raw URLs.
+ *
+ * The 8BL DB table, helper, public page, and POST route stay in the
+ * codebase (compile + run); they just don't get reached from the
+ * inbox path. A future phase can re-enable links once we have a
+ * premium card/button UX rather than a raw URL paste-into-chat.
+ *
+ * Reason for the rollback (operator-visible bug):
+ *   1. The AI was dumping raw `/tour/confirm-slot/<token>` URLs into
+ *      message bubbles, which broke the inbox layout horizontally
+ *      and looked unrefined for a luxury-wedding-venue audience.
+ *   2. The public confirmation route depended on migration 039 being
+ *      applied; when the operator hadn't applied it yet the links
+ *      failed silently.
+ *   3. The premium experience is the 8BK operator-confirmed flow.
+ */
+const LEAD_SIDE_CONFIRMATION_LINKS_ENABLED = false
+
 async function logAction(supabase: ReturnType<typeof createServiceClient>, params: {
   venue_id: string
   lead_id?: string | null
@@ -620,7 +651,13 @@ export async function handleIncomingMessage(
     issued: number
     skipped_reason: string | null
   } = { issued: 0, skipped_reason: null }
-  if (
+  // Phase 8BL-Hotfix — when the feature flag is off, we skip ALL
+  // token issuance work. The AI still receives `TOUR_AVAILABILITY_
+  // CONTEXT` with bullet-formatted slot labels (no URLs), and the
+  // operator-confirmed 8BK flow handles the rest.
+  if (!LEAD_SIDE_CONFIRMATION_LINKS_ENABLED) {
+    tokenIssuanceSummary.skipped_reason = 'links_hidden_from_ai_chat'
+  } else if (
     tourCtx.schedulingIntent.wantsTourAvailability &&
     tourCtx.suggestedSlots.length > 0 &&
     tourSlotConfirmationSecretConfigured()
@@ -665,6 +702,8 @@ export async function handleIncomingMessage(
     tourCtx.schedulingIntent.wantsTourAvailability &&
     tourCtx.suggestedSlots.length > 0
   ) {
+    // Flag is on but TOUR_ACTION_SECRET isn't set. Same UX as the
+    // hotfix-disabled path — no URLs in the AI reply.
     tokenIssuanceSummary.skipped_reason = 'secret_not_configured'
   }
 
@@ -780,8 +819,14 @@ export async function handleIncomingMessage(
   // minted tokens so the drawer can join them back to "the AI
   // reply that offered this link." Best-effort: if it fails the
   // tokens still work; we just lose the operator-side link.
+  // Skipped entirely when the hotfix flag is off — nothing to
+  // back-fill because no tokens were minted.
   const newAiMessageId = (aiMsgInserted as { id?: string } | null)?.id ?? null
-  if (newAiMessageId && tokenIssuanceSummary.issued > 0) {
+  if (
+    LEAD_SIDE_CONFIRMATION_LINKS_ENABLED &&
+    newAiMessageId &&
+    tokenIssuanceSummary.issued > 0
+  ) {
     try {
       await supabase
         .from('tour_slot_confirmation_tokens')

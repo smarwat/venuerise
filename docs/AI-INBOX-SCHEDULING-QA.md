@@ -649,3 +649,170 @@ Honesty contract preserved:
   token row with `offered_by_message_id` once the message lands.
   A crash between insert and back-fill leaves the column null;
   the token still works.
+
+---
+
+# Phase 8BL-Hotfix — Public links hidden from AI chat
+
+## Why
+
+Phase 8BL shipped lead-side public confirmation links and the AI
+started pasting raw `/tour/confirm-slot/<token>` URLs into chat
+bubbles. In practice that produced three problems:
+
+1. The URLs broke the inbox layout horizontally on narrower thread
+   widths.
+2. Raw URLs look unrefined for a luxury wedding-venue audience —
+   the demo loses its premium feel the moment a 200-char `https://`
+   string lands in the bubble.
+3. The public confirmation route depends on migration 039 being
+   applied; until then the links 500 silently.
+
+The 8BK operator-confirmed flow (lead picks a slot → drawer panel
+→ operator clicks "Create tour") is more controlled and looks
+better. This hotfix routes everyone back to that flow without
+deleting the 8BL infrastructure.
+
+## What changed
+
+- `lib/agents/orchestrator.ts` — feature flag
+  `LEAD_SIDE_CONFIRMATION_LINKS_ENABLED = false`. When `false`:
+  no `tour_slot_confirmation_tokens` rows minted, no
+  `offered_by_message_id` back-fill, AI message metadata still
+  records `confirmation_links_summary.skipped_reason =
+  'links_hidden_from_ai_chat'` for audit visibility.
+- `lib/revenue-os/tour-availability-context.ts` — prompt-block
+  renderer NEVER emits `Confirm:` URLs anymore (even if a
+  `confirmationUrl` field somehow appears on a slot — defense in
+  depth). Instruction text explicitly bans URLs.
+- `lib/agents/conversation.ts` — TOUR CONFIRMATION LINK RULES
+  block replaced with TOUR SLOT MESSAGE FORMAT block. Required
+  format: bulleted list, "• Day, Date at Time" per line, asking
+  which slot works. Explicit ban on pasting `https://`, `/tour/`,
+  or any clickable string.
+- `components/dashboard/ConversationThread.tsx` — message bubble
+  gets `min-w-0 overflow-hidden whitespace-pre-wrap break-words`
+  so long URLs in HISTORICAL messages from the pre-hotfix
+  orchestrator wrap inside the bubble instead of blowing out the
+  thread width.
+- `app/api/health/route.ts` — 5 new flags
+  (`lead_side_confirmation_links_hidden_from_ai`,
+  `ai_tour_links_hidden_from_chat`,
+  `premium_tour_slot_message_format`,
+  `inbox_message_overflow_guard`,
+  `operator_tour_creation_flow_preserved`). The original 5 8BL
+  flags stay `mounted` because the infrastructure still exists.
+
+## Expected behavior after hotfix
+
+- AI offers slots as a clean bulleted list. No raw URLs anywhere.
+- Long URLs that exist in historical (pre-hotfix) messages now
+  wrap inside the bubble — the thread no longer scrolls
+  horizontally.
+- Lead selection still triggers the 8BK detector → drawer panel →
+  operator-prefilled ScheduleTourDrawer.
+- Public confirmation route at `/tour/confirm-slot/<token>` still
+  compiles and runs. Without active tokens in the DB, every
+  request resolves to `not_found` or `invalid_link` — by design.
+- `tour_slot_confirmation_tokens` table receives ZERO new rows
+  until the feature flag is flipped back on.
+
+## Manual test cases
+
+### 8BL-HF-1 · Plain bullet list, no URLs
+
+1. In the inbox, send "do you have a tour for next week" as the
+   lead.
+2. **Expect AI reply** to contain bullet points like:
+   ```
+   I have these tour openings next week:
+
+   • Saturday, May 23 at 9:00 AM
+   • Sunday, May 24 at 9:00 AM
+   • Monday, May 25 at 9:00 AM
+
+   Which one works best for you?
+   ```
+3. **Verify** zero occurrences of `http`, `https`, `/tour/`,
+   `confirm-slot`, or any UUID-shaped string in the reply.
+4. Verify `messages.metadata.offered_tour_slots` for that AI
+   message is still populated (the 8BK detector relies on it),
+   but every entry's `confirmation_url` is `null`.
+5. Verify `messages.metadata.confirmation_links_summary.skipped_reason
+   = 'links_hidden_from_ai_chat'`.
+6. Query `tour_slot_confirmation_tokens` — no new rows since the
+   hotfix.
+
+### 8BL-HF-2 · Operator-confirmed selection flow preserved
+
+1. Continue from 8BL-HF-1. As the lead, reply "lets do may 27
+   at 9 am" (or whichever bullet was offered).
+2. **Expect AI** to acknowledge the time without saying
+   "confirmed" / "booked" / "scheduled." Phrasing should be
+   "I'll get that prepared for confirmation."
+3. Open the LeadDetailDrawer for that lead.
+4. **Expect** the "Tour time selected" panel to render above the
+   TourReadinessPanel with the lead's chosen slot label and a
+   "Create tour" button.
+5. Click "Create tour." ScheduleTourDrawer opens with
+   `scheduled_at` prefilled to the selected slot's start.
+6. Save the drawer. Tour row created; conversation thread shows
+   the standard tour-scheduled chip.
+
+### 8BL-HF-3 · Inbox overflow guard
+
+1. Open a conversation where a pre-hotfix AI reply contained a
+   raw confirmation URL (or insert one for testing via SQL).
+2. **Verify** the bubble wraps the URL across multiple lines
+   inside the bubble. No horizontal scrollbar appears on the
+   thread panel.
+3. **Verify** AI bubbles (right-aligned, navy background) and
+   lead bubbles (left-aligned, white card) both wrap consistently.
+4. Resize the inbox panel narrower (drag the divider). Confirm
+   no overflow at any width down to the panel's minimum.
+
+### 8BL-HF-4 · Public route stays dormant
+
+1. Without applying migration 039, hit
+   `GET /tour/confirm-slot/abc123def456789` in a browser.
+2. **Expect** the friendly "Link not valid" or "Not found"
+   surface (the page validates the token + DB row both of which
+   fail without migration applied).
+3. **Verify** no 500 page, no leaked stack trace, no leaked env
+   variable name in the response body.
+
+## Demo cleanup tip
+
+If a demo venue's conversation history contains broken URLs from
+the brief window 8BL was live (between commit `3bc5ebd` and the
+hotfix), you can either:
+
+- Delete the offending AI messages via SQL
+  (`delete from messages where conversation_id = '<id>' and
+  metadata->>'confirmation_links_summary' is not null;`), then
+  re-trigger the conversation to get a clean reply, OR
+- Leave them. The overflow guard (8BL-HF-3) wraps them safely;
+  they're cosmetically noisy but functional.
+
+Do NOT add an automatic cleanup job — wiping messages in a
+conversation table without operator review is destructive and
+out of scope for a UX hotfix.
+
+## Re-enabling links in a future phase
+
+The infrastructure (migration 039, token helper, public page,
+POST route, audit catalog, rate-limit catalog entry) is
+preserved. To re-enable in a future phase:
+
+1. Build a premium embedded card UI for the AI message bubble
+   (the current bubble is plain-text only).
+2. Flip `LEAD_SIDE_CONFIRMATION_LINKS_ENABLED` to `true` in
+   `lib/agents/orchestrator.ts`.
+3. Update the prompt block + conversation rules to instruct the
+   AI to render the card-shape, not paste raw URLs.
+4. Add a venue-level opt-in (`venues.metadata.revenue_os.lead_side_confirmation_links_enabled`)
+   so only venues that asked for it get the surface.
+5. Apply migration 039 in any environment that doesn't have it
+   yet.
+
+Until those four pieces are in place, leave the flag off.

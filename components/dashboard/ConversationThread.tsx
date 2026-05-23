@@ -222,7 +222,15 @@ export default function ConversationThread({ conversationId, initialMessages, le
                 )}
               >
                 <div className={cn(
-                  'group/bubble relative max-w-[68%] rounded-[18px] px-4 py-2.5 text-[13px] leading-relaxed',
+                  // Phase 8BL-Hotfix — overflow guard. `min-w-0` lets
+                  // flex children shrink below their content-derived
+                  // intrinsic size; `break-words` + `whitespace-pre-wrap`
+                  // wraps long unbroken strings (including raw URLs
+                  // that may exist in historical messages from the
+                  // pre-hotfix orchestrator) instead of pushing the
+                  // thread horizontally. `overflow-hidden` rounds off
+                  // any content that still escapes (defense in depth).
+                  'group/bubble relative max-w-[68%] min-w-0 rounded-[18px] px-4 py-2.5 text-[13px] leading-relaxed overflow-hidden whitespace-pre-wrap break-words',
                   isLead && 'bg-white border border-[#E6E8EF] text-[#0F172A] rounded-tl-md shadow-[0_1px_2px_rgba(15,23,42,0.04)]',
                   isAI && 'bg-[#0F172A] text-white rounded-tr-md shadow-[0_2px_8px_rgba(15,23,42,0.15)]',
                 )}>
