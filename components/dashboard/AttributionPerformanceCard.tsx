@@ -41,11 +41,10 @@ export default function AttributionPerformanceCard({ summary }: Props) {
             </div>
             <div>
               <h2 className="text-[15px] font-semibold text-[#0F172A]">
-                Attribution performance
+                Which sources are creating real opportunities
               </h2>
               <p className="text-[11.5px] text-[#475569] mt-0.5">
-                Where new inquiries are coming from — leads, tours,
-                and estimated pipeline by source.
+                Lead source, tours booked, and estimated pipeline by channel.
               </p>
             </div>
           </div>
@@ -78,7 +77,7 @@ export default function AttributionPerformanceCard({ summary }: Props) {
                 <th className="font-semibold py-2 text-right">Tours</th>
                 <th className="font-semibold py-2 text-right">Booked</th>
                 <th className="font-semibold py-2 text-right">
-                  Est. pipeline
+                  Est. inquiry value
                 </th>
                 <th className="font-semibold py-2 text-right pr-1">CTA</th>
               </tr>

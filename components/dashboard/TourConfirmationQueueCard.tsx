@@ -120,13 +120,13 @@ export default async function TourConfirmationQueueCard({ venueId }: Props) {
       <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-[#F1F5F9]">
         <div className="min-w-0">
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#94A3B8] font-semibold mb-1">
-            Tour Booking Agent
+            Tour protection
           </div>
           <h2 className="text-[15px] font-semibold text-[#0F172A] leading-tight">
-            Tours needing confirmation
+            Tours that need confirmation
           </h2>
           <p className="text-[11.5px] text-[#64748B] mt-1">
-            Scheduled tours that still need a clear yes from the couple.
+            Scheduled visits that need clear confirmation before they slip.
           </p>
         </div>
         <Link
@@ -220,7 +220,7 @@ export default async function TourConfirmationQueueCard({ venueId }: Props) {
 
       <div className="px-5 py-2.5 border-t border-[#F1F5F9] bg-[#F8FAFC] text-[11px] text-[#64748B] flex items-center justify-between gap-3">
         <span>
-          Tour Booking Agent watches scheduled tours before they slip.
+          Confirmed tours are the closest proxy to revenue — protect them before they slip.
         </span>
         <span className="hidden sm:inline text-[#94A3B8]">
           Booked + confirmed tours are the closest proxy to revenue.

@@ -197,23 +197,33 @@ export default async function RevenueLeakageBrief({
     <section className="rounded-2xl border border-[#E6E8EF] bg-white shadow-card overflow-hidden">
       <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-[#F1F5F9]">
         <div className="min-w-0">
-          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#94A3B8] font-semibold mb-1">
-            Revenue OS
+          {/* GTM-0D — eyebrow tonal swap to champagne so the leakage card
+              reads as the dashboard's revenue thesis, not just another
+              SaaS panel. */}
+          <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#92763C] font-semibold mb-1">
+            Revenue thesis
           </div>
           <h2 className="text-[15px] font-semibold text-[#0F172A] leading-tight">
-            Revenue leakage watch
+            Where bookings are slipping today
           </h2>
           <p className="text-[11.5px] text-[#64748B] mt-1">
-            Where leads are most at risk of slipping. Updated each load.
+            The fastest way to recover revenue is to catch missed replies, idle hot leads, and tours that were never confirmed.
           </p>
         </div>
-        <Link
-          href="/dashboard/leads"
-          className="inline-flex items-center gap-1 text-[11.5px] px-2.5 py-1 rounded-md text-[#1D4ED8] hover:bg-[#EFF6FF] shrink-0"
-        >
-          Open leads
-          <ArrowRight className="w-3 h-3" />
-        </Link>
+        <div className="flex items-center gap-2 shrink-0">
+          {!isClean && !probeError && (
+            <span className="hidden md:inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-[#92763C] bg-[#FAF7F0] border border-[#E8DCC4] rounded-md tabular-nums">
+              {totalLeakage} need{totalLeakage === 1 ? 's' : ''} attention
+            </span>
+          )}
+          <Link
+            href="/dashboard/leads"
+            className="inline-flex items-center gap-1 text-[11.5px] px-2.5 py-1 rounded-md text-[#1D4ED8] hover:bg-[#EFF6FF]"
+          >
+            Open leads
+            <ArrowRight className="w-3 h-3" />
+          </Link>
+        </div>
       </div>
 
       <div className="px-5 py-4">
@@ -302,7 +312,7 @@ export default async function RevenueLeakageBrief({
             ? 'Couldn’t score leakage right now — the data will refresh on the next page load.'
             : isClean
               ? 'No urgent leakage detected. Keep response speed tight.'
-              : 'Speed-to-lead is the first revenue leak. The faster the reply, the higher the chance this lead becomes a tour.'}
+              : 'Speed-to-lead is the first revenue leak. Every card links to the exact leads your team should handle next.'}
         </span>
         <span className="hidden sm:inline text-[#94A3B8]">
           {isClean

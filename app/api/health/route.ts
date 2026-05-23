@@ -385,6 +385,11 @@ interface HealthBody {
     conversation_thread_phantom_height_fix: 'mounted'
     conversation_thread_container_scroll: 'mounted'
     inbox_message_count_no_body_growth: 'mounted'
+    gtm_dashboard_buyer_clarity_pass: 'mounted'
+    overview_revenue_command_center: 'mounted'
+    today_priority_card: 'mounted'
+    demo_billing_banner_neutralized: 'mounted'
+    buyer_friendly_metric_copy: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2670,6 +2675,26 @@ export async function GET(request: Request) {
       conversation_thread_phantom_height_fix: 'mounted',
       conversation_thread_container_scroll: 'mounted',
       inbox_message_count_no_body_growth: 'mounted',
+      // GTM-0D — Dashboard buyer clarity pass. Replaced the AIBriefCard
+      // "0 packets sent / 0h time returned" zero-state with an
+      // ExecutiveHero that leads with "X revenue opportunities need
+      // attention today" + 4 honest tiles (zero-value tiles hidden).
+      // Added a TodayPriorityCard with numbered "do these first"
+      // workflow. Reframed RevenueLeakageBrief as the central revenue
+      // thesis. Renamed Recovery / Tour / Reactivation cards to
+      // owner-friendly language. Updated Attribution column headers
+      // ("Est. inquiry value", "Est. booked value", "Lead → booked").
+      // Neutralized the BillingBanner: when the billing gate is off
+      // (pilot/demo workspaces), the loud "Start your subscription"
+      // CTA collapses to a quiet champagne "Pilot workspace active"
+      // pill with no CTA — preserves demo credibility. ADMIN endpoint
+      // count unchanged. All link wiring + scanners + audit/rate-limit
+      // catalogs unchanged.
+      gtm_dashboard_buyer_clarity_pass: 'mounted',
+      overview_revenue_command_center: 'mounted',
+      today_priority_card: 'mounted',
+      demo_billing_banner_neutralized: 'mounted',
+      buyer_friendly_metric_copy: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

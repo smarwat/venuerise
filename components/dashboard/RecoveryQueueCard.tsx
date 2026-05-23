@@ -209,13 +209,13 @@ export default async function RecoveryQueueCard({ venueId }: Props) {
       <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-[#F1F5F9]">
         <div className="min-w-0">
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-[#94A3B8] font-semibold mb-1">
-            Follow-up recovery
+            Revenue recovery
           </div>
           <h2 className="text-[15px] font-semibold text-[#0F172A] leading-tight">
-            Stalled leads to recover
+            High-value leads to recover
           </h2>
           <p className="text-[11.5px] text-[#64748B] mt-1">
-            Highest-value leads that need a human touch.
+            Leads with buying intent that still need a human touch.
           </p>
         </div>
         <Link

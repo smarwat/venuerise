@@ -1,10 +1,15 @@
 import { createClient } from '@/lib/supabase/server'
 import MetricCard from '@/components/dashboard/MetricCard'
-import AIBriefCard, {
-  type AIBriefHandledItem,
-  type AIBriefReviewItem,
-  type AIBriefStats,
-} from '@/components/dashboard/AIBriefCard'
+// GTM-0D — ExecutiveHero replaces the AIBriefCard's zero-state on the
+// Overview page. TodayPriorityCard turns the existing leakage signals
+// into a numbered "do this next" checklist. Both are presentational —
+// they derive numbers from the same fetches the page already runs.
+import ExecutiveHero, {
+  type ExecutiveHeroTile,
+} from '@/components/dashboard/ExecutiveHero'
+import TodayPriorityCard, {
+  type TodayPriorityRow,
+} from '@/components/dashboard/TodayPriorityCard'
 import WeeklyToursStrip, {
   type WeeklyTourDay,
   type WeeklyTourItem,
@@ -42,7 +47,6 @@ import {
   Wand2,
   ChevronDown,
 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
 import Link from 'next/link'
 
 /**
@@ -97,16 +101,6 @@ function formatHeaderEyebrow(): string {
     })
     .toUpperCase()
     .replace(/,/g, ' ·')
-}
-
-function formatAsOf(): string {
-  return new Date().toLocaleString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
 }
 
 // Build a Mon..Sun array starting from this week's Monday in UTC.
@@ -416,50 +410,145 @@ export default async function DashboardPage() {
   })()
 
 
-  // Phase 8AG — overnight stats are best-effort. We don't have a real
-  // "AI worked overnight" telemetry yet, so we synthesize from the
-  // last-24h slice of leads + tours. Empty venue → all zeroes.
-  const since24h = Date.now() - 24 * 60 * 60 * 1000
-  const overnightLeadCount = leads.filter(
-    (l) => new Date(l.created_at).getTime() >= since24h
-  ).length
-  const overnightTourCount = weekTours.filter((t) => {
-    if (!t.scheduled_at) return false
-    return new Date(t.scheduled_at).getTime() >= since24h
-  }).length
-  const briefStats: AIBriefStats = {
-    repliesSent: overnightLeadCount,
-    toursBooked: overnightTourCount,
-    packetsSent: 0,
-    hoursSaved: overnightLeadCount > 0 ? Number((overnightLeadCount * 0.7).toFixed(1)) : 0,
-  }
-  const briefHandled: AIBriefHandledItem[] = recentLeads.slice(0, 4).map((l, i) => ({
-    id: l.id,
-    text: `Replied to ${l.name}'s inquiry`,
-    time: formatDistanceToNow(new Date(l.created_at), { addSuffix: true }),
-    icon: i === 1 ? 'cal' : i === 2 ? 'send' : i === 3 ? 'sparkle' : 'reply',
-  }))
-  const briefReviews: AIBriefReviewItem[] = recentLeads
-    .filter((l) => ['new_inquiry', 'qualified'].includes(l.stage))
-    .slice(0, 2)
-    .map((l) => ({
-      id: l.id,
-      text: `${l.name} — draft reply ready for your review.`,
-      initials: l.name.charAt(0).toUpperCase(),
-      meta: l.name,
-      href: `/dashboard/inbox/${l.id}`,
-    }))
-
+  // GTM-0D — derive the executive hero + Today's priority directly
+  // from the data the page already fetched. No new DB cost. The
+  // metrics we surface are honest — values that can't be computed
+  // safely (e.g. `0 packets sent`) are HIDDEN rather than rendered
+  // as zeros, which would make the product look inactive on a sales
+  // demo.
   const greetingFirst = (() => {
     const hour = new Date().getHours()
-    if (hour < 12) return 'Good morning.'
-    if (hour < 18) return 'Good afternoon.'
-    return 'Good evening.'
+    if (hour < 12) return 'Good morning'
+    if (hour < 18) return 'Good afternoon'
+    return 'Good evening'
   })()
-  const greetingSubhead =
-    briefReviews.length === 0
-      ? 'Inbox is clear — everything is handled.'
-      : `${briefReviews.length} couple${briefReviews.length === 1 ? '' : 's'} need your eyes today.`
+  const venueFirstName = venue?.name ? venue.name.split(' ')[0] : null
+  const greetingLine = venueFirstName
+    ? `${greetingFirst}, ${venueFirstName}.`
+    : `${greetingFirst}.`
+
+  // Total revenue opportunities = sum of leakage signal counts (all
+  // categories where a lead needs attention) + any tour pending
+  // confirmation. Same numbers the leakage card surfaces.
+  const totalOpportunities =
+    sourceLeakageSummary.totals.atRiskCount > 0
+      ? sourceLeakageSummary.totals.atRiskCount
+      : leads.filter((l) =>
+          !['lost', 'booked'].includes(l.stage)
+        ).length
+
+  const heroHeadline =
+    totalOpportunities > 0
+      ? `${totalOpportunities} revenue ${totalOpportunities === 1 ? 'opportunity needs' : 'opportunities need'} attention today.`
+      : `Every lead in your pipeline is currently handled.`
+  const heroSubhead =
+    totalOpportunities > 0
+      ? `VenueRise is watching every inquiry, tour, and follow-up gap across your venue.`
+      : `Your follow-up game is on point — the agents will surface new opportunities here as they appear.`
+
+  // Hero tiles. Each tile only renders when its value is meaningful.
+  // Pipeline at risk = the source-leakage helper's estimated dollar
+  // figure (already computed); fallback to the gross open pipeline
+  // if the helper hasn't computed a risk value yet.
+  const pipelineAtRiskDollars =
+    sourceLeakageSummary.totals.estimatedPipelineValue > 0
+      ? sourceLeakageSummary.totals.estimatedPipelineValue
+      : pipelineValue
+  const bookedValueTracked =
+    sourceLeakageSummary.totals.estimatedBookedValue > 0
+      ? sourceLeakageSummary.totals.estimatedBookedValue
+      : leads
+          .filter((l) => l.stage === 'booked')
+          .reduce((sum, l) => sum + (l.budget ?? 0), 0)
+  function moneyShort(n: number): string {
+    if (n <= 0) return '—'
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
+    if (n >= 10_000) return `$${Math.round(n / 1000)}k`
+    return `$${n.toLocaleString()}`
+  }
+  const toursToProtect = tourScheduled // already computed above
+  const heroTiles: ExecutiveHeroTile[] = [
+    {
+      label: 'Pipeline at risk',
+      value: moneyShort(pipelineAtRiskDollars),
+      subtext:
+        pipelineAtRiskDollars > 0
+          ? 'Open inquiries that need a response soon.'
+          : undefined,
+      tone: 'champagne',
+    },
+    {
+      label: 'Needs action today',
+      value: totalOpportunities > 0 ? totalOpportunities.toString() : '—',
+      subtext: totalOpportunities > 0 ? 'Across leakage + tour queues.' : undefined,
+      tone: 'navy',
+    },
+    {
+      label: 'Tours to protect',
+      value: toursToProtect > 0 ? toursToProtect.toString() : '—',
+      subtext: toursToProtect > 0 ? 'Scheduled or awaiting confirmation.' : undefined,
+      tone: 'blue',
+    },
+    {
+      label: 'Booked value tracked',
+      value: moneyShort(bookedValueTracked),
+      subtext:
+        bookedValueTracked > 0
+          ? 'From booked leads with entered budgets.'
+          : undefined,
+      tone: 'emerald',
+    },
+  ]
+
+  // Today's priority rows — map directly off the leakage signal
+  // buckets (camelCase fields on `row.leakage`). Each row only
+  // renders when count > 0 (the card hides zero rows).
+  const slowFirstReplyCount = sourceLeakageSummary.rows.reduce(
+    (a, r) => a + (r.leakage?.slowFirstReply ?? 0),
+    0
+  )
+  const tourPendingCount = sourceLeakageSummary.rows.reduce(
+    (a, r) => a + (r.leakage?.tourPendingConfirm ?? 0),
+    0
+  )
+  const coldLeadCount = sourceLeakageSummary.rows.reduce(
+    (a, r) => a + (r.leakage?.coldLeadRecovery ?? 0),
+    0
+  )
+  const highFitIdleCount = sourceLeakageSummary.rows.reduce(
+    (a, r) => a + (r.leakage?.highFitIdle ?? 0),
+    0
+  )
+  const todayRows: TodayPriorityRow[] = [
+    {
+      label: 'Reply to new inquiries',
+      count: slowFirstReplyCount,
+      href: '/dashboard/leads?leakage=slow_first_reply',
+      cta: 'Open inbox',
+      kind: 'inbox',
+    },
+    {
+      label: 'Confirm scheduled tours',
+      count: tourPendingCount,
+      href: '/dashboard/leads?leakage=tour_booking',
+      cta: 'Open tour queue',
+      kind: 'tour',
+    },
+    {
+      label: 'Re-engage cold leads',
+      count: coldLeadCount,
+      href: '/dashboard/leads?leakage=reactivation',
+      cta: 'Open recovery',
+      kind: 'recover',
+    },
+    {
+      label: 'Move idle hot leads forward',
+      count: highFitIdleCount,
+      href: '/dashboard/leads?leakage=high_fit_idle',
+      cta: 'Open leads',
+      kind: 'review',
+    },
+  ]
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-4 lg:gap-5 max-w-[1640px] w-full mx-auto animate-slide-up">
@@ -517,12 +606,37 @@ export default async function DashboardPage() {
         </div>
       )}
 
+      {/* GTM-0D — Executive hero. Replaces the AIBriefCard's
+          zero-state ("0 replies sent", "0 packets sent") with the
+          most important single sentence on the page: how many
+          revenue opportunities need attention today, plus 3-4
+          honest tiles. Zero-value tiles are hidden, not shown as
+          "0" — zero metrics make the demo look inactive. */}
+      <ExecutiveHero
+        greeting={greetingLine}
+        headline={heroHeadline}
+        subhead={heroSubhead}
+        primaryCta={
+          totalOpportunities > 0
+            ? { href: '/dashboard/leads', label: 'Triage leads' }
+            : undefined
+        }
+        tiles={heroTiles}
+      />
+
+      {/* GTM-0D — Today's priority. The "do these things first"
+          checklist. Numbers come straight from the leakage signal
+          buckets; zero rows are hidden by the card so the surface
+          never says "do 0 things." Each row deep-links to the
+          exact filtered leads/tours view. */}
+      <TodayPriorityCard rows={todayRows} />
+
       {/* Phase 8AP — Revenue leakage watch. Revenue OS direction: the
           Overview shouldn't only tell the operator what's done; it
           should tell them what's at risk now. Server-rendered so the
-          numbers are live on first paint. See
-          docs/PRODUCT-THESIS.md + docs/AGENTIC-WORKFLOW-MAP.md
-          (Revenue Leakage Agent). */}
+          numbers are live on first paint. GTM-0D reframed the
+          card's title + footer copy to land as the central revenue
+          thesis. */}
       <RevenueLeakageBrief venueId={venue?.id ?? null} />
 
       {/* Phase 8AS — Follow-Up Recovery queue. Top 5 stalled leads
@@ -565,17 +679,13 @@ export default async function DashboardPage() {
           ROAS; pure inference over existing Revenue OS signals. */}
       <SourceRevenueLeakageCard summary={sourceLeakageSummary} />
 
-      {/* AI overnight brief */}
-      <AIBriefCard
-        greeting={`${greetingFirst.replace('.', '')}${
-          venue?.name ? `, ${venue.name.split(' ')[0]}.` : '.'
-        }`}
-        subhead={greetingSubhead}
-        asOf={formatAsOf()}
-        stats={briefStats}
-        handled={briefHandled}
-        reviews={briefReviews}
-      />
+      {/* GTM-0D — AIBriefCard removed from the Overview. Its
+          "0 packets sent / 0h time returned" zero-state made the
+          demo look inactive. The ExecutiveHero above already
+          provides the morning greeting + the honest "what needs
+          attention" framing. AIBriefCard remains exported and
+          available for a future re-introduction once we have real
+          AI-handled-overnight telemetry to populate it. */}
 
       {/* Metric cards — editorial sparkline variant */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

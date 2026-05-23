@@ -40,11 +40,10 @@ export default function BookedRevenueAttributionCard({ summary }: Props) {
           </div>
           <div>
             <h2 className="text-[15px] font-semibold text-[#0F172A]">
-              Booked revenue by source
+              Which sources are turning into booked weddings
             </h2>
             <p className="text-[11.5px] text-[#475569] mt-0.5">
-              Which channels are turning into booked weddings — leads,
-              tours, and estimated booked value by source.
+              Estimated booked value by source, based on booked leads and entered budgets.
             </p>
           </div>
         </div>
@@ -87,8 +86,8 @@ export default function BookedRevenueAttributionCard({ summary }: Props) {
                 <th className="font-semibold py-2 text-right">Leads</th>
                 <th className="font-semibold py-2 text-right">Tours</th>
                 <th className="font-semibold py-2 text-right">Booked</th>
-                <th className="font-semibold py-2 text-right">Est. booked</th>
-                <th className="font-semibold py-2 text-right">L → Booked</th>
+                <th className="font-semibold py-2 text-right">Est. booked value</th>
+                <th className="font-semibold py-2 text-right">Lead → booked</th>
                 <th className="font-semibold py-2 text-right pr-1">CTA</th>
               </tr>
             </thead>

@@ -139,6 +139,29 @@ function pickBanner(status: VenueSubscriptionStatus, gate: boolean): BannerView 
 
     case 'none':
     case 'incomplete': {
+      // GTM-0D — when the billing gate is OFF (pilot/demo workspaces),
+      // we deliberately do NOT show the loud "Start your subscription"
+      // CTA on every page. A buyer watching a sales demo shouldn't see
+      // a checkout prompt — it hurts credibility ("is this real software
+      // or am I being upsold mid-demo?"). Instead we show a quiet
+      // "Pilot workspace active" pill with no CTA. The real Start CTA
+      // remains available on /dashboard/settings/billing.
+      //
+      // When the gate IS on (production billing enforced), we keep the
+      // original "Start your subscription" banner — a real customer
+      // whose plan lapsed deserves the prompt.
+      if (!gate) {
+        return {
+          Icon: Sparkles,
+          wrapperBg: 'bg-[#FAF7F0]',
+          wrapperBorder: 'border-[#E8DCC4]',
+          iconColor: 'text-[#92763C]',
+          titleColor: 'text-[#0F172A]',
+          bodyColor: 'text-[#6B5A2E]',
+          title: 'Pilot workspace active',
+          body: 'Billing is disabled for this workspace. All Revenue OS workflows remain available.',
+        }
+      }
       return {
         Icon: Sparkles,
         wrapperBg: 'bg-[#EFF6FF]',
