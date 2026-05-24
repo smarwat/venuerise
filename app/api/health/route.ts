@@ -445,6 +445,11 @@ interface HealthBody {
     inbound_email_orphan_linking: 'mounted'
     inbound_email_orphan_dismissal: 'mounted'
     inbound_email_orphan_no_ai_guard: 'mounted'
+    // Phase 8BR-alt — orphan conversation picker
+    inbound_email_orphan_picker: 'mounted'
+    inbound_email_orphan_search: 'client_local'
+    inbound_email_orphan_manual_linking: 'mounted'
+    inbound_email_orphan_picker_no_ai_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3097,6 +3102,32 @@ export async function GET(request: Request) {
       inbound_email_orphan_linking: 'mounted',
       inbound_email_orphan_dismissal: 'mounted',
       inbound_email_orphan_no_ai_guard: 'mounted',
+      // Phase 8BR-alt — orphan conversation picker. Makes the
+      // 8BQ queue operationally complete: even when no
+      // suggestion was pre-computed, the operator can search
+      // the inbox's already-loaded conversation list and link
+      // the orphan to the correct conversation. No new API
+      // route — local filter over the conversations the inbox
+      // server page already loaded (search flag reflects that
+      // as `'client_local'`).
+      //
+      //   - inbound_email_orphan_picker: UnmatchedEmailQueueCard
+      //     now renders a search input + result list per orphan
+      //     row with progressive disclosure.
+      //   - inbound_email_orphan_search: 'client_local' —
+      //     filtering happens in-browser over the
+      //     venueConversations prop. No new search API surface.
+      //   - inbound_email_orphan_manual_linking: operator can
+      //     pick any conversation in the venue and POST it to
+      //     the existing /api/inbound-email-orphans/[id]/link
+      //     route; server re-validates ownership.
+      //   - inbound_email_orphan_picker_no_ai_guard: linking
+      //     from the picker still inserts as role:'lead' only;
+      //     no AI orchestrator call, identical to 8BQ behavior.
+      inbound_email_orphan_picker: 'mounted',
+      inbound_email_orphan_search: 'client_local',
+      inbound_email_orphan_manual_linking: 'mounted',
+      inbound_email_orphan_picker_no_ai_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

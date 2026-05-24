@@ -305,6 +305,21 @@ export async function createInboundEmailOrphan(
 
 // ─── Safe row shape exposed to UI/API ───────────────────────────────────
 
+/**
+ * Phase 8BR-alt — readable suggestion preview shape. Lets the
+ * UI render "Sarah Johnson · sarah@gmail.com · Qualified" instead
+ * of a raw UUID.
+ */
+export interface SuggestedConversationPreview {
+  conversation_id: string
+  lead_id: string | null
+  lead_name: string | null
+  lead_email: string | null
+  stage: string | null
+  source_channel: string | null
+  last_message_at: string | null
+}
+
 export interface InboundEmailOrphanRow {
   id: string
   status: 'unresolved' | 'linked' | 'dismissed' | 'ignored'
@@ -317,6 +332,12 @@ export interface InboundEmailOrphanRow {
   match_confidence: number
   suggested_conversation_ids: string[]
   suggested_lead_ids: string[]
+  /**
+   * Phase 8BR-alt — populated by the list endpoint when
+   * `suggested_conversation_ids` is non-empty. UI renders the
+   * first entry as the readable suggestion label.
+   */
+  suggested_conversations: SuggestedConversationPreview[]
   linked_conversation_id: string | null
   linked_lead_id: string | null
   linked_message_id: string | null
@@ -327,6 +348,10 @@ export interface InboundEmailOrphanRow {
 /**
  * Map a raw row to the UI-safe shape. Truncates stripped_body to
  * a UI-appropriate length and drops the raw provider preview.
+ *
+ * `suggested_conversations` is empty until the list endpoint
+ * back-fills it via `hydrateSuggestedConversations` — keeping
+ * the per-row mapper synchronous + I/O-free.
  */
 export function toSafeOrphanRow(raw: Record<string, unknown>): InboundEmailOrphanRow {
   const stripped =
@@ -348,10 +373,84 @@ export function toSafeOrphanRow(raw: Record<string, unknown>): InboundEmailOrpha
       ((raw.suggested_conversation_ids as string[] | null) ?? []).slice(0, 5),
     suggested_lead_ids:
       ((raw.suggested_lead_ids as string[] | null) ?? []).slice(0, 5),
+    suggested_conversations: [],
     linked_conversation_id: (raw.linked_conversation_id as string | null) ?? null,
     linked_lead_id: (raw.linked_lead_id as string | null) ?? null,
     linked_message_id: (raw.linked_message_id as string | null) ?? null,
     dismissed_at: (raw.dismissed_at as string | null) ?? null,
     dismiss_reason: (raw.dismiss_reason as string | null) ?? null,
   }
+}
+
+/**
+ * Phase 8BR-alt — bulk-load conversation previews for orphan
+ * suggestion ids and back-fill `suggested_conversations[]` on
+ * each row. Reuses the user-scoped Supabase client passed in by
+ * the route, so RLS is the cross-tenant gate (we never surface
+ * a conversation the caller can't already read).
+ *
+ * One round trip for all conversations across all orphans —
+ * dedupe via a Set so a popular conversation only loads once.
+ */
+export async function hydrateSuggestedConversations(
+  // Accept either user-scoped (RLS-gated) or service-role
+  // client. The route uses the user-scoped client so RLS
+  // hides cross-venue rows even if the orphan inadvertently
+  // referenced one.
+  supabase: { from: (table: string) => unknown },
+  orphans: InboundEmailOrphanRow[]
+): Promise<InboundEmailOrphanRow[]> {
+  const ids = new Set<string>()
+  for (const o of orphans) {
+    for (const id of o.suggested_conversation_ids) ids.add(id)
+  }
+  if (ids.size === 0) return orphans
+
+  // Use a loose any here because the imported supabase types
+  // are heavy + this helper is intentionally provider-agnostic.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = (supabase as any)
+    .from('conversations')
+    .select(
+      'id, lead_id, last_message_at, channel_type, leads(id, name, email, stage)'
+    )
+    .in('id', Array.from(ids))
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const { data, error } = (await q) as {
+    data:
+      | Array<{
+          id: string
+          lead_id: string | null
+          last_message_at: string | null
+          channel_type: string | null
+          leads:
+            | { id: string; name: string | null; email: string | null; stage: string | null }
+            | null
+        }>
+      | null
+    error: { message: string } | null
+  }
+  if (error || !data) return orphans
+
+  const byId = new Map<string, SuggestedConversationPreview>()
+  for (const row of data) {
+    byId.set(row.id, {
+      conversation_id: row.id,
+      lead_id: row.lead_id ?? row.leads?.id ?? null,
+      lead_name: row.leads?.name ?? null,
+      lead_email: row.leads?.email ?? null,
+      stage: row.leads?.stage ?? null,
+      source_channel: row.channel_type ?? null,
+      last_message_at: row.last_message_at ?? null,
+    })
+  }
+
+  return orphans.map((o) => {
+    const previews: SuggestedConversationPreview[] = []
+    for (const id of o.suggested_conversation_ids) {
+      const p = byId.get(id)
+      if (p) previews.push(p)
+    }
+    return { ...o, suggested_conversations: previews }
+  })
 }

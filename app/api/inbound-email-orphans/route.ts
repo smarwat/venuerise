@@ -20,7 +20,10 @@ import {
   getOrCreateRequestId,
   withRequestIdHeader,
 } from '@/lib/observability/request-id'
-import { toSafeOrphanRow } from '@/lib/integrations/inbound/orphans'
+import {
+  hydrateSuggestedConversations,
+  toSafeOrphanRow,
+} from '@/lib/integrations/inbound/orphans'
 
 const QuerySchema = z.object({
   status: z
@@ -83,6 +86,15 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   const rows = (data ?? []) as Array<Record<string, unknown>>
+  // Phase 8BR-alt — back-fill readable suggestion previews so
+  // the UI shows "Sarah Johnson · sarah@gmail.com · Qualified"
+  // instead of a raw UUID. RLS-scoped lookup via the user
+  // client.
+  const safeRows = await hydrateSuggestedConversations(
+    supabase,
+    rows.map(toSafeOrphanRow)
+  )
+
   // Headline counts so the inbox card can show a chip without
   // a second round trip when status='unresolved'.
   const { count: unresolvedCount } = await supabase
@@ -92,7 +104,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   return respond(
     NextResponse.json({
-      orphans: rows.map(toSafeOrphanRow),
+      orphans: safeRows,
       unresolved_count: unresolvedCount ?? 0,
     })
   )

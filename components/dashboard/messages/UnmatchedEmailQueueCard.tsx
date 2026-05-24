@@ -9,35 +9,43 @@ import {
   Loader2,
   Link2,
   X,
-  CheckCircle2,
+  Search,
+  Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /**
  * Phase 8BQ — Unmatched inbound email queue card.
+ * Phase 8BR-alt — added inline conversation picker for orphans
+ * without a pre-computed suggestion.
  *
  * Compact surface mounted on the inbox index page. Hidden when
  * the unresolved count is 0. When count > 0:
  *
- *   1. Collapsed chip shows "Unmatched replies: N" with a small
- *      alert tone.
- *   2. Expanded panel lists up to 20 unresolved orphans (sender,
- *      subject, time, body preview, suggested conversation when
- *      available).
- *   3. Each row has Link + Dismiss actions.
+ *   1. Collapsed chip shows "Unmatched replies: N".
+ *   2. Expanded panel lists up to 20 unresolved orphans.
+ *   3. Each row shows:
+ *      - Sender + subject + body preview + confidence chip.
+ *      - When `suggested_conversations[0]` exists → primary
+ *        "Link suggestion" with a readable label
+ *        (Sarah Johnson · sarah@gmail.com · Qualified) AND a
+ *        secondary "Choose another" toggle.
+ *      - When no suggestion exists → the picker opens by default.
+ *   4. Picker = local-filter search over the inbox's already-
+ *      loaded conversation list (no new API route). Recent
+ *      conversations show when search is empty.
  *
  * ── HONESTY CONTRACT ──────────────────────────────────────────────────────
  * - Never auto-links anything. Operator must click Link.
- * - Never claims an unmatched reply is from a specific lead — it
- *   shows the raw From address + subject + body preview and lets
- *   the operator decide.
+ * - Never claims an unmatched reply is from a specific lead —
+ *   the suggestion is a hint, not a decision. Operator can
+ *   override via the picker.
  * - Never shows raw provider payloads, headers, or provider ids.
- * - Body preview is capped (280 chars) — the full stripped body
- *   appears on the linked message bubble after the operator
- *   commits.
- * - Linking inserts as `role: 'lead'`; AI does NOT auto-fire.
- *   This matches the 8BO inbound capture rule and 8BQ's explicit
- *   "no auto AI on linked orphan" guarantee.
+ * - Body preview is capped (280 chars).
+ * - Linking inserts as `role:'lead'`; AI does NOT auto-fire.
+ *   This matches the 8BO/8BQ rule.
+ * - Server (link route) re-validates ownership; the client-side
+ *   picker can never bypass tenant checks.
  */
 
 interface OrphanRow {
@@ -52,11 +60,22 @@ interface OrphanRow {
   match_confidence: number
   suggested_conversation_ids: string[]
   suggested_lead_ids: string[]
+  suggested_conversations: ConversationPreview[]
   linked_conversation_id: string | null
   linked_lead_id: string | null
   linked_message_id: string | null
   dismissed_at: string | null
   dismiss_reason: string | null
+}
+
+export interface ConversationPreview {
+  conversation_id: string
+  lead_id: string | null
+  lead_name: string | null
+  lead_email: string | null
+  stage: string | null
+  source_channel: string | null
+  last_message_at: string | null
 }
 
 interface QueueResponse {
@@ -100,7 +119,61 @@ function senderDisplay(o: OrphanRow): string {
   return o.from_name ?? o.from_email ?? 'Unknown sender'
 }
 
-export default function UnmatchedEmailQueueCard() {
+function previewLabel(c: ConversationPreview): string {
+  const parts: string[] = []
+  if (c.lead_name) parts.push(c.lead_name)
+  if (c.lead_email) parts.push(c.lead_email)
+  if (c.source_channel) parts.push(prettyChannel(c.source_channel))
+  if (c.stage) parts.push(prettyStage(c.stage))
+  if (parts.length > 0) return parts.join(' · ')
+  return `Conversation · Last active ${timeAgo(c.last_message_at) || 'unknown'}`
+}
+
+function prettyChannel(s: string): string {
+  switch (s) {
+    case 'website':
+      return 'Website'
+    case 'instagram':
+      return 'Instagram'
+    case 'facebook':
+      return 'Facebook'
+    case 'meta_lead_ads':
+      return 'Meta lead ad'
+    case 'email':
+      return 'Email'
+    case 'sms':
+      return 'SMS'
+    case 'the_knot':
+      return 'The Knot'
+    case 'weddingwire':
+      return 'WeddingWire'
+    case 'manual':
+      return 'Manual'
+    default:
+      return s
+  }
+}
+
+function prettyStage(s: string): string {
+  return s
+    .split('_')
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' ')
+}
+
+export interface UnmatchedEmailQueueCardProps {
+  /**
+   * Conversations already loaded by the inbox server page. Used
+   * as the local-filter pool for the picker — no new API route.
+   * Pass an empty array when not on the inbox page (the picker
+   * then shows "No conversations available").
+   */
+  venueConversations?: ConversationPreview[]
+}
+
+export default function UnmatchedEmailQueueCard({
+  venueConversations = [],
+}: UnmatchedEmailQueueCardProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -139,7 +212,7 @@ export default function UnmatchedEmailQueueCard() {
   }, [fetchQueue])
 
   const handleLink = useCallback(
-    async (orphanId: string, conversationId: string) => {
+    async (orphanId: string, conversationId: string): Promise<boolean> => {
       setActing((prev) => ({ ...prev, [orphanId]: 'link' }))
       try {
         const res = await fetch(
@@ -152,17 +225,24 @@ export default function UnmatchedEmailQueueCard() {
         )
         if (!res.ok) {
           const json = await res.json().catch(() => null)
+          // 409 already_resolved → remove from list (another tab won).
+          if (res.status === 409) {
+            setOrphans((prev) => prev.filter((o) => o.id !== orphanId))
+            setUnresolvedCount((n) => Math.max(0, n - 1))
+            return false
+          }
           setError(
             (json && (json.error as string)) ||
               'Could not link this reply. Refresh and try again.'
           )
-          return
+          return false
         }
-        // Optimistically remove from local list.
         setOrphans((prev) => prev.filter((o) => o.id !== orphanId))
         setUnresolvedCount((n) => Math.max(0, n - 1))
+        return true
       } catch {
         setError('Could not link this reply.')
+        return false
       } finally {
         setActing((prev) => ({ ...prev, [orphanId]: null }))
       }
@@ -184,6 +264,11 @@ export default function UnmatchedEmailQueueCard() {
         )
         if (!res.ok) {
           const json = await res.json().catch(() => null)
+          if (res.status === 409) {
+            setOrphans((prev) => prev.filter((o) => o.id !== orphanId))
+            setUnresolvedCount((n) => Math.max(0, n - 1))
+            return
+          }
           setError(
             (json && (json.error as string)) ||
               'Could not dismiss this reply.'
@@ -203,8 +288,6 @@ export default function UnmatchedEmailQueueCard() {
 
   const visibleCount = orphans.length
 
-  // Don't render anything when there's no queue AND we're not in
-  // an error state — keeps the inbox clean.
   if (!loading && unresolvedCount === 0 && !error) {
     return null
   }
@@ -258,6 +341,7 @@ export default function UnmatchedEmailQueueCard() {
                   key={o.id}
                   orphan={o}
                   acting={acting[o.id] ?? null}
+                  venueConversations={venueConversations}
                   onLink={handleLink}
                   onDismiss={handleDismiss}
                 />
@@ -277,15 +361,52 @@ export default function UnmatchedEmailQueueCard() {
 function OrphanRowItem(props: {
   orphan: OrphanRow
   acting: 'link' | 'dismiss' | null
-  onLink: (orphanId: string, conversationId: string) => Promise<void>
+  venueConversations: ConversationPreview[]
+  onLink: (orphanId: string, conversationId: string) => Promise<boolean>
   onDismiss: (orphanId: string, reason: DismissReason) => Promise<void>
 }) {
-  const { orphan, acting, onLink, onDismiss } = props
+  const { orphan, acting, venueConversations, onLink, onDismiss } = props
   const [dismissOpen, setDismissOpen] = useState(false)
-  const primarySuggestion = useMemo(
-    () => orphan.suggested_conversation_ids[0] ?? null,
-    [orphan]
-  )
+  const primarySuggestion = orphan.suggested_conversations[0] ?? null
+  // Picker opens by default when there's no suggestion; otherwise
+  // collapsed behind a "Choose another" button.
+  const [pickerOpen, setPickerOpen] = useState(!primarySuggestion)
+  const [selected, setSelected] = useState<ConversationPreview | null>(null)
+  const [query, setQuery] = useState('')
+
+  // Debounced filter — 250ms cadence so typing feels responsive
+  // without recomputing on every keystroke.
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query.trim().toLowerCase()), 250)
+    return () => clearTimeout(t)
+  }, [query])
+
+  // Filter pool. Empty query → recent conversations (already
+  // sorted by last_message_at desc from the server). Typed
+  // query → name/email/phone substring match.
+  const filtered = useMemo(() => {
+    if (!debouncedQuery) return venueConversations.slice(0, 10)
+    const needle = debouncedQuery
+    return venueConversations
+      .filter((c) => {
+        const name = (c.lead_name ?? '').toLowerCase()
+        const email = (c.lead_email ?? '').toLowerCase()
+        return name.includes(needle) || email.includes(needle)
+      })
+      .slice(0, 10)
+  }, [venueConversations, debouncedQuery])
+
+  // Suggestion-driven primary action.
+  const handleLinkSuggestion = async () => {
+    if (!primarySuggestion) return
+    await onLink(orphan.id, primarySuggestion.conversation_id)
+  }
+  const handleLinkSelected = async () => {
+    if (!selected) return
+    await onLink(orphan.id, selected.conversation_id)
+  }
+
   return (
     <li className="px-4 py-3">
       <div className="flex items-start justify-between gap-3">
@@ -306,44 +427,53 @@ function OrphanRowItem(props: {
           <p className="text-[11.5px] text-[#64748B] leading-snug line-clamp-2">
             {orphan.body_preview}
           </p>
-          <div className="flex items-center gap-1.5 mt-1.5">
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
             <span className="inline-flex items-center gap-1 rounded-full border border-[#E2E8F0] bg-[#F8FAFC] px-1.5 py-[1px] text-[10px] text-[#475569]">
               confidence {orphan.match_confidence}
             </span>
-            {primarySuggestion && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-1.5 py-[1px] text-[10px] font-medium text-[#1D4ED8]">
-                Suggested conversation
+            {primarySuggestion ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-1.5 py-[1px] text-[10px] font-medium text-[#1D4ED8] max-w-[260px] truncate"
+                title={`Suggested: ${previewLabel(primarySuggestion)}`}
+              >
+                Suggested: {previewLabel(primarySuggestion)}
               </span>
-            )}
-            {!primarySuggestion && orphan.suggested_lead_ids.length === 0 && (
+            ) : (
               <span className="inline-flex items-center gap-1 rounded-full border border-[#E2E8F0] bg-[#F8FAFC] px-1.5 py-[1px] text-[10px] text-[#64748B]">
-                No suggestion
+                No suggestion — search below
               </span>
             )}
           </div>
         </div>
         <div className="shrink-0 flex flex-col items-end gap-1.5">
-          {primarySuggestion ? (
+          {primarySuggestion && (
             <button
               type="button"
               disabled={!!acting}
-              onClick={() => onLink(orphan.id, primarySuggestion)}
+              onClick={handleLinkSuggestion}
               className={cn(
                 'inline-flex items-center gap-1 rounded-md border border-[#1D4ED8] bg-[#1D4ED8] px-2 py-1 text-[11px] font-semibold text-white hover:bg-[#1E40AF] transition-colors',
                 acting && 'opacity-60 cursor-wait'
               )}
             >
-              {acting === 'link' ? (
+              {acting === 'link' && !selected ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
               ) : (
                 <Link2 className="w-3 h-3" />
               )}
-              Link
+              Link suggestion
             </button>
-          ) : (
-            <span className="text-[10px] text-[#94A3B8] italic">
-              Link via inbox
-            </span>
+          )}
+          {primarySuggestion && (
+            <button
+              type="button"
+              disabled={!!acting}
+              onClick={() => setPickerOpen((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-md border border-[#E2E8F0] bg-white px-2 py-1 text-[10.5px] font-medium text-[#475569] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-colors"
+            >
+              <Search className="w-3 h-3" />
+              {pickerOpen ? 'Hide search' : 'Choose another'}
+            </button>
           )}
           <div className="relative">
             <button
@@ -351,7 +481,7 @@ function OrphanRowItem(props: {
               disabled={!!acting}
               onClick={() => setDismissOpen((v) => !v)}
               className={cn(
-                'inline-flex items-center gap-1 rounded-md border border-[#E2E8F0] bg-white px-2 py-1 text-[11px] font-medium text-[#475569] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-colors',
+                'inline-flex items-center gap-1 rounded-md border border-[#E2E8F0] bg-white px-2 py-1 text-[10.5px] font-medium text-[#475569] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-colors',
                 acting && 'opacity-60 cursor-wait'
               )}
             >
@@ -382,9 +512,95 @@ function OrphanRowItem(props: {
           </div>
         </div>
       </div>
+
+      {/* Picker — local filter over venueConversations. No API
+          call; the inbox page already loaded these. */}
+      {pickerOpen && (
+        <div className="mt-2.5 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-2.5">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex-1 flex items-center gap-1.5 rounded-md border border-[#E2E8F0] bg-white px-2 py-1">
+              <Search className="w-3 h-3 text-[#94A3B8]" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by lead name or email…"
+                className="flex-1 bg-transparent outline-none text-[11.5px] text-[#0F172A] placeholder:text-[#94A3B8]"
+                aria-label="Search conversations"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={!selected || !!acting}
+              onClick={handleLinkSelected}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors',
+                selected && !acting
+                  ? 'border-[#1D4ED8] bg-[#1D4ED8] text-white hover:bg-[#1E40AF]'
+                  : 'border-[#E2E8F0] bg-white text-[#94A3B8] cursor-not-allowed'
+              )}
+            >
+              {acting === 'link' && selected ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Link2 className="w-3 h-3" />
+              )}
+              Link selected
+            </button>
+          </div>
+          {filtered.length === 0 ? (
+            <div className="px-2 py-3 text-[11px] text-[#64748B] text-center">
+              {debouncedQuery
+                ? 'No conversations found. Try name, email, or phone.'
+                : 'No conversations available.'}
+            </div>
+          ) : (
+            <ul className="max-h-48 overflow-y-auto divide-y divide-[#F1F5F9] bg-white rounded-md border border-[#E2E8F0]">
+              {filtered.map((c) => {
+                const isSelected =
+                  selected?.conversation_id === c.conversation_id
+                return (
+                  <li key={c.conversation_id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelected(c)}
+                      className={cn(
+                        'w-full text-left px-2.5 py-1.5 hover:bg-[#F1F5F9] transition-colors flex items-start justify-between gap-2',
+                        isSelected && 'bg-[#EFF6FF] hover:bg-[#EFF6FF]'
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[12px] font-semibold text-[#0F172A] truncate">
+                          {c.lead_name ?? c.lead_email ?? 'Unknown lead'}
+                        </div>
+                        <div className="text-[10.5px] text-[#64748B] truncate">
+                          {[
+                            c.lead_email,
+                            c.source_channel && prettyChannel(c.source_channel),
+                            timeAgo(c.last_message_at) &&
+                              `Last active ${timeAgo(c.last_message_at)}`,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <Check className="w-3.5 h-3.5 text-[#1D4ED8] mt-0.5 shrink-0" />
+                      )}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {selected && (
+            <div className="mt-2 text-[10.5px] text-[#475569]">
+              Selected: <strong>{selected.lead_name ?? selected.lead_email}</strong>
+              {' '}— click <strong>Link selected</strong> to attach this reply.
+            </div>
+          )}
+        </div>
+      )}
     </li>
   )
 }
-
-// Note: imported but unused so the linter doesn't flag the bundle.
-void CheckCircle2

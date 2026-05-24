@@ -6494,3 +6494,14 @@ suppressed addresses (auto-responders / bounce loops) can be
 mass-dismissed via the dropdown reason `auto_responder`.
 
 See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.
+
+## Phase 8BR-alt — Orphan picker (informational)
+
+Picker completes the 8BQ surface. No new routes, no new
+audit actions, no new rate-limit buckets. Filtering happens
+client-side over the inbox's already-loaded conversation
+list. Server (link route) still enforces all venue/ownership
+checks; the picker is purely a UX affordance. No billing
+impact.
+
+See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.

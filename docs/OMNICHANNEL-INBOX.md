@@ -852,3 +852,13 @@ non-empty; operators can Link or Dismiss each orphan. No AI
 auto-fires on link.
 
 See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.
+
+---
+
+## Phase 8BR-alt — orphan picker is now operationally complete
+
+The unmatched email queue card now includes a per-row
+search/select picker. Operators can resolve every orphan,
+not just the ones with a pre-computed suggestion. Strict
+no-AI rule preserved. See
+`docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.

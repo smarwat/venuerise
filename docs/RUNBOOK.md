@@ -6483,3 +6483,29 @@ SQL).
 Critical guardrail: **linking an orphan does NOT trigger AI**.
 Operators compose all responses through the existing inbox
 composer (8BN/8BP delivery pipeline).
+
+## Phase 8BR-alt — Orphan conversation picker
+
+No new env vars. No new routes. No DB migration.
+
+The 8BQ queue card now exposes a per-orphan picker that
+filters the inbox page's already-loaded conversation list
+in-browser. Server-side ownership is re-validated by the
+existing `/api/inbound-email-orphans/[id]/link` route on
+every link attempt — the picker cannot bypass tenant
+isolation.
+
+The `/api/inbound-email-orphans` list route now back-fills
+`suggested_conversations[]` previews via an RLS-scoped
+`IN (...)` lookup so the UI can render
+`Sarah Johnson · sarah@gmail.com · Qualified` instead of
+raw UUIDs.
+
+Health flags:
+- `inbound_email_orphan_picker: 'mounted'`
+- `inbound_email_orphan_search: 'client_local'`
+- `inbound_email_orphan_manual_linking: 'mounted'`
+- `inbound_email_orphan_picker_no_ai_guard: 'mounted'`
+
+Rollback: revert the commit. The 8BQ "Link suggestion +
+Link via inbox hint" behavior returns.

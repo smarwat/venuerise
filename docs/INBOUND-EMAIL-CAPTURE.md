@@ -373,3 +373,14 @@ spec, RLS posture, audit/rate-limit, and QA checklist.
 
 The "Known limitations" entry above about orphan replies
 being invisible is now resolved.
+
+---
+
+## Phase 8BR-alt — manual conversation picker for orphans
+
+Even when 8BO can't pre-compute a suggested conversation for
+an orphan, operators can now search/select any venue
+conversation and link it from the inbox queue card. No new
+API route — local filter over the inbox's already-loaded
+list. See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md` for the
+picker spec.

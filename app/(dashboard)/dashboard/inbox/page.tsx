@@ -140,8 +140,27 @@ export default async function InboxPage() {
         {/* Phase 8BQ — Unmatched inbound email queue card. Sits at
             the top of the empty-state column so an operator sees
             the alert BEFORE they pick a conversation. Hidden when
-            the queue is empty so the inbox stays clean. */}
-        <UnmatchedEmailQueueCard />
+            the queue is empty so the inbox stays clean.
+            Phase 8BR-alt — pass the already-loaded venue
+            conversations so the card can show a search/picker
+            for orphans that have no pre-computed suggestion.
+            Local filter — no new API route. */}
+        <UnmatchedEmailQueueCard
+          venueConversations={(conversations as unknown as Array<{
+            id: string
+            last_message_at: string | null
+            channel_type?: string | null
+            leads?: { id?: string | null; name?: string | null; email?: string | null; lead_score?: number | null } | null
+          }>).slice(0, 200).map((c) => ({
+            conversation_id: c.id,
+            lead_id: c.leads?.id ?? null,
+            lead_name: c.leads?.name ?? null,
+            lead_email: c.leads?.email ?? null,
+            stage: null,
+            source_channel: c.channel_type ?? null,
+            last_message_at: c.last_message_at,
+          }))}
+        />
 
         {/* Phase 8J — week-at-a-glance panel. Renders ABOVE the empty
             state so the operator's eye lands on actionable tours first

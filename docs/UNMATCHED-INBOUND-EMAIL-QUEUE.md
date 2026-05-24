@@ -396,3 +396,91 @@ fallback, AND a safety net for unmatched replies. SMS is
 next: mirror the 8BN/8BP pattern for outbound + delivery
 status. After 8BR ships, 8BS (SMS inbound) and 8BT (orphan
 SMS queue) become straightforward parallels of 8BO and 8BQ.
+
+---
+
+## Phase 8BR-alt update — inline conversation picker
+
+The "Known limitations" entry above about needing an
+in-thread picker is now resolved.
+
+The orphan queue card now renders a search/picker per row so
+operators can resolve every orphan, even when no suggestion
+was pre-computed:
+
+- **Suggestion exists** → primary **Link suggestion** button
+  with a readable label (`Sarah Johnson · sarah@gmail.com ·
+  Website · Qualified`) plus a secondary **Choose another**
+  toggle that reveals the picker.
+- **No suggestion** → picker opens by default with a
+  search input and a recent-conversations list.
+
+### Architecture
+
+- **No new API route.** The picker filters the inbox page's
+  already-loaded `conversations` list in-browser. Health
+  flag `inbound_email_orphan_search` reports `'client_local'`
+  to reflect this.
+- **Enriched orphan list endpoint**. `/api/inbound-email-orphans`
+  now back-fills `suggested_conversations[]` with
+  `{ conversation_id, lead_id, lead_name, lead_email, stage,
+  source_channel, last_message_at }` previews via a single
+  RLS-scoped `IN (...)` lookup. UI never sees raw UUIDs as
+  the suggestion label.
+- **Server-side ownership re-validation**. The existing
+  `/api/inbound-email-orphans/[id]/link` route re-runs the
+  full tenant + ownership check on every selected
+  conversation id — the picker can never bypass cross-venue
+  RLS even if the operator typed a UUID directly.
+
+### UI behavior
+
+- Picker uses progressive disclosure — collapsed by default
+  when a suggestion exists.
+- Search input has a 250 ms debounce.
+- Empty query → most-recent 10 conversations.
+- Typed query → substring match on lead name + email (local).
+- Selecting a conversation enables the **Link selected**
+  button (otherwise disabled).
+- Selection state is preserved across keystrokes; clicking
+  another result swaps it.
+- "No conversations found. Try name, email, or phone."
+  empty state.
+- 409 `already_resolved` from the link route silently
+  removes the orphan from the local list (another tab won).
+
+### Honest copy
+
+> When VenueRise cannot confidently match an inbound email,
+> an operator can manually link it to a conversation.
+> VenueRise does not auto-decide ambiguous matches.
+
+### Health flags (4 new)
+
+- `inbound_email_orphan_picker: 'mounted'`
+- `inbound_email_orphan_search: 'client_local'`
+- `inbound_email_orphan_manual_linking: 'mounted'`
+- `inbound_email_orphan_picker_no_ai_guard: 'mounted'`
+
+### Scanner deltas
+
+None. No new routes, no new audit actions, no new rate-limit
+buckets. The existing link/dismiss routes already audit + rate-
+limit. The list route remains a read-only GET (scanner-exempt).
+
+### Known limitations (this phase)
+
+- **Pool is limited to the conversations the inbox server
+  page loaded** (currently the venue's entire conversation
+  list sorted by `last_message_at`, capped at 200 in the
+  prop slice). Venues with > 200 active conversations would
+  need server-side search — defer to a future
+  `/api/conversations/search` route only if pilot venues
+  hit the cap.
+- **No phone-number search yet.** The inbox loader joins
+  `leads(id, name, email, lead_score)` but not `phone`. If
+  operators need phone search, extend the loader's `select`
+  + add a phone substring to the local filter.
+- **No keyboard nav** in the result list (arrow keys to
+  highlight, Enter to select). Click only. Defer if not
+  surfaced by pilot feedback.
