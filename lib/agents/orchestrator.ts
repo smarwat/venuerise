@@ -441,6 +441,18 @@ export async function handleNewLead(
   }
 }
 
+/**
+ * Process an INBOUND lead/couple message and generate an AI reply.
+ *
+ * INVARIANT: this function inserts the `leadMessage` argument as a
+ * `messages` row with `role: 'lead'` and then drives the AI draft
+ * pipeline. It is the wrong entry point for operator-typed text —
+ * operator replies must go through
+ * /api/conversations/[id]/messages (P0 sender-role fix). Callers
+ * that wrap this function should always be reacting to a real
+ * couple-side message (widget inbound, channel webhook,
+ * /api/ai/chat).
+ */
 export async function handleIncomingMessage(
   conversationId: string,
   leadMessage: string

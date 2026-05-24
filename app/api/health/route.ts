@@ -414,6 +414,10 @@ interface HealthBody {
     ai_actions_realtime_feed: 'mounted'
     ai_activity_buyer_friendly_copy: 'mounted'
     overview_live_ai_work_surface: 'mounted'
+    inbox_operator_message_role_fix: 'mounted'
+    inbox_human_messages_render_right: 'mounted'
+    inbox_ai_trigger_lead_only_guard: 'mounted'
+    inbox_composer_mode_semantics: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2890,6 +2894,41 @@ export async function GET(request: Request) {
       ai_actions_realtime_feed: 'mounted',
       ai_activity_buyer_friendly_copy: 'mounted',
       overview_live_ai_work_surface: 'mounted',
+      // P0 — Inbox sender-role fix. Composer was POSTing to
+      // /api/ai/chat regardless of mode, which routed every typed
+      // message through handleIncomingMessage — saving operator
+      // text as role:'lead' AND triggering an AI reply as if the
+      // lead had spoken. Two bugs in one. Fixed:
+      //   - inbox_operator_message_role_fix: composer 'you' mode
+      //     now POSTs /api/conversations/[id]/messages with
+      //     sender_type:'operator', metadata.source:
+      //     'operator_composer'. Inserts role:'human'. No AI
+      //     auto-response.
+      //   - inbox_human_messages_render_right: confirmed
+      //     ConversationThread renders role:'human' on the right
+      //     (groups with role:'ai' as `isAI = role === 'ai' ||
+      //     role === 'human'`). No render change needed once the
+      //     send path was fixed.
+      //   - inbox_ai_trigger_lead_only_guard: handleIncomingMessage
+      //     gained a doc-block INVARIANT clarifying the function
+      //     only processes inbound lead messages. /api/ai/chat
+      //     gained a "do NOT call from operator composer" warning.
+      //     handleIncomingMessage's existing semantics (inserts
+      //     role:'lead' by definition) ARE the guard — the broken
+      //     caller is now fixed.
+      //   - inbox_composer_mode_semantics: 'ai' mode now actually
+      //     does something. Generates an AI draft via /api/ai/draft
+      //     (regenerate path) using the operator's typed text as
+      //     the seed. Surfaces the draft inline with "Use this
+      //     draft" / "Dismiss" controls. Never auto-sends; never
+      //     saves operator text as 'lead'.
+      // No DB schema changes. No new routes. No AI prompt changes.
+      // /api/ai/chat semantics unchanged for legitimate inbound
+      // lead-message callers (widget, channel webhooks).
+      inbox_operator_message_role_fix: 'mounted',
+      inbox_human_messages_render_right: 'mounted',
+      inbox_ai_trigger_lead_only_guard: 'mounted',
+      inbox_composer_mode_semantics: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

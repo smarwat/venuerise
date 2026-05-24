@@ -23,7 +23,23 @@ const PostSchema = z.object({
   message: z.string().min(1),
 })
 
-// POST — send a lead message and get AI reply
+// POST — receive a NEW LEAD MESSAGE and run the AI orchestrator.
+//
+// This route is the INBOUND-LEAD path. The body's `message` field is
+// inserted into `messages` as `role: 'lead'` by handleIncomingMessage,
+// and the orchestrator generates an AI draft in response.
+//
+// ⚠️  Do NOT call this from the operator composer. Operator-typed
+// replies are venue-side messages and must use
+// /api/conversations/[id]/messages (inserts role:'human', no AI
+// auto-response). The composer was historically pointing at this
+// route, which caused two bugs: operator text saved as 'lead' AND
+// the AI replied as if the lead had spoken. Fixed in the P0
+// sender-role pass.
+//
+// Legitimate callers: widget inbound (when wired), channel webhooks
+// that hand off inbound lead messages, future external integrations
+// that need the AI to draft a reply to a real inbound lead message.
 export async function POST(request: NextRequest) {
   const requestId = getOrCreateRequestId(request)
   const reqLog = log.child({ requestId, route: '/api/ai/chat' })

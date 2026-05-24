@@ -10,31 +10,99 @@ interface Props {
   aiActive: boolean
 }
 
-export default function MessageComposer({ conversationId, aiActive }: Props) {
+export default function MessageComposer({ conversationId, leadId, aiActive }: Props) {
+  // P0 fix — composer mode now drives actual send behavior, not just
+  // visual styling. The previous implementation always routed through
+  // /api/ai/chat (handleIncomingMessage), which inserted the
+  // operator's text as `role: 'lead'` AND triggered an AI reply as if
+  // the lead had spoken. Two bugs in one. Now:
+  //   - `you` mode  → POST /api/conversations/[id]/messages
+  //                   (inserts role: 'human', venue-side, no AI
+  //                   auto-response)
+  //   - `ai`  mode  → POST /api/ai/draft (returns a draft variant for
+  //                   review; never auto-sends. The operator clicks
+  //                   "Approve & send" in the LeadDetailDrawer to
+  //                   emit a `human` row with the AI text.)
   const [mode, setMode] = useState<'ai' | 'human'>(aiActive ? 'ai' : 'human')
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [aiDraft, setAiDraft] = useState<string | null>(null)
 
   const send = async () => {
-    if (!text.trim()) return
+    const trimmed = text.trim()
+    if (!trimmed) return
     setError(null)
     setSending(true)
     try {
-      const res = await fetch('/api/ai/chat', {
+      if (mode === 'human') {
+        // P0 fix — operator reply path. Inserts as role:'human' via
+        // the operator-message route. Does NOT call the AI
+        // orchestrator. Renders on the right of the thread.
+        const res = await fetch(
+          `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              body: trimmed,
+              sender_type: 'operator',
+              metadata: { source: 'operator_composer' },
+            }),
+          }
+        )
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          setError(err?.error || 'Failed to send. Please try again.')
+          return
+        }
+        setText('')
+        return
+      }
+
+      // AI mode — ask the regenerate endpoint to refine the
+      // operator's typed text into a polished venue-side draft. The
+      // typed text is the seed (current_draft) — it is NEVER
+      // inserted as a lead message. The route returns variants;
+      // we surface the first one inline for one-click approval.
+      const res = await fetch('/api/ai/draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation_id: conversationId, message: text }),
+        body: JSON.stringify({
+          lead_id: leadId,
+          current_draft: trimmed.slice(0, 8000),
+          instruction: 'Polish into a warm, on-brand venue reply.',
+          variant_count: 1,
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => null)
-        setError(err?.error || 'Failed to send. Please try again.')
+        setError(err?.error || 'Failed to generate draft. Please try again.')
         return
       }
-      setText('')
+      const json = (await res.json().catch(() => null)) as
+        | { drafts?: Array<{ text?: string }>; draft?: string }
+        | null
+      const text0 =
+        (Array.isArray(json?.drafts) && json.drafts[0]?.text) ||
+        (typeof json?.draft === 'string' ? json.draft : null)
+      if (text0) {
+        setAiDraft(text0)
+        // Don't clear `text` — the operator may want to tweak the
+        // hint and regenerate.
+      } else {
+        setError("AI didn't return a draft. Try again or switch to You mode.")
+      }
     } finally {
       setSending(false)
     }
+  }
+
+  const useDraft = () => {
+    if (!aiDraft) return
+    setText(aiDraft)
+    setMode('human')
+    setAiDraft(null)
   }
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -118,9 +186,47 @@ export default function MessageComposer({ conversationId, aiActive }: Props) {
         </div>
       </div>
 
+      {/* P0 fix — AI draft preview. When the operator generates a
+          draft (mode='ai'), the result appears here with a one-click
+          "Use this draft" button that loads it into the textarea +
+          flips to You mode for a manual send. The operator can also
+          edit the textarea first, then click Use. The draft is never
+          auto-sent. */}
+      {aiDraft && (
+        <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2.5 flex items-start gap-2.5">
+          <Sparkles className="w-3.5 h-3.5 text-[#1D4ED8] mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-[#1D4ED8] font-semibold mb-1">
+              AI draft
+            </div>
+            <p className="text-[12.5px] text-[#0F172A] leading-snug whitespace-pre-wrap break-words">
+              {aiDraft}
+            </p>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                type="button"
+                onClick={useDraft}
+                className="text-[11.5px] font-semibold px-2.5 py-1 rounded-md bg-[#0F172A] text-white hover:bg-[#1E293B]"
+              >
+                Use this draft
+              </button>
+              <button
+                type="button"
+                onClick={() => setAiDraft(null)}
+                className="text-[11.5px] font-medium text-[#475569] hover:text-[#0F172A]"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <p className="text-[10px] text-center text-[#94A3B8]">
         <Sparkles className="w-2.5 h-2.5 inline mr-1" />
-        VenueRise AI can make mistakes. Consider checking important information.
+        {mode === 'human'
+          ? 'Your reply will be saved as a venue-side message.'
+          : 'AI drafts are for your review — nothing is sent automatically.'}
       </p>
     </div>
   )
