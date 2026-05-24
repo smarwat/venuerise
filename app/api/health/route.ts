@@ -433,6 +433,12 @@ interface HealthBody {
     inbound_email_header_matching: 'mounted'
     inbound_email_recent_recipient_fallback: 'mounted'
     inbound_email_no_auto_ai_trigger: 'mounted'
+    // Phase 8BP — email delivery status + retry polish
+    email_delivery_status_lifecycle: 'mounted'
+    email_delivery_webhook_message_patch: 'mounted'
+    email_delivery_retry: 'mounted'
+    email_delivery_manual_fallback: 'mounted'
+    email_delivery_honest_accepted_vs_delivered: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3037,6 +3043,33 @@ export async function GET(request: Request) {
       inbound_email_header_matching: 'mounted',
       inbound_email_recent_recipient_fallback: 'mounted',
       inbound_email_no_auto_ai_trigger: 'mounted',
+      // Phase 8BP — Email delivery status + retry polish. See
+      // docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md.
+      //   - email_delivery_status_lifecycle: canonical status
+      //     model in lib/integrations/delivery/email-status.ts
+      //     (pending → accepted → delivered, or bounced /
+      //     complained / failed / skipped / manual_fallback).
+      //   - email_delivery_webhook_message_patch: Resend webhook
+      //     now patches messages.metadata on composer sends
+      //     (related_table='messages'), not just outbound_messages
+      //     .status. Digest / tour-notification rows still flow
+      //     to outbound_messages only.
+      //   - email_delivery_retry: POST /api/messages/[id]/retry-email
+      //     re-attempts delivery against the same recipient
+      //     without creating a duplicate bubble.
+      //   - email_delivery_manual_fallback: POST /api/messages/[id]
+      //     /mark-fallback flips delivery_status to
+      //     'manual_fallback' for failed/bounced/skipped
+      //     composer sends.
+      //   - email_delivery_honest_accepted_vs_delivered: the
+      //     UI says "Accepted by Email" for provider-accepted
+      //     sends and only escalates to "Delivered" after the
+      //     `email.delivered` webhook fires.
+      email_delivery_status_lifecycle: 'mounted',
+      email_delivery_webhook_message_patch: 'mounted',
+      email_delivery_retry: 'mounted',
+      email_delivery_manual_fallback: 'mounted',
+      email_delivery_honest_accepted_vs_delivered: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

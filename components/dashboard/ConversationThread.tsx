@@ -174,6 +174,22 @@ export default function ConversationThread({ conversationId, initialMessages, le
           return [...prev, payload.new as Message]
         })
       })
+      // Phase 8BP — react to UPDATE events too, so when the
+      // Resend webhook patches a message's delivery metadata
+      // (accepted → delivered → bounced, or a retry completes),
+      // the DeliveryStatusPill flips in real time without a
+      // page refresh.
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      }, (payload) => {
+        const next = payload.new as Message
+        setMessages((prev) =>
+          prev.map((m) => (m.id === next.id ? { ...m, ...next } : m))
+        )
+      })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [conversationId])
@@ -340,14 +356,27 @@ export default function ConversationThread({ conversationId, initialMessages, le
                   {/* Phase 8BN — delivery status pill on operator
                       (`human`) messages. The pill only renders when
                       metadata carries a defensible status — see
-                      DeliveryStatusPill for the honesty rules. */}
+                      DeliveryStatusPill for the honesty rules.
+                      Phase 8BP — pill now exposes inline Retry +
+                      "Mark handled manually" buttons, reads
+                      retry_count + pending-since timestamp from
+                      metadata for stale-pending detection. */}
                   {msg.role === 'human' && meta && (
                     <span className="block mt-1.5">
                       <DeliveryStatusPill
+                        messageId={msg.id}
                         deliveryStatus={meta.delivery_status ?? null}
                         replyMethod={meta.reply_method ?? null}
                         replyDeliveryMode={meta.reply_delivery_mode ?? null}
                         safeError={meta.delivery_safe_error ?? null}
+                        pendingSinceIso={
+                          (meta as { last_retry_at?: string | null; accepted_at?: string | null }).last_retry_at ??
+                          (meta as { accepted_at?: string | null }).accepted_at ??
+                          msg.created_at
+                        }
+                        retryCount={
+                          (meta as { delivery_retry_count?: number | null }).delivery_retry_count ?? null
+                        }
                         onDark={isAI}
                       />
                     </span>

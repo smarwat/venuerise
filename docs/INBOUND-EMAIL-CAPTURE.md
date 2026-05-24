@@ -330,3 +330,20 @@ The original body is preserved on `inbound_raw_body_preview`.
 - **8BR — SMS outbound** (mirrors 8BN's pattern for SMS).
 - **8BT — Reply method switching UI** (the resolver already
   returns `switchOptions`; just needs the dropdown).
+
+---
+
+## Phase 8BP update — operator-side polish
+
+8BP doesn't change inbound behavior, but it tightens the
+loop on the OUTBOUND side that feeds inbound capture:
+
+- When a captured lead reply lands, the operator composes
+  their response in the inbox.
+- If that response fails (`Email failed`) the operator now
+  has a **Retry** button on the bubble — no need to re-type
+  or open a new conversation.
+- If retry keeps failing, **Mark handled manually** records
+  that the operator took over outside VenueRise.
+
+See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md`.

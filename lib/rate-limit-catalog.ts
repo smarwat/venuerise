@@ -318,6 +318,14 @@ export const RATE_LIMIT_DOMAINS = {
   manualChannel: {
     markSentManually:      'channel:manual-sent',
   },
+
+  // ── Phase 8BP — per-message email delivery actions ─────────────────────
+  // Per-user-per-message keys so a runaway retry click on one
+  // message doesn't deny retries on every other thread.
+  messageDelivery: {
+    retryEmail:            'message:delivery:retry-email',
+    markFallback:          'message:delivery:mark-fallback',
+  },
 } as const
 
 export type RateLimitDomain = typeof RATE_LIMIT_DOMAINS

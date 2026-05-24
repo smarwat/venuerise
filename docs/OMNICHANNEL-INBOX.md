@@ -826,3 +826,16 @@ Website widget is in-product only. SMS remains internal_only
 until 8BR/8BS ship.
 
 See `docs/INBOUND-EMAIL-CAPTURE.md` for the inbound spec.
+
+---
+
+## Phase 8BP — email lifecycle becomes operationally complete
+
+Email now has a full **observed lifecycle** on every
+operator-sent bubble (Sending → Accepted → Delivered, or
+Bounced / Marked as spam / Failed / Manual fallback) plus
+inline **Retry** and **Mark handled manually** actions.
+Manual channels (Instagram / Facebook / The Knot /
+WeddingWire) are unchanged.
+
+See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md`.

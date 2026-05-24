@@ -264,3 +264,28 @@ The "Reply-To limitation" caveat above is now (mostly) addressed:
 `messages.metadata.delivery_status = 'sent'` (outbound) and the
 corresponding inbound reply now share the same conversation, so
 operators see a true two-way thread.
+
+---
+
+## Phase 8BP update — full lifecycle wired
+
+Phase 8BP turned the binary "Sent via Email" pill into a
+proper lifecycle: **Sending… → Accepted by Email →
+Delivered**, with `Email failed` / `Email bounced` /
+`Marked as spam` / `Manual fallback` for failure modes.
+
+Key honesty refinement: the pill no longer says **"Sent
+via Email"**. It now says **"Accepted by Email"** when the
+provider acknowledged the send, and only escalates to
+**"Delivered"** when the Resend `email.delivered` webhook
+fires.
+
+Operators can also:
+- **Retry** failed/bounced/skipped sends without creating
+  a duplicate bubble (`POST /api/messages/[id]/retry-email`).
+- **Mark handled manually** when they handled the reply
+  outside VenueRise after a delivery issue
+  (`POST /api/messages/[id]/mark-fallback`).
+
+See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md` for the full
+spec, status dictionary, and webhook event mapping.

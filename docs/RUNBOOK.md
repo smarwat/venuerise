@@ -6416,3 +6416,37 @@ until re-enabled.
 
 See `docs/INBOUND-EMAIL-CAPTURE.md` for the full spec, payload
 shape, matching strategy, and QA checklist.
+
+## Phase 8BP — Email delivery status + retry polish
+
+No new env vars. Reuses existing Resend config +
+`OUTBOUND_EMAIL_DELIVERY_ENABLED` (8BN).
+
+New public routes:
+- `POST /api/messages/[id]/retry-email` — operator-only,
+  rate-limited per user+message, max 5 retries per message.
+- `POST /api/messages/[id]/mark-fallback` — operator-only,
+  flips an existing operator message to `manual_fallback`.
+
+The Resend webhook (`/api/resend/webhook`) is now
+configured to ALSO patch `messages.metadata` when the
+linked `outbound_messages` row points at a composer-
+originated message (`related_table='messages'`). Digest
+and tour-notification webhook behavior is unchanged.
+
+Health flags:
+- `email_delivery_status_lifecycle`
+- `email_delivery_webhook_message_patch`
+- `email_delivery_retry`
+- `email_delivery_manual_fallback`
+- `email_delivery_honest_accepted_vs_delivered`
+
+Rollback: revert the commit. No data migration required
+— all state lives on `messages.metadata` (jsonb).
+Historical sends keep their existing fields; any new
+fields (`delivery_event_type`, `accepted_at`, `delivered_at`,
+`delivery_retry_count`, etc.) are absent on legacy rows
+and the UI handles that gracefully.
+
+See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md` for the
+full spec, QA checklist, and event-mapping table.

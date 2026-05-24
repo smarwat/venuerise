@@ -6453,3 +6453,27 @@ QA-side notes:
   useful at-a-glance signal during pilot rollouts.
 
 See `docs/OUTBOUND-EMAIL-DELIVERY.md` for the full spec.
+
+## Phase 8BP — Email lifecycle + retry (informational)
+
+Composer email sends now expose a full lifecycle pill on
+every bubble (Sending / Accepted by Email / Delivered /
+Bounced / Marked as spam / Failed / Manual fallback) plus
+inline Retry + Mark handled manually actions.
+
+Billing-side notes:
+
+- The Resend webhook continues to populate
+  `outbound_messages.status` (queued/delivered/bounced/
+  complained); existing billing surfaces are unchanged.
+- New retry attempts increment
+  `messages.metadata.delivery_retry_count`; existing
+  `outbound_messages` rows are not duplicated on retry —
+  a new outbound row is created per attempt for audit, but
+  it points to the same `messages.id` via `related_id`.
+- Suppression list interactions: hard bounces still add to
+  `email_suppressions`. A retry on a now-suppressed address
+  surfaces as `skipped` with reason `suppressed` (the
+  composer pill shows "Saved in VenueRise" softly).
+
+See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md`.

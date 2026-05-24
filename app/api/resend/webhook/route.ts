@@ -8,6 +8,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase/service'
 import { addSuppression } from '@/lib/integrations/suppression'
+import {
+  normalizeEmailDeliveryStatus,
+  shouldOverwriteStatus,
+  type EmailDeliveryStatus,
+} from '@/lib/integrations/delivery/email-status'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
 import { captureWebhookError } from '@/lib/observability/sentry'
@@ -135,6 +140,18 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
   const outId = getTag(event, 'out_id')
 
   let matched = false
+  // Phase 8BP — track the rows we touched so we can patch the
+  // linked messages.metadata afterward. Composer sends (8BN) set
+  // outbound_messages.related_table='messages' and
+  // related_id=<messages.id>; digest/tour-notification sends do
+  // not, so this branch is a no-op for them.
+  const touchedRows: Array<{
+    id: string
+    related_table: string | null
+    related_id: string | null
+    provider_message_id: string | null
+    venue_id: string | null
+  }> = []
 
   // Try provider_message_id first.
   if (providerMessageId) {
@@ -142,7 +159,7 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
       .from('outbound_messages')
       .update(payload)
       .eq('provider_message_id', providerMessageId)
-      .select('id')
+      .select('id, related_table, related_id, provider_message_id, venue_id')
     if (error) {
       log.error(
         { providerMessageId, errorMessage: error.message },
@@ -150,6 +167,9 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
       )
     } else if (data && data.length > 0) {
       matched = true
+      touchedRows.push(
+        ...(data as typeof touchedRows)
+      )
     }
   }
 
@@ -160,11 +180,31 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
       .from('outbound_messages')
       .update({ ...payload, provider_message_id: providerMessageId ?? undefined })
       .eq('id', outId)
-      .select('id')
+      .select('id, related_table, related_id, provider_message_id, venue_id')
     if (error) {
       log.error({ outId, errorMessage: error.message }, 'resend.webhook.update_by_out_id_failed')
     } else if (data && data.length > 0) {
       matched = true
+      touchedRows.push(
+        ...(data as typeof touchedRows)
+      )
+    }
+  }
+
+  // Phase 8BP — propagate the lifecycle event onto the linked
+  // messages row so the inbox DeliveryStatusPill flips
+  // accepted → delivered, accepted → bounced, etc. ONLY for
+  // composer sends (related_table='messages'); digests +
+  // transactional emails keep the outbound_messages row as
+  // their source of truth.
+  for (const row of touchedRows) {
+    if (row.related_table === 'messages' && row.related_id) {
+      await patchMessageMetadataFromWebhook({
+        messageId: row.related_id,
+        eventType: event.type,
+        payload,
+        providerMessageId: row.provider_message_id ?? providerMessageId ?? null,
+      })
     }
   }
 
@@ -175,6 +215,150 @@ async function updateOutboundRow(event: ResendEvent, payload: UpdatePayload): Pr
     )
   }
   return matched
+}
+
+/**
+ * Phase 8BP — apply a Resend lifecycle event to the linked
+ * messages.metadata. Safe-by-construction:
+ *
+ *   - Reads the existing metadata first so we merge instead of
+ *     overwriting (preserves reply_method / reply_destination /
+ *     ai_action_id stamped by the composer route).
+ *   - Honors `shouldOverwriteStatus` so a late `email.sent`
+ *     event can never downgrade a row already at `delivered`
+ *     (out-of-order webhooks are normal in production).
+ *   - Stamps timestamped per-event fields so an audit drawer
+ *     can reconstruct the lifecycle.
+ *   - Never stores the raw webhook payload. Never stores
+ *     anything provider-specific beyond the canonical status
+ *     + safe error string.
+ *   - Never throws — provider would retry forever otherwise.
+ */
+async function patchMessageMetadataFromWebhook(args: {
+  messageId: string
+  eventType: string
+  payload: UpdatePayload
+  providerMessageId: string | null
+}): Promise<void> {
+  const supabase = createServiceClient()
+  const { data: existing, error: readErr } = await supabase
+    .from('messages')
+    .select('id, metadata')
+    .eq('id', args.messageId)
+    .maybeSingle()
+  if (readErr) {
+    log.warn(
+      { messageId: args.messageId, errorMessage: readErr.message },
+      'resend.webhook.message_read_failed'
+    )
+    return
+  }
+  if (!existing) return
+  const md = (existing as { metadata: Record<string, unknown> | null }).metadata ?? {}
+
+  const currentStatus = normalizeEmailDeliveryStatus(md.delivery_status)
+  const nextStatus = normalizeEmailDeliveryStatus(args.eventType)
+  if (nextStatus === 'unknown') return
+  if (!shouldOverwriteStatus(currentStatus, nextStatus)) {
+    // Late / duplicate event — still record the event timestamp
+    // for forensics, but leave delivery_status alone.
+    await stampEventTimestamp(args.messageId, md, nextStatus, args.eventType)
+    return
+  }
+
+  const nowIso = new Date().toISOString()
+  const patch: Record<string, unknown> = {
+    ...md,
+    delivery_status: nextStatus,
+    delivery_provider: 'resend',
+    delivery_event_type: args.eventType,
+    delivery_last_event_at: nowIso,
+  }
+  if (args.providerMessageId) {
+    patch.provider_message_id = args.providerMessageId
+  }
+  // Per-event timestamps. We append (not overwrite) prior
+  // timestamps so a delivered-then-bounced sequence has both.
+  switch (nextStatus) {
+    case 'accepted':
+    case 'sent':
+      patch.accepted_at = md.accepted_at ?? nowIso
+      // Clear stale error fields if a retry succeeded.
+      delete patch.delivery_error_code
+      delete patch.delivery_safe_error
+      break
+    case 'delivered':
+      patch.delivered_at = nowIso
+      delete patch.delivery_error_code
+      delete patch.delivery_safe_error
+      break
+    case 'bounced':
+      patch.bounced_at = nowIso
+      patch.delivery_error_code = 'provider_bounced'
+      patch.delivery_safe_error = safeShortError(args.payload.error) ?? 'Recipient mail server rejected the message.'
+      break
+    case 'complained':
+      patch.complained_at = nowIso
+      patch.delivery_error_code = 'provider_complaint'
+      patch.delivery_safe_error = 'Recipient marked the message as spam.'
+      break
+    case 'failed':
+      patch.failed_at = nowIso
+      patch.delivery_error_code = 'provider_failed'
+      patch.delivery_safe_error = safeShortError(args.payload.error) ?? 'Provider rejected the message.'
+      break
+    default:
+      break
+  }
+
+  const { error: patchErr } = await supabase
+    .from('messages')
+    .update({ metadata: patch })
+    .eq('id', args.messageId)
+  if (patchErr) {
+    log.warn(
+      { messageId: args.messageId, errorMessage: patchErr.message, nextStatus },
+      'resend.webhook.message_patch_failed'
+    )
+  }
+}
+
+async function stampEventTimestamp(
+  messageId: string,
+  md: Record<string, unknown>,
+  nextStatus: EmailDeliveryStatus,
+  eventType: string
+): Promise<void> {
+  const supabase = createServiceClient()
+  const nowIso = new Date().toISOString()
+  const patch: Record<string, unknown> = {
+    ...md,
+    delivery_last_event_at: nowIso,
+    delivery_last_event_type: eventType,
+  }
+  // Preserve forensic timestamps even when we don't flip the
+  // visible status (e.g. a duplicate `delivered` after we
+  // already are `delivered`).
+  if (nextStatus === 'delivered' && !md.delivered_at) patch.delivered_at = nowIso
+  if (nextStatus === 'bounced' && !md.bounced_at) patch.bounced_at = nowIso
+  if (nextStatus === 'complained' && !md.complained_at) patch.complained_at = nowIso
+  if (nextStatus === 'failed' && !md.failed_at) patch.failed_at = nowIso
+  await supabase
+    .from('messages')
+    .update({ metadata: patch })
+    .eq('id', messageId)
+}
+
+/** Trim a provider error string to a UI-safe short form. */
+function safeShortError(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  // Strip the `bounce:<subtype>:` prefix the outbound updater
+  // adds before storing — operators want the human reason, not
+  // the structured tag.
+  const human = trimmed.replace(/^bounce:[^:]*:/i, '').slice(0, 200)
+  return human || null
 }
 
 // ---------------------------------------------------------------------------

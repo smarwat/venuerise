@@ -89,6 +89,15 @@ export const AUDIT_ACTIONS = {
   // ── Conversation message writes ─────────────────────────────────────────
   OPERATOR_MESSAGE_SEND: 'operator_message_send',
 
+  // ── Phase 8BP — email delivery lifecycle (per-message) ──────────────────
+  // Retry actions are recorded on the messages row that owned the
+  // original send. Manual fallback flips delivery_status without
+  // claiming external delivery.
+  EMAIL_DELIVERY_RETRY_ATTEMPTED: 'email_delivery_retry_attempted',
+  EMAIL_DELIVERY_RETRY_SUCCEEDED: 'email_delivery_retry_succeeded',
+  EMAIL_DELIVERY_RETRY_FAILED: 'email_delivery_retry_failed',
+  EMAIL_DELIVERY_MANUAL_FALLBACK_MARKED: 'email_delivery_manual_fallback_marked',
+
   // ── Digest writes ───────────────────────────────────────────────────────
   DIGEST_PREFERENCES_UPDATE: 'digest_preferences_update',
   DIGEST_MANUAL_SEND: 'digest_manual_send',
