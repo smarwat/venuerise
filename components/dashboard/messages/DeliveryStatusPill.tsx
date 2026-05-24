@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import {
   Mail,
+  MessageSquare,
   Clock,
   AlertTriangle,
   Inbox,
@@ -21,6 +22,10 @@ import {
   type EmailDeliveryStatus,
   type StatusTone,
 } from '@/lib/integrations/delivery/email-status'
+import {
+  getSmsDeliveryDisplay,
+  normalizeSmsDeliveryStatus,
+} from '@/lib/integrations/delivery/sms-status'
 
 /**
  * Phase 8BP — Delivery status pill (rewrite).
@@ -106,17 +111,23 @@ const TONES: Record<StatusTone, ToneSwatch> = {
   },
 }
 
-function iconForStatus(status: EmailDeliveryStatus) {
+function iconForStatus(status: string, method: string | null | undefined) {
+  // SMS-specific icons swap Mail → MessageSquare for the
+  // success/pending states so the operator can tell the channel
+  // from across the room.
+  const isSms = method === 'sms'
   switch (status) {
     case 'pending':
       return Clock
     case 'accepted':
     case 'sent':
-      return Mail
+    case 'queued':
+      return isSms ? MessageSquare : Mail
     case 'delivered':
       return CheckCircle2
     case 'bounced':
     case 'failed':
+    case 'undelivered':
       return AlertTriangle
     case 'complained':
       return Ban
@@ -166,45 +177,74 @@ export default function DeliveryStatusPill(props: DeliveryPillProps) {
     replyDeliveryMode === 'internal_only'
   if (!hasDeliveryStatus && !hasManualHint) return null
 
-  // Resolve canonical status. When no delivery_status is set
-  // but we know the mode, project the mode onto the status
-  // model so we can reuse the dictionary.
-  let canonical: EmailDeliveryStatus
-  if (hasDeliveryStatus) {
-    canonical = normalizeEmailDeliveryStatus(deliveryStatus)
-  } else if (replyDeliveryMode === 'manual') {
-    return (
-      <ManualReplyChip
-        label="Manual reply required"
-        title="Copy this response into the source channel to deliver."
-        onDark={onDark}
-        className={className}
-      />
-    )
-  } else if (replyDeliveryMode === 'unavailable') {
-    return (
-      <ManualReplyChip
-        label="No delivery path"
-        title="No working delivery path for this channel."
-        onDark={onDark}
-        tone="danger"
-        className={className}
-      />
-    )
-  } else {
-    canonical = 'skipped'
-  }
-
-  const display = getEmailDeliveryDisplay(canonical)
-  const tone = TONES[display.tone]
-  const Icon = iconForStatus(canonical)
+  // Phase 8BR — branch on reply method so SMS and email each
+  // resolve via their own canonical status dictionary. Manual-
+  // channel hints remain channel-agnostic.
+  const isSms = replyMethod === 'sms'
   const isEmail = replyMethod === 'email'
 
+  if (!hasDeliveryStatus) {
+    if (replyDeliveryMode === 'manual') {
+      return (
+        <ManualReplyChip
+          label="Manual reply required"
+          title="Copy this response into the source channel to deliver."
+          onDark={onDark}
+          className={className}
+        />
+      )
+    }
+    if (replyDeliveryMode === 'unavailable') {
+      return (
+        <ManualReplyChip
+          label="No delivery path"
+          title="No working delivery path for this channel."
+          onDark={onDark}
+          tone="danger"
+          className={className}
+        />
+      )
+    }
+  }
+
+  // Compute display + canonical via the channel-appropriate
+  // dictionary. We compute both `canonical` (a string) and
+  // `display` here so the rest of the render is method-agnostic.
+  let canonicalStr: string
+  let display: ReturnType<typeof getEmailDeliveryDisplay>
+  if (isSms) {
+    const c = hasDeliveryStatus
+      ? normalizeSmsDeliveryStatus(deliveryStatus)
+      : ('skipped' as const)
+    canonicalStr = c
+    const smsDisplay = getSmsDeliveryDisplay(c)
+    display = {
+      label: smsDisplay.label,
+      helper: smsDisplay.helper,
+      tone: smsDisplay.tone,
+      isTerminal: smsDisplay.isTerminal,
+      // SMS has no retry route yet — hide retry UI even if
+      // the dictionary's canRetry says otherwise.
+      canRetry: false,
+      canMarkManual: smsDisplay.canMarkManual,
+    }
+  } else {
+    const c: EmailDeliveryStatus = hasDeliveryStatus
+      ? normalizeEmailDeliveryStatus(deliveryStatus)
+      : 'skipped'
+    canonicalStr = c
+    display = getEmailDeliveryDisplay(c)
+  }
+  const tone = TONES[display.tone]
+  const Icon = iconForStatus(canonicalStr, replyMethod ?? null)
+
   // Pending stale-escalation. After 5 minutes the spinner
-  // becomes "Status delayed".
+  // becomes "Status delayed". The helper is email-typed but
+  // the math is channel-agnostic; we just need to call it
+  // with a status it recognizes (`'pending'`).
   const stale =
-    canonical === 'pending' &&
-    isStalePending(canonical, pendingSinceMs(pendingSinceIso))
+    canonicalStr === 'pending' &&
+    isStalePending('pending', pendingSinceMs(pendingSinceIso))
   const effectiveLabel = stale ? 'Status delayed' : display.label
   const effectiveHelper = stale
     ? `Email provider has not returned a status yet (over ${Math.round(
@@ -212,15 +252,19 @@ export default function DeliveryStatusPill(props: DeliveryPillProps) {
       )} min). You may retry.`
     : safeError ?? display.helper
 
+  // Retry is email-only this phase (8BR didn't add an SMS
+  // retry route). Fallback works for both email and SMS so an
+  // operator can declare "I texted them from my phone" after
+  // a Twilio failure.
   const showRetry =
     !!messageId &&
     isEmail &&
     !disabled &&
     (display.canRetry || stale) &&
     (retryCount ?? 0) < MAX_RETRIES &&
-    canonical !== 'complained'
+    canonicalStr !== 'complained'
   const showFallback =
-    !!messageId && isEmail && !disabled && display.canMarkManual
+    !!messageId && (isEmail || isSms) && !disabled && display.canMarkManual
 
   async function onRetry() {
     if (!messageId) return

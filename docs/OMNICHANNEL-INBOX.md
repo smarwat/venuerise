@@ -862,3 +862,17 @@ search/select picker. Operators can resolve every orphan,
 not just the ones with a pre-computed suggestion. Strict
 no-AI rule preserved. See
 `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.
+
+---
+
+## Phase 8BR — SMS becomes the second real outbound channel
+
+When `OUTBOUND_SMS_DELIVERY_ENABLED=1` + Twilio creds, the
+inbox composer can deliver operator-approved text messages to
+phone-bearing leads via Twilio. Mirrors the 8BN email pipeline.
+
+Outbound-only this phase — inbound SMS (8BS), retry (8BU), and
+orphan queue (8BT) are deferred. Manual channels (Instagram /
+The Knot / WeddingWire) are unchanged.
+
+See `docs/OUTBOUND-SMS-DELIVERY.md`.

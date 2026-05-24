@@ -297,3 +297,23 @@ full spec.
   `reply-method.ts` (still `false`) — per-call override is
   preferred so per-venue toggles work in the future without
   touching the module-level constant.
+
+---
+
+## Phase 8BR update — SMS direct delivery now wired
+
+The `smsDirectDeliveryEnabled` flag the resolver has accepted
+since 8BM is now live. When `OUTBOUND_SMS_DELIVERY_ENABLED=1`
++ Twilio creds:
+
+- phone-only-default leads flip to **`Direct`** with helper
+  "Sends via SMS when you click send."
+- when disabled, behavior unchanged from 8BM (stays
+  `internal_only` with "SMS on file — direct sending is
+  not connected").
+
+Email default behavior preserved for leads with both email
+and phone — SMS appears in `switchOptions[]` but the bar
+still defaults to email. Switching UI deferred to 8BT.
+
+See `docs/OUTBOUND-SMS-DELIVERY.md`.

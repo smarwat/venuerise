@@ -18,6 +18,11 @@ import { resolveReplyMethod } from '@/lib/integrations/channels/reply-method'
 // passed into resolveReplyMethod so the bar flips to "Direct"
 // when sending is actually available.
 import { isOutboundEmailConfigured } from '@/lib/integrations/delivery/email'
+// Phase 8BR — parallel SMS-side check (Twilio + OUTBOUND_SMS_*
+// env vars). Same plumbing as email: flag flows through the
+// resolver, so phone-bearing leads flip to delivery_mode='direct'
+// when SMS is wired AND the lead has a normalizable phone.
+import { isOutboundSmsConfigured } from '@/lib/integrations/delivery/sms'
 
 /**
  * Phase 8F — pick the most relevant tour for a lead.
@@ -212,11 +217,13 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
               // ("Saved in VenueRise only") — the previous honest
               // default.
               const emailDirectDeliveryEnabled = isOutboundEmailConfigured()
+              const smsDirectDeliveryEnabled = isOutboundSmsConfigured()
               const replyMethod = resolveReplyMethod({
                 channelType: (conv as { channel_type?: string | null }).channel_type ?? null,
                 leadEmail: (lead.email as string | null) ?? null,
                 leadPhone: (lead.phone as string | null) ?? null,
                 emailDirectDeliveryEnabled,
+                smsDirectDeliveryEnabled,
               })
               return (
                 <MessageComposer

@@ -6505,3 +6505,23 @@ checks; the picker is purely a UX affordance. No billing
 impact.
 
 See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.
+
+## Phase 8BR — Outbound SMS delivery (informational)
+
+Twilio-backed direct SMS from the inbox composer. New env
+vars (`OUTBOUND_SMS_DELIVERY_ENABLED`, `TWILIO_*`,
+`OUTBOUND_SMS_FROM`). No new admin routes, no new audit
+actions (reuses `operator_message_send` audit row with
+`delivery_channel:'sms'`), no new rate-limit buckets (reuses
+existing operator message route limiter).
+
+Billing-side notes:
+
+- No usage / dunning impact — Twilio is billed direct to
+  the venue's Twilio account, not via VenueRise billing.
+- The kill switch is platform-wide; per-venue Twilio
+  numbers are deferred.
+- SMS failures still save the operator's message (8BP
+  fallback button works for SMS too).
+
+See `docs/OUTBOUND-SMS-DELIVERY.md`.

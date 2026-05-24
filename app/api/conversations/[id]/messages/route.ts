@@ -16,6 +16,10 @@ import {
   isOutboundEmailConfigured,
   sendOutboundEmail,
 } from '@/lib/integrations/delivery/email'
+import {
+  isOutboundSmsConfigured,
+  sendOutboundSms,
+} from '@/lib/integrations/delivery/sms'
 import { log } from '@/lib/log'
 import {
   getOrCreateRequestId,
@@ -246,36 +250,51 @@ export async function POST(
     messageMetadata.reply_destination = clientMeta.reply_destination
   }
 
-  // Phase 8BN — direct email delivery decision.
+  // Phase 8BN / 8BR — direct outbound delivery decision.
   //
-  // The composer stamps `reply_method='email'` +
-  // `reply_delivery_mode='direct'` when the resolver (server-side)
-  // decided email delivery is wired for this venue. We re-verify
-  // server-side here — never trust the client to authorize a real
-  // outbound send. If the kill-switch is off or Resend isn't
-  // configured, we silently downgrade to `internal_only` (the
-  // message still saves; the pill just won't say "Sent").
+  // The composer stamps `reply_method='email'|'sms'` +
+  // `reply_delivery_mode='direct'` when the server-side
+  // resolver decided that channel's delivery is wired for the
+  // venue. We RE-VERIFY here — never trust the client to
+  // authorize a real outbound send. If the kill-switch is off
+  // or the provider isn't configured, we silently downgrade to
+  // `internal_only` (the message still saves; the pill just
+  // won't say "Sent" / "Accepted").
   const requestedDirectEmail =
     clientMeta.reply_method === 'email' &&
     clientMeta.reply_delivery_mode === 'direct'
+  const requestedDirectSms =
+    clientMeta.reply_method === 'sms' &&
+    clientMeta.reply_delivery_mode === 'direct'
   const directEmailAuthorized =
     requestedDirectEmail && isOutboundEmailConfigured()
+  const directSmsAuthorized =
+    requestedDirectSms && isOutboundSmsConfigured()
 
   if (requestedDirectEmail && !directEmailAuthorized) {
-    // Downgrade in the stored metadata so audit/downstream UI
-    // reflects what actually happened (no external send), not
-    // what the client claimed.
+    // Email downgrade — stored metadata reflects what actually
+    // happened (no external send), not what the client claimed.
     messageMetadata.reply_delivery_mode = 'internal_only'
     messageMetadata.delivery_status = 'skipped'
     messageMetadata.delivery_skip_reason = 'delivery_disabled'
     messageMetadata.delivery_provider = 'resend'
   } else if (directEmailAuthorized) {
-    // Optimistic placeholder — the row inserts as 'pending' so a
-    // UI realtime subscriber doesn't see a flash of "saved only"
-    // before the send completes. Patched below with the real
-    // result.
+    // Optimistic placeholder — realtime subscriber sees
+    // "Sending…" while the provider call is in flight.
     messageMetadata.delivery_status = 'pending'
     messageMetadata.delivery_provider = 'resend'
+    messageMetadata.delivery_channel = 'email'
+  } else if (requestedDirectSms && !directSmsAuthorized) {
+    // SMS downgrade — same pattern as email.
+    messageMetadata.reply_delivery_mode = 'internal_only'
+    messageMetadata.delivery_status = 'skipped'
+    messageMetadata.delivery_skip_reason = 'delivery_disabled'
+    messageMetadata.delivery_provider = 'twilio'
+    messageMetadata.delivery_channel = 'sms'
+  } else if (directSmsAuthorized) {
+    messageMetadata.delivery_status = 'pending'
+    messageMetadata.delivery_provider = 'twilio'
+    messageMetadata.delivery_channel = 'sms'
   }
 
   const { data: inserted, error: insertErr } = await svc
@@ -325,7 +344,12 @@ export async function POST(
   //
   // Critical: we do NOT throw or return early on delivery failure.
   // The message is real; the delivery attempt is an annotation.
-  let deliveryResult: Awaited<ReturnType<typeof sendOutboundEmail>> | null = null
+  // Phase 8BR — union covers both email + SMS outcomes so the
+  // downstream patch + response code reads from one variable.
+  let deliveryResult:
+    | Awaited<ReturnType<typeof sendOutboundEmail>>
+    | Awaited<ReturnType<typeof sendOutboundSms>>
+    | null = null
   if (directEmailAuthorized && inserted) {
     const insertedRow = inserted as { id: string; metadata: Record<string, unknown> | null }
     const recipient = (clientMeta.reply_destination ?? '').trim()
@@ -377,10 +401,15 @@ export async function POST(
       // 'direct' (operator INTENDED direct). The delivery_status
       // field is the truth signal the UI reads.
     }
-    if (deliveryResult.ok && deliveryResult.outboundMessageId) {
-      deliveryPatch.outbound_message_id = deliveryResult.outboundMessageId
-    } else if (!deliveryResult.ok && deliveryResult.outboundMessageId) {
-      deliveryPatch.outbound_message_id = deliveryResult.outboundMessageId
+    // Only the email helper returns outboundMessageId; the SMS
+    // helper doesn't write to outbound_messages today.
+    const emailOutboundId =
+      'outboundMessageId' in deliveryResult
+        ? (deliveryResult as { outboundMessageId?: string | null })
+            .outboundMessageId
+        : null
+    if (emailOutboundId) {
+      deliveryPatch.outbound_message_id = emailOutboundId
     }
 
     const { error: patchErr } = await svc
@@ -407,6 +436,77 @@ export async function POST(
         provider: deliveryResult.provider,
       },
       'conversations.messages.delivery_attempted'
+    )
+  }
+
+  // 7c. Phase 8BR — direct SMS delivery.
+  //
+  // Same insert-then-send-then-patch flow as email. Body is
+  // already capped at 8000 chars by the route's BodySchema; the
+  // SMS helper applies a tighter cap (OUTBOUND_SMS_MAX_LENGTH /
+  // 1200 default) and returns `failed:message_too_long` if the
+  // operator typed a novel.
+  if (directSmsAuthorized && inserted) {
+    const insertedRow = inserted as { id: string; metadata: Record<string, unknown> | null }
+    const recipient = (clientMeta.reply_destination ?? '').trim()
+    const smsResult = await sendOutboundSms({
+      to: recipient,
+      body: parsed.data.body.trim(),
+      venueId,
+      conversationId,
+      leadId,
+      messageId: insertedRow.id,
+    })
+    deliveryResult = smsResult
+
+    const deliveryPatch: Record<string, unknown> = {
+      ...messageMetadata,
+      delivery_status: smsResult.deliveryStatus,
+      delivery_provider: smsResult.provider,
+      delivery_channel: 'sms',
+    }
+    if (smsResult.ok) {
+      deliveryPatch.provider_message_id = smsResult.providerMessageId
+      // For SMS, "accepted" / "queued" / "sent" come back
+      // immediately. Stamp accepted_at as the truth-signal
+      // timestamp; sent_at would require the status callback
+      // (deferred to a later phase).
+      deliveryPatch.accepted_at = new Date().toISOString()
+      if (smsResult.deliveryStatus === 'sent') {
+        deliveryPatch.sent_at = new Date().toISOString()
+      }
+      delete deliveryPatch.delivery_error_code
+      delete deliveryPatch.delivery_safe_error
+    } else {
+      deliveryPatch.delivery_error_code = smsResult.errorCode
+      deliveryPatch.delivery_safe_error = smsResult.safeError
+      if (smsResult.deliveryStatus === 'failed') {
+        deliveryPatch.failed_at = new Date().toISOString()
+      }
+    }
+
+    const { error: patchErr } = await svc
+      .from('messages')
+      .update({ metadata: deliveryPatch })
+      .eq('id', insertedRow.id)
+    if (patchErr) {
+      reqLog.warn(
+        { err: patchErr, messageId: insertedRow.id },
+        'conversations.messages.sms_delivery_patch_failed'
+      )
+    } else {
+      ;(inserted as { metadata: Record<string, unknown> }).metadata = deliveryPatch
+    }
+
+    reqLog.info(
+      {
+        messageId: insertedRow.id,
+        deliveryStatus: smsResult.deliveryStatus,
+        errorCode: smsResult.ok ? null : smsResult.errorCode,
+        provider: smsResult.provider,
+        providerMessageIdPresent: smsResult.ok ? !!smsResult.providerMessageId : false,
+      },
+      'conversations.messages.sms_delivery_attempted'
     )
   }
 
@@ -573,10 +673,14 @@ export async function POST(
       // long-retained and should stay PII-light.
       reply_method: clientMeta.reply_method ?? null,
       reply_delivery_mode_intended: clientMeta.reply_delivery_mode ?? null,
-      delivery_attempted: directEmailAuthorized,
+      delivery_channel:
+        directEmailAuthorized ? 'email'
+        : directSmsAuthorized ? 'sms'
+        : null,
+      delivery_attempted: directEmailAuthorized || directSmsAuthorized,
       delivery_status: deliveryResult
         ? deliveryResult.deliveryStatus
-        : requestedDirectEmail
+        : (requestedDirectEmail || requestedDirectSms)
           ? 'skipped'
           : null,
       delivery_provider: deliveryResult ? deliveryResult.provider : null,
@@ -590,10 +694,10 @@ export async function POST(
     },
   })
 
-  // Phase 8BN — surface the delivery outcome to the client so the
-  // composer can show an immediate toast/pill without waiting for
-  // the realtime echo. The message row itself is the durable
-  // truth; this is a UX shortcut.
+  // Phase 8BN / 8BR — surface the delivery outcome to the client
+  // so the composer can show an immediate toast/pill without
+  // waiting for the realtime echo. The message row itself is the
+  // durable truth; this is a UX shortcut.
   return respond(
     NextResponse.json({
       success: true,
@@ -614,7 +718,15 @@ export async function POST(
               error_code: 'delivery_disabled' as const,
               safe_error: 'Email sending is not connected for this workspace.',
             }
-          : { attempted: false, status: null },
+          : requestedDirectSms
+            ? {
+                attempted: false,
+                status: 'skipped' as const,
+                provider: 'twilio' as const,
+                error_code: 'delivery_disabled' as const,
+                safe_error: 'SMS sending is not connected for this workspace.',
+              }
+            : { attempted: false, status: null },
     })
   )
 }

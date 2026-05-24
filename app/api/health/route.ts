@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { getJobsRuntime } from '@/lib/jobs/queue'
 import { emailConfigured } from '@/lib/integrations/email'
 import { isOutboundEmailConfigured } from '@/lib/integrations/delivery/email'
+import { isOutboundSmsConfigured } from '@/lib/integrations/delivery/sms'
 import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -450,6 +451,12 @@ interface HealthBody {
     inbound_email_orphan_search: 'client_local'
     inbound_email_orphan_manual_linking: 'mounted'
     inbound_email_orphan_picker_no_ai_guard: 'mounted'
+    // Phase 8BR — outbound SMS delivery (Twilio)
+    outbound_sms_delivery: 'mounted' | 'disabled'
+    outbound_sms_reply_method_direct: 'mounted'
+    outbound_sms_delivery_status_pills: 'mounted'
+    outbound_sms_failure_honesty: 'mounted'
+    outbound_sms_no_ai_autosend_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3128,6 +3135,35 @@ export async function GET(request: Request) {
       inbound_email_orphan_search: 'client_local',
       inbound_email_orphan_manual_linking: 'mounted',
       inbound_email_orphan_picker_no_ai_guard: 'mounted',
+      // Phase 8BR — Outbound SMS delivery (Twilio). Mirrors the
+      // 8BN email pipeline. See docs/OUTBOUND-SMS-DELIVERY.md.
+      //   - outbound_sms_delivery: 'mounted' when the kill
+      //     switch is on AND Twilio SID/token/from are set;
+      //     'disabled' otherwise. Disabled keeps the composer
+      //     pill on "Saved in VenueRise only" for phone-bearing
+      //     leads.
+      //   - outbound_sms_reply_method_direct: resolver flips
+      //     phone-bearing conversations to delivery_mode='direct'
+      //     when isOutboundSmsConfigured() is true.
+      //   - outbound_sms_delivery_status_pills: DeliveryStatusPill
+      //     now reads the SMS dictionary
+      //     (sms-status.ts) when reply_method='sms'. Shows
+      //     "Accepted by SMS" / "SMS sent" / "SMS failed" / etc.
+      //   - outbound_sms_failure_honesty: provider failures save
+      //     the operator's message with delivery_status='failed'
+      //     and a safe error code; we never claim "SMS sent"
+      //     unless Twilio returned a 2xx + Message SID.
+      //   - outbound_sms_no_ai_autosend_guard: SMS sends only
+      //     fire from an explicit operator click in the composer.
+      //     AI mode generates drafts only; the orchestrator
+      //     never calls sendOutboundSms.
+      outbound_sms_delivery: isOutboundSmsConfigured()
+        ? 'mounted'
+        : 'disabled',
+      outbound_sms_reply_method_direct: 'mounted',
+      outbound_sms_delivery_status_pills: 'mounted',
+      outbound_sms_failure_honesty: 'mounted',
+      outbound_sms_no_ai_autosend_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

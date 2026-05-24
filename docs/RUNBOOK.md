@@ -6509,3 +6509,35 @@ Health flags:
 
 Rollback: revert the commit. The 8BQ "Link suggestion +
 Link via inbox hint" behavior returns.
+
+## Phase 8BR — Outbound SMS delivery (Twilio)
+
+New env vars:
+- `OUTBOUND_SMS_DELIVERY_ENABLED` (default `0`)
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `OUTBOUND_SMS_FROM` (E.164, e.g. `+15551234567`)
+- `OUTBOUND_SMS_MAX_LENGTH` (optional, default `1200`)
+
+Set all of the above to enable real Twilio sends from the
+inbox composer for phone-bearing leads. When OFF, the
+composer keeps the honest "Saved in VenueRise only" pill.
+
+Health flags:
+- `outbound_sms_delivery: 'mounted' | 'disabled'`
+- `outbound_sms_reply_method_direct`
+- `outbound_sms_delivery_status_pills`
+- `outbound_sms_failure_honesty`
+- `outbound_sms_no_ai_autosend_guard`
+
+Rollback: unset `OUTBOUND_SMS_DELIVERY_ENABLED` or set `0`.
+No data migration required — all SMS state lives on
+`messages.metadata`.
+
+Compliance: VenueRise does NOT store `sms_opt_in` today.
+Production SMS rollouts must respect TCPA before enabling
+for real venues. Kill switch defaults to `0` so a pilot
+operator must enable deliberately and own the compliance
+posture.
+
+See `docs/OUTBOUND-SMS-DELIVERY.md`.
