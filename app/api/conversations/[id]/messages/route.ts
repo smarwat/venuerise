@@ -53,12 +53,28 @@ import { captureApiError } from '@/lib/observability/sentry'
 // so the LeadDetailDrawer can stamp the chosen AI variant onto the
 // outgoing message row. Any other key the client sends is dropped on
 // the floor (we never spread arbitrary metadata into the DB row).
+//
+// Phase 8BM extension — the composer also stamps reply-method
+// context (where the operator INTENDED to send) so downstream audit
+// + digest surfaces have an honest record. None of these fields
+// claim external delivery; they describe operator intent + the
+// platform's delivery-mode resolution at write time.
 const ApproveMetadataSchema = z
   .object({
     source: z.string().max(80).optional(),
     ai_action_id: z.string().uuid().optional(),
     selected_variant_index: z.number().int().min(0).max(9).optional(),
     variant_count: z.number().int().min(1).max(9).optional(),
+    // Phase 8BM — reply method allowlist. The resolver's full type
+    // is `'email' | 'sms' | 'instagram' | 'facebook' | 'the_knot' |
+    // 'weddingwire' | 'meta_lead_ads' | 'website' | 'internal'` —
+    // we cap at length so the column stays narrow.
+    reply_method: z.string().max(40).optional(),
+    reply_delivery_mode: z
+      .enum(['direct', 'manual', 'internal_only', 'unavailable'])
+      .optional(),
+    channel_type: z.string().max(40).optional(),
+    reply_destination: z.string().max(200).optional(),
   })
   .strict()
   .optional()

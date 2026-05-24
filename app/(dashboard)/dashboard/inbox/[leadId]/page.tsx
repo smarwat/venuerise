@@ -10,6 +10,9 @@ import { MoreHorizontal, Star, Share2 } from 'lucide-react'
 // helper as the inbox index page; populates `conv.channel_type`
 // so the sidebar badge lights up here too.
 import { loadInboxChannelMap } from '@/lib/integrations/channels/inbox-channels'
+// Phase 8BM — pure resolver that maps (channel, contact info)
+// into the operator-facing "where will my reply go?" description.
+import { resolveReplyMethod } from '@/lib/integrations/channels/reply-method'
 
 /**
  * Phase 8F — pick the most relevant tour for a lead.
@@ -191,11 +194,28 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
               initialMessages={messages as Parameters<typeof ConversationThread>[0]['initialMessages']}
               leadName={lead.name as string}
             />
-            <MessageComposer
-              conversationId={conv.id as string}
-              leadId={leadId}
-              aiActive={lead.ai_active as boolean}
-            />
+            {(() => {
+              // Phase 8BM — resolve the reply method server-side and
+              // pass it to the composer. Honors the channel
+              // capability matrix + the lead's email/phone. Today
+              // every non-website channel resolves to manual or
+              // internal_only because no external delivery
+              // connectors are wired; future phases can flip the
+              // resolver's external-delivery feature flags.
+              const replyMethod = resolveReplyMethod({
+                channelType: (conv as { channel_type?: string | null }).channel_type ?? null,
+                leadEmail: (lead.email as string | null) ?? null,
+                leadPhone: (lead.phone as string | null) ?? null,
+              })
+              return (
+                <MessageComposer
+                  conversationId={conv.id as string}
+                  leadId={leadId}
+                  aiActive={lead.ai_active as boolean}
+                  replyMethod={replyMethod}
+                />
+              )
+            })()}
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-[13px] text-[#64748B]">

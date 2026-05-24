@@ -418,6 +418,10 @@ interface HealthBody {
     inbox_human_messages_render_right: 'mounted'
     inbox_ai_trigger_lead_only_guard: 'mounted'
     inbox_composer_mode_semantics: 'mounted'
+    inbox_reply_method_bar: 'mounted'
+    inbox_reply_channel_awareness: 'mounted'
+    inbox_manual_delivery_labeling: 'mounted'
+    inbox_reply_method_metadata: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2929,6 +2933,41 @@ export async function GET(request: Request) {
       inbox_human_messages_render_right: 'mounted',
       inbox_ai_trigger_lead_only_guard: 'mounted',
       inbox_composer_mode_semantics: 'mounted',
+      // Phase 8BM — Reply channel awareness + composer delivery
+      // method bar. UI/labeling-only phase — no new external
+      // delivery integrations.
+      //   - inbox_reply_method_bar: compact pill row above the
+      //     composer textarea. Source channel badge + reply
+      //     method + delivery-mode pill + helper line. Wired into
+      //     MessageComposer via a new optional `replyMethod` prop;
+      //     server-resolved in the inbox thread page.
+      //   - inbox_reply_channel_awareness: pure resolver in
+      //     lib/integrations/channels/reply-method.ts. Maps
+      //     (channelType, leadEmail, leadPhone, capabilities) into
+      //     { method, methodLabel, destinationLabel, deliveryMode,
+      //     warning, helperText, switchOptions }. Honors the
+      //     existing CHANNEL_CAPABILITIES matrix — only flips to
+      //     'direct' when external sending is genuinely wired.
+      //   - inbox_manual_delivery_labeling: every non-website
+      //     channel resolves to `'manual'` or `'internal_only'`
+      //     today. Helper copy says exactly what the operator
+      //     needs to do ("Copy this response into The Knot",
+      //     "SMS on file — direct sending is not connected",
+      //     "Saved in VenueRise only").
+      //   - inbox_reply_method_metadata: operator messages POSTed
+      //     via the composer now stamp reply_method,
+      //     reply_delivery_mode, channel_type, and
+      //     reply_destination into messages.metadata. The
+      //     /api/conversations/[id]/messages allowlist accepts
+      //     those keys via the ApproveMetadataSchema extension.
+      //     Records operator INTENT — never claims external
+      //     delivery.
+      // No DB schema changes. No new routes. No AI prompt
+      // changes. /api/ai/chat semantics unchanged.
+      inbox_reply_method_bar: 'mounted',
+      inbox_reply_channel_awareness: 'mounted',
+      inbox_manual_delivery_labeling: 'mounted',
+      inbox_reply_method_metadata: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

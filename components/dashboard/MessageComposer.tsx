@@ -3,14 +3,28 @@
 import { useState } from 'react'
 import { Send, Paperclip, Mic, Sparkles, User, Bot, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import ReplyMethodBar from './messages/ReplyMethodBar'
+import type { ReplyMethod } from '@/lib/integrations/channels/reply-method'
 
 interface Props {
   conversationId: string
   leadId: string
   aiActive: boolean
+  /**
+   * Phase 8BM — pre-resolved reply method context for this
+   * conversation. Built on the server (inbox thread page) so the
+   * client component stays presentational. When omitted, the bar
+   * is hidden and the composer behaves as before.
+   */
+  replyMethod?: ReplyMethod | null
 }
 
-export default function MessageComposer({ conversationId, leadId, aiActive }: Props) {
+export default function MessageComposer({
+  conversationId,
+  leadId,
+  aiActive,
+  replyMethod,
+}: Props) {
   // P0 fix — composer mode now drives actual send behavior, not just
   // visual styling. The previous implementation always routed through
   // /api/ai/chat (handleIncomingMessage), which inserted the
@@ -39,6 +53,34 @@ export default function MessageComposer({ conversationId, leadId, aiActive }: Pr
         // P0 fix — operator reply path. Inserts as role:'human' via
         // the operator-message route. Does NOT call the AI
         // orchestrator. Renders on the right of the thread.
+        //
+        // Phase 8BM — stamp the resolved reply method into the
+        // message metadata so:
+        //   1. Downstream audit / digest surfaces can tell the
+        //      operator how they replied (email vs manual-on-Knot).
+        //   2. We have an honest record of whether VenueRise tried
+        //      to deliver externally (today: never; future phases
+        //      will flip deliveryMode to 'direct' as connectors
+        //      ship).
+        const meta: Record<string, unknown> = {
+          source: 'operator_composer',
+        }
+        if (replyMethod) {
+          meta.reply_method = replyMethod.method
+          meta.reply_delivery_mode = replyMethod.deliveryMode
+          if (replyMethod.sourceChannel) {
+            meta.channel_type = replyMethod.sourceChannel
+          }
+          // Destination label can be PII (email/phone) — the
+          // server-side audit route already sanitizes message
+          // metadata via the audit-events helper. We include it
+          // so the operator's own activity log shows where they
+          // intended to send (and not where the platform
+          // delivered, which today is nowhere external).
+          if (replyMethod.destinationLabel) {
+            meta.reply_destination = replyMethod.destinationLabel
+          }
+        }
         const res = await fetch(
           `/api/conversations/${encodeURIComponent(conversationId)}/messages`,
           {
@@ -47,7 +89,7 @@ export default function MessageComposer({ conversationId, leadId, aiActive }: Pr
             body: JSON.stringify({
               body: trimmed,
               sender_type: 'operator',
-              metadata: { source: 'operator_composer' },
+              metadata: meta,
             }),
           }
         )
@@ -118,6 +160,12 @@ export default function MessageComposer({ conversationId, leadId, aiActive }: Pr
     // column could compress the textarea + footer hint when long
     // threads + a busy strip competed for vertical space.
     <div className="shrink-0 border-t border-[#F1F5F9] bg-white px-6 py-4 space-y-2.5">
+      {/* Phase 8BM — Reply Method Bar. Sits above the mode toggle
+          so the operator sees source channel + delivery mode
+          BEFORE they start typing. Renders only when the page
+          resolved a method (i.e. the lead/conversation row was
+          loaded server-side). */}
+      {replyMethod && <ReplyMethodBar reply={replyMethod} />}
       <div className="flex items-center gap-2 mb-1">
         <div className="flex bg-[#F1F5F9] border border-[#E2E8F0] rounded-full p-0.5">
           <button
