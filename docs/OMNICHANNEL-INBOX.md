@@ -780,3 +780,29 @@ Honesty:
   Ad spend is unknown.
 - Legacy leads have no `attribution` blob; helpers return
   null and the UI hides badges gracefully.
+
+---
+
+## Phase 8BN — first real outbound channel wired
+
+**Email delivery for website/email leads is now real.** When
+`OUTBOUND_EMAIL_DELIVERY_ENABLED=1` and Resend is configured,
+the operator-composer "Direct" pill is honest — clicking Send
+delivers the reply to the lead's email via Resend (see
+`docs/OUTBOUND-EMAIL-DELIVERY.md`).
+
+What this means for the inbox model:
+
+- **Source channel `website` + lead has email** is now the
+  ONLY combination that resolves to a `direct` reply-method
+  delivery mode in production. Every other channel +
+  combination behaves exactly as Phase 8BM left it.
+- **Manual channels (Instagram / Facebook / The Knot /
+  WeddingWire) remain unchanged.** No outbound integration
+  exists for these and they continue to require
+  copy-and-paste + mark-sent-manually.
+- **SMS remains `internal_only`** until the SMS connector
+  ships. The `smsDirectDeliveryEnabled` flag is still
+  platform-default false.
+- **Inbound email parsing was NOT added.** A lead reply to a
+  composer-sent email will not auto-populate the thread.

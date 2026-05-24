@@ -6430,3 +6430,26 @@ QA log too.
       asset pack
 - [ ] No admin routes added, `ADMIN_ENDPOINT_COUNT` unchanged
 - [ ] Build clean
+
+## Phase 8BN — Composer-direct email delivery (informational)
+
+Email outbound from the inbox composer is now wired via Resend
+when `OUTBOUND_EMAIL_DELIVERY_ENABLED=1` + Resend config. Sends
+flow through the existing `outbound_messages` table the digest
+and tour-notification surfaces already use — billing-side
+suppression rules apply unchanged.
+
+QA-side notes:
+
+- Suppressed recipients still appear on
+  `DigestPreferencesCard` / suppression admin surfaces.
+  Composer sends to a suppressed address surface as
+  `delivery_status: 'skipped'` with reason `suppressed`.
+- No billing gate change. The composer route already enforces
+  `requireActiveSubscription`; the new delivery wrapper does
+  not bypass it.
+- Health flag `outbound_email_delivery` reports `'mounted'` or
+  `'disabled'` based on the kill switch + Resend config — a
+  useful at-a-glance signal during pilot rollouts.
+
+See `docs/OUTBOUND-EMAIL-DELIVERY.md` for the full spec.

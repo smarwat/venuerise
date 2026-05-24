@@ -253,3 +253,47 @@ once the connector ships.
 Until then, this bar makes the existing manual-channel
 workflow obvious so operators don't accidentally assume
 delivery they didn't get.
+
+---
+
+## Phase 8BN update — direct email delivery now wired
+
+Phase 8BN shipped the first real outbound integration on top of
+this resolver. See `docs/OUTBOUND-EMAIL-DELIVERY.md` for the
+full spec.
+
+**What changed for the bar:**
+
+- A new server-only helper
+  `isOutboundEmailConfigured()` (in
+  `lib/integrations/delivery/email.ts`) reads
+  `OUTBOUND_EMAIL_DELIVERY_ENABLED` and Resend config.
+- The inbox thread page passes its result as
+  `emailDirectDeliveryEnabled` into `resolveReplyMethod`.
+- When both the kill switch is on AND Resend is configured,
+  email-bearing leads now resolve to `deliveryMode: 'direct'` —
+  the bar flips to the emerald "Direct" pill with helper text
+  "Sends via email when you click send."
+- When either is missing, behavior is unchanged from 8BM —
+  email-bearing leads stay on the slate "Internal" pill with
+  "Saved in VenueRise only…".
+
+**What changed for the conversation thread:**
+
+- Operator `role:'human'` messages now render a
+  `DeliveryStatusPill` (`Sent via Email` / `Sending…` /
+  `Email failed` / `Saved in VenueRise` / `Manual reply
+  required`) read from new `delivery_status` metadata stamped
+  by `/api/conversations/[id]/messages`.
+
+**What did NOT change:**
+
+- Manual-channel resolution (Instagram / Facebook / The Knot /
+  WeddingWire / Meta lead ads). Those still resolve to
+  `manual` / `unavailable` and require operator-side copy.
+- SMS resolution. Still `internal_only` until the SMS connector
+  ships.
+- The `EXTERNAL_EMAIL_DELIVERY_DEFAULT` constant in
+  `reply-method.ts` (still `false`) — per-call override is
+  preferred so per-venue toggles work in the future without
+  touching the module-level constant.

@@ -13,6 +13,11 @@ import { loadInboxChannelMap } from '@/lib/integrations/channels/inbox-channels'
 // Phase 8BM — pure resolver that maps (channel, contact info)
 // into the operator-facing "where will my reply go?" description.
 import { resolveReplyMethod } from '@/lib/integrations/channels/reply-method'
+// Phase 8BN — server-side check for whether outbound email
+// delivery is wired (kill switch + Resend config). Result is
+// passed into resolveReplyMethod so the bar flips to "Direct"
+// when sending is actually available.
+import { isOutboundEmailConfigured } from '@/lib/integrations/delivery/email'
 
 /**
  * Phase 8F — pick the most relevant tour for a lead.
@@ -197,15 +202,21 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
             {(() => {
               // Phase 8BM — resolve the reply method server-side and
               // pass it to the composer. Honors the channel
-              // capability matrix + the lead's email/phone. Today
-              // every non-website channel resolves to manual or
-              // internal_only because no external delivery
-              // connectors are wired; future phases can flip the
-              // resolver's external-delivery feature flags.
+              // capability matrix + the lead's email/phone.
+              //
+              // Phase 8BN — pass the live `emailDirectDeliveryEnabled`
+              // flag so the resolver flips email-bearing leads to
+              // `deliveryMode: 'direct'` when the venue has Resend +
+              // OUTBOUND_EMAIL_DELIVERY_ENABLED wired. When the flag
+              // is off the resolver falls back to `internal_only`
+              // ("Saved in VenueRise only") — the previous honest
+              // default.
+              const emailDirectDeliveryEnabled = isOutboundEmailConfigured()
               const replyMethod = resolveReplyMethod({
                 channelType: (conv as { channel_type?: string | null }).channel_type ?? null,
                 leadEmail: (lead.email as string | null) ?? null,
                 leadPhone: (lead.phone as string | null) ?? null,
+                emailDirectDeliveryEnabled,
               })
               return (
                 <MessageComposer

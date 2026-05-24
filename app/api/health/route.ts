@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { getJobsRuntime } from '@/lib/jobs/queue'
 import { emailConfigured } from '@/lib/integrations/email'
+import { isOutboundEmailConfigured } from '@/lib/integrations/delivery/email'
 import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -422,6 +423,11 @@ interface HealthBody {
     inbox_reply_channel_awareness: 'mounted'
     inbox_manual_delivery_labeling: 'mounted'
     inbox_reply_method_metadata: 'mounted'
+    // Phase 8BN — operator-composer direct email delivery
+    outbound_email_delivery: 'mounted' | 'disabled'
+    outbound_email_reply_method_direct: 'mounted'
+    outbound_email_delivery_status_pills: 'mounted'
+    outbound_email_failure_honesty: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -2968,6 +2974,33 @@ export async function GET(request: Request) {
       inbox_reply_channel_awareness: 'mounted',
       inbox_manual_delivery_labeling: 'mounted',
       inbox_reply_method_metadata: 'mounted',
+      // Phase 8BN — Real outbound email delivery for the
+      // operator composer. Reuses the existing
+      // lib/integrations/email.ts (`sendEmail`) Resend helper
+      // under a new wrapper at lib/integrations/delivery/email.ts
+      // gated by OUTBOUND_EMAIL_DELIVERY_ENABLED.
+      //   - outbound_email_delivery: reports `'mounted'` when the
+      //     kill switch is on AND Resend is fully configured;
+      //     `'disabled'` otherwise. When disabled the resolver
+      //     keeps email-bearing leads on `internal_only` and the
+      //     composer pill shows "Saved in VenueRise only".
+      //   - outbound_email_reply_method_direct: resolver flips
+      //     email-bearing conversations to `deliveryMode: 'direct'`
+      //     when isOutboundEmailConfigured() returns true.
+      //   - outbound_email_delivery_status_pills: ConversationThread
+      //     renders DeliveryStatusPill on `role:'human'` messages
+      //     (Sent via Email / Sending… / Email failed / Saved in
+      //     VenueRise / Manual reply required).
+      //   - outbound_email_failure_honesty: provider failures save
+      //     the operator's message with `delivery_status:'failed'`
+      //     and a safe error; we never claim "Sent via Email"
+      //     unless Resend accepted the message and returned an id.
+      outbound_email_delivery: isOutboundEmailConfigured()
+        ? 'mounted'
+        : 'disabled',
+      outbound_email_reply_method_direct: 'mounted',
+      outbound_email_delivery_status_pills: 'mounted',
+      outbound_email_failure_honesty: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

@@ -12,6 +12,10 @@ import { rateLimitUserAction, rateLimitedResponse } from '@/lib/rate-limit'
 import { editDistanceBucket } from '@/lib/revenue-os/brand-voice-calibration'
 import { parseRevenueOsSettings } from '@/lib/revenue-os/settings'
 import { recordAuditEvent } from '@/lib/enterprise/audit-events'
+import {
+  isOutboundEmailConfigured,
+  sendOutboundEmail,
+} from '@/lib/integrations/delivery/email'
 import { log } from '@/lib/log'
 import {
   getOrCreateRequestId,
@@ -225,6 +229,54 @@ export async function POST(
   if (typeof clientMeta.variant_count === 'number') {
     messageMetadata.variant_count = clientMeta.variant_count
   }
+  // Phase 8BM — carry reply-method context onto the row so
+  // downstream surfaces (audit, digest, future switching UI) have
+  // an honest record of where the operator intended the reply to
+  // go. Delivery STATUS (below) is the separate truth signal.
+  if (typeof clientMeta.reply_method === 'string') {
+    messageMetadata.reply_method = clientMeta.reply_method
+  }
+  if (typeof clientMeta.reply_delivery_mode === 'string') {
+    messageMetadata.reply_delivery_mode = clientMeta.reply_delivery_mode
+  }
+  if (typeof clientMeta.channel_type === 'string') {
+    messageMetadata.channel_type = clientMeta.channel_type
+  }
+  if (typeof clientMeta.reply_destination === 'string') {
+    messageMetadata.reply_destination = clientMeta.reply_destination
+  }
+
+  // Phase 8BN — direct email delivery decision.
+  //
+  // The composer stamps `reply_method='email'` +
+  // `reply_delivery_mode='direct'` when the resolver (server-side)
+  // decided email delivery is wired for this venue. We re-verify
+  // server-side here — never trust the client to authorize a real
+  // outbound send. If the kill-switch is off or Resend isn't
+  // configured, we silently downgrade to `internal_only` (the
+  // message still saves; the pill just won't say "Sent").
+  const requestedDirectEmail =
+    clientMeta.reply_method === 'email' &&
+    clientMeta.reply_delivery_mode === 'direct'
+  const directEmailAuthorized =
+    requestedDirectEmail && isOutboundEmailConfigured()
+
+  if (requestedDirectEmail && !directEmailAuthorized) {
+    // Downgrade in the stored metadata so audit/downstream UI
+    // reflects what actually happened (no external send), not
+    // what the client claimed.
+    messageMetadata.reply_delivery_mode = 'internal_only'
+    messageMetadata.delivery_status = 'skipped'
+    messageMetadata.delivery_skip_reason = 'delivery_disabled'
+    messageMetadata.delivery_provider = 'resend'
+  } else if (directEmailAuthorized) {
+    // Optimistic placeholder — the row inserts as 'pending' so a
+    // UI realtime subscriber doesn't see a flash of "saved only"
+    // before the send completes. Patched below with the real
+    // result.
+    messageMetadata.delivery_status = 'pending'
+    messageMetadata.delivery_provider = 'resend'
+  }
 
   const { data: inserted, error: insertErr } = await svc
     .from('messages')
@@ -262,6 +314,101 @@ export async function POST(
     .from('conversations')
     .update({ last_message_at: new Date().toISOString() })
     .eq('id', conversationId)
+
+  // 7b. Phase 8BN — direct email delivery.
+  //
+  // The message row is already durable on disk (step 6) with
+  // `delivery_status: 'pending'`. We now attempt the send and
+  // patch the same row with the result. If the provider rejects,
+  // the operator's typed reply is preserved — they don't have to
+  // retype, they can mark-sent-manually or escalate.
+  //
+  // Critical: we do NOT throw or return early on delivery failure.
+  // The message is real; the delivery attempt is an annotation.
+  let deliveryResult: Awaited<ReturnType<typeof sendOutboundEmail>> | null = null
+  if (directEmailAuthorized && inserted) {
+    const insertedRow = inserted as { id: string; metadata: Record<string, unknown> | null }
+    const recipient = (clientMeta.reply_destination ?? '').trim()
+    // Pull venue name for a humanized subject. Best-effort — if
+    // the lookup fails we fall back to the safe default subject.
+    let venueName: string | null = null
+    try {
+      const { data: venueRow } = await svc
+        .from('venues')
+        .select('name')
+        .eq('id', venueId)
+        .maybeSingle()
+      venueName = (venueRow as { name?: string | null } | null)?.name ?? null
+    } catch {
+      // Non-fatal — subject just won't include the venue name.
+    }
+
+    deliveryResult = await sendOutboundEmail({
+      to: recipient,
+      text: parsed.data.body.trim(),
+      subject: null, // wrapper picks safe default
+      venueName,
+      venueId,
+      conversationId,
+      leadId,
+      messageId: insertedRow.id,
+    })
+
+    // Build the patch — only the delivery fields, merged onto the
+    // existing metadata. We re-read messageMetadata locally to
+    // include the placeholders we set above (delivery_provider,
+    // pending status); the patch overwrites them with the real
+    // outcome.
+    const deliveryPatch: Record<string, unknown> = {
+      ...messageMetadata,
+      delivery_status: deliveryResult.deliveryStatus,
+      delivery_provider: deliveryResult.provider,
+    }
+    if (deliveryResult.ok) {
+      deliveryPatch.provider_message_id = deliveryResult.providerMessageId
+      deliveryPatch.delivered_at = new Date().toISOString()
+      // Clear any stale error fields on retry-shaped flows.
+      delete deliveryPatch.delivery_error_code
+      delete deliveryPatch.delivery_safe_error
+    } else {
+      deliveryPatch.delivery_error_code = deliveryResult.errorCode
+      deliveryPatch.delivery_safe_error = deliveryResult.safeError
+      // On failure/skip the row's reply_delivery_mode is still
+      // 'direct' (operator INTENDED direct). The delivery_status
+      // field is the truth signal the UI reads.
+    }
+    if (deliveryResult.ok && deliveryResult.outboundMessageId) {
+      deliveryPatch.outbound_message_id = deliveryResult.outboundMessageId
+    } else if (!deliveryResult.ok && deliveryResult.outboundMessageId) {
+      deliveryPatch.outbound_message_id = deliveryResult.outboundMessageId
+    }
+
+    const { error: patchErr } = await svc
+      .from('messages')
+      .update({ metadata: deliveryPatch })
+      .eq('id', insertedRow.id)
+    if (patchErr) {
+      reqLog.warn(
+        { err: patchErr, messageId: insertedRow.id },
+        'conversations.messages.delivery_patch_failed'
+      )
+    } else {
+      // Reflect the patch back onto the in-memory row so the
+      // response payload matches what the client will read on
+      // refresh.
+      ;(inserted as { metadata: Record<string, unknown> }).metadata = deliveryPatch
+    }
+
+    reqLog.info(
+      {
+        messageId: insertedRow.id,
+        deliveryStatus: deliveryResult.deliveryStatus,
+        errorCode: deliveryResult.ok ? null : deliveryResult.errorCode,
+        provider: deliveryResult.provider,
+      },
+      'conversations.messages.delivery_attempted'
+    )
+  }
 
   // 8. Phase 8AW — write operator outcome onto the source ai_actions
   // row (the draft this operator chose to approve & send). Lets the
@@ -416,8 +563,58 @@ export async function POST(
       ai_action_id: clientMeta.ai_action_id ?? null,
       selected_variant_index: clientMeta.selected_variant_index ?? null,
       body_length: parsed.data.body.length,
+      // Phase 8BN — record the delivery outcome on the audit row
+      // so security/ops can answer "did this operator's reply
+      // actually go out?" without joining to messages.metadata.
+      // We deliberately do NOT include the recipient email here
+      // (already in messages.metadata.reply_destination); the
+      // audit-events helper sanitizes message metadata before
+      // surfacing, but the audit row itself is high-volume +
+      // long-retained and should stay PII-light.
+      reply_method: clientMeta.reply_method ?? null,
+      reply_delivery_mode_intended: clientMeta.reply_delivery_mode ?? null,
+      delivery_attempted: directEmailAuthorized,
+      delivery_status: deliveryResult
+        ? deliveryResult.deliveryStatus
+        : requestedDirectEmail
+          ? 'skipped'
+          : null,
+      delivery_provider: deliveryResult ? deliveryResult.provider : null,
+      delivery_error_code:
+        deliveryResult && !deliveryResult.ok ? deliveryResult.errorCode : null,
+      provider_message_id_present: !!(
+        deliveryResult &&
+        deliveryResult.ok &&
+        deliveryResult.providerMessageId
+      ),
     },
   })
 
-  return respond(NextResponse.json({ success: true, message: inserted }))
+  // Phase 8BN — surface the delivery outcome to the client so the
+  // composer can show an immediate toast/pill without waiting for
+  // the realtime echo. The message row itself is the durable
+  // truth; this is a UX shortcut.
+  return respond(
+    NextResponse.json({
+      success: true,
+      message: inserted,
+      delivery: deliveryResult
+        ? {
+            attempted: true,
+            status: deliveryResult.deliveryStatus,
+            provider: deliveryResult.provider,
+            error_code: deliveryResult.ok ? null : deliveryResult.errorCode,
+            safe_error: deliveryResult.ok ? null : deliveryResult.safeError,
+          }
+        : requestedDirectEmail
+          ? {
+              attempted: false,
+              status: 'skipped' as const,
+              provider: 'resend' as const,
+              error_code: 'delivery_disabled' as const,
+              safe_error: 'Email sending is not connected for this workspace.',
+            }
+          : { attempted: false, status: null },
+    })
+  )
 }

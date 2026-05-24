@@ -6355,3 +6355,33 @@ Created `docs/gtm/` with 12 sales asset files. No product code changes.
 - No new code, no admin routes, no DB migrations
 - No public pricing page (pilot pricing stays conversation-first)
 - No new claims that aren't already in `docs/GTM-POSITIONING.md`
+
+## Phase 8BN — Operator-composer outbound email delivery
+
+New env var: `OUTBOUND_EMAIL_DELIVERY_ENABLED` (default `0`).
+
+Set `1` (plus the existing `RESEND_API_KEY` + `RESEND_FROM_EMAIL`)
+to enable real direct email send from the inbox composer for
+website / email-bearing leads.
+
+When OFF: composer keeps the honest "Saved in VenueRise only"
+pill, messages save as `role:'human'` with
+`delivery_status: 'skipped'`. No external send is attempted.
+
+When ON: composer flips to "Direct" pill, send delivers via
+Resend, pill on the bubble shows "Sent via Email" (or
+"Email failed" with a safe tooltip on provider rejection).
+
+Health flags:
+- `outbound_email_delivery: 'mounted' | 'disabled'`
+- `outbound_email_reply_method_direct: 'mounted'`
+- `outbound_email_delivery_status_pills: 'mounted'`
+- `outbound_email_failure_honesty: 'mounted'`
+
+Rollback: unset `OUTBOUND_EMAIL_DELIVERY_ENABLED` (or set `0`).
+No data migration required — the kill switch is a runtime
+gate; existing message rows keep their delivery metadata
+either way.
+
+See `docs/OUTBOUND-EMAIL-DELIVERY.md` for the full spec, QA
+checklist, and honesty contract.

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import VariantReplayDrawer from './messages/VariantReplayDrawer'
 import ChannelSourceBadge from './messages/ChannelSourceBadge'
 import ParseReviewBadge from './messages/ParseReviewBadge'
+import DeliveryStatusPill from './messages/DeliveryStatusPill'
 
 interface Message {
   id: string
@@ -36,6 +37,25 @@ interface Message {
     parse_confidence?: number | null
     parse_confidence_reasons?: ReadonlyArray<string> | null
     parser_version?: string | null
+    // Phase 8BM/8BN — reply method + delivery context stamped by
+    // the operator-composer send route. `reply_delivery_mode` is
+    // the INTENT (what the operator's UI said at write time);
+    // `delivery_status` is the TRUTH (what actually happened when
+    // we attempted the provider call). Pills below read the
+    // truth signal.
+    reply_method?: string | null
+    reply_delivery_mode?:
+      | 'direct'
+      | 'manual'
+      | 'internal_only'
+      | 'unavailable'
+      | null
+    reply_destination?: string | null
+    delivery_status?: 'pending' | 'sent' | 'failed' | 'skipped' | null
+    delivery_provider?: string | null
+    delivery_error_code?: string | null
+    delivery_safe_error?: string | null
+    delivered_at?: string | null
   } | null
 }
 
@@ -316,6 +336,21 @@ export default function ConversationThread({ conversationId, initialMessages, le
                   )}
                   {msg.metadata?.latency_ms && (
                     <span className="block mt-1 text-[10px] text-white/60">{msg.metadata.latency_ms}ms</span>
+                  )}
+                  {/* Phase 8BN — delivery status pill on operator
+                      (`human`) messages. The pill only renders when
+                      metadata carries a defensible status — see
+                      DeliveryStatusPill for the honesty rules. */}
+                  {msg.role === 'human' && meta && (
+                    <span className="block mt-1.5">
+                      <DeliveryStatusPill
+                        deliveryStatus={meta.delivery_status ?? null}
+                        replyMethod={meta.reply_method ?? null}
+                        replyDeliveryMode={meta.reply_delivery_mode ?? null}
+                        safeError={meta.delivery_safe_error ?? null}
+                        onDark={isAI}
+                      />
+                    </span>
                   )}
                   {/* Phase 8AN — variant audit affordance. Sits
                       bottom-right of the bubble, faint until hover so
