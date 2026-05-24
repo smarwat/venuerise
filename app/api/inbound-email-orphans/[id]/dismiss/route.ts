@@ -90,7 +90,7 @@ export async function POST(
   const { data: orphanRow, error: orphanErr } = await svc
     .from('inbound_email_orphans')
     .select(
-      'id, venue_id, status, provider, provider_inbound_id, match_confidence'
+      'id, channel, venue_id, status, provider, provider_inbound_id, match_confidence'
     )
     .eq('id', orphanId)
     .maybeSingle()
@@ -99,12 +99,14 @@ export async function POST(
   }
   const orphan = orphanRow as {
     id: string
+    channel: 'email' | 'sms' | null
     venue_id: string | null
     status: string
     provider: string
     provider_inbound_id: string | null
     match_confidence: number
   }
+  const channel: 'email' | 'sms' = orphan.channel ?? 'email'
 
   if (orphan.status !== 'unresolved') {
     return respond(
@@ -154,6 +156,7 @@ export async function POST(
     userAgent: request.headers.get('user-agent'),
     metadata: {
       orphan_id: orphanId,
+      channel,
       reason: parsed.data.reason,
       match_confidence: orphan.match_confidence,
       provider: orphan.provider,

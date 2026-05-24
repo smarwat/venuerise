@@ -320,11 +320,22 @@ export interface SuggestedConversationPreview {
   last_message_at: string | null
 }
 
+/**
+ * Phase 8BT — the orphan row shape is shared across email + SMS
+ * via the `channel` discriminator added in migration 041. The
+ * type keeps its original name (`InboundEmailOrphanRow`) for
+ * import-stability across the codebase; SMS-specific fields
+ * (`from_phone`, `to_phone`) are optional on the email side
+ * and required on the SMS side.
+ */
 export interface InboundEmailOrphanRow {
   id: string
+  channel: 'email' | 'sms'
   status: 'unresolved' | 'linked' | 'dismissed' | 'ignored'
   from_email: string | null
   from_name: string | null
+  from_phone: string | null
+  to_phone: string | null
   subject: string | null
   body_preview: string
   received_at: string | null
@@ -361,9 +372,14 @@ export function toSafeOrphanRow(raw: Record<string, unknown>): InboundEmailOrpha
   const body = (stripped || rawPreview).slice(0, 280)
   return {
     id: raw.id as string,
+    // Phase 8BT — channel discriminator. Migration 041 defaults
+    // legacy rows to 'email', so historical rows keep working.
+    channel: ((raw.channel as string | null) ?? 'email') as 'email' | 'sms',
     status: raw.status as InboundEmailOrphanRow['status'],
     from_email: (raw.from_email as string | null) ?? null,
     from_name: (raw.from_name as string | null) ?? null,
+    from_phone: (raw.from_phone as string | null) ?? null,
+    to_phone: (raw.to_phone as string | null) ?? null,
     subject: (raw.subject as string | null) ?? null,
     body_preview: body,
     received_at: (raw.received_at as string | null) ?? null,
@@ -453,4 +469,151 @@ export async function hydrateSuggestedConversations(
     }
     return { ...o, suggested_conversations: previews }
   })
+}
+
+// ─── Phase 8BT — SMS orphan creation ───────────────────────────────────
+
+export interface SmsOrphanCreateInput {
+  fromPhone: string
+  toPhone: string
+  body: string
+  rawPreview: string
+  provider: string
+  providerMessageId: string | null
+  matchConfidence: number
+  matchReasons: string[]
+  receivedAtIso: string | null
+  /**
+   * If the SMS matcher already inferred a venue (e.g. via the
+   * lead phone match), pass it here so we skip the email-style
+   * outbound-history lookup (different table shape — outbound
+   * SMS doesn't land in `outbound_messages`).
+   */
+  preInferredVenueId?: string | null
+  preInferredLeadId?: string | null
+  preInferredConversationIds?: string[]
+  preInferredLeadIds?: string[]
+  /** Optional safe metadata: NumMedia / attachments_ignored. */
+  metadata?: Record<string, unknown>
+}
+
+/**
+ * Phase 8BT — persist an unmatched / low-confidence inbound SMS
+ * reply into the shared `inbound_email_orphans` table with
+ * `channel: 'sms'`. Same dedupe semantics as the email helper
+ * (provider + provider_inbound_id unique partial index).
+ *
+ * The SMS matcher has already done its own venue inference
+ * before calling this — we don't duplicate that work here.
+ * Email-style outbound-history lookup doesn't apply because
+ * outbound SMS sends don't land in `outbound_messages` (the
+ * Twilio wrapper writes only to `messages.metadata`).
+ */
+export async function createInboundSmsOrphan(
+  input: SmsOrphanCreateInput
+): Promise<OrphanCreateOutcome> {
+  const supabase = createServiceClient()
+
+  // 1. Dedupe by provider id first.
+  if (input.providerMessageId) {
+    try {
+      const { data: existing } = await supabase
+        .from('inbound_email_orphans')
+        .select('id, venue_id')
+        .eq('provider', input.provider)
+        .eq('provider_inbound_id', input.providerMessageId)
+        .maybeSingle()
+      if (existing && (existing as { id?: string }).id) {
+        const row = existing as { id: string; venue_id: string | null }
+        return {
+          ok: true,
+          orphanId: row.id,
+          venueId: row.venue_id,
+          created: false,
+          suggestionCount: 0,
+        }
+      }
+    } catch (err) {
+      log.warn({ err }, 'inbound.sms.orphan_dedupe_read_failed')
+    }
+  }
+
+  const venueId = input.preInferredVenueId ?? null
+  const suggestedConvIds = (input.preInferredConversationIds ?? []).slice(0, 5)
+  const suggestedLeadIds = (input.preInferredLeadIds ?? []).slice(0, 5)
+
+  try {
+    const { data, error } = await supabase
+      .from('inbound_email_orphans')
+      .insert({
+        venue_id: venueId,
+        status: 'unresolved',
+        channel: 'sms',
+        provider: input.provider,
+        provider_inbound_id: input.providerMessageId,
+        provider_message_id: input.providerMessageId,
+        // Email columns left null for SMS rows; UI branches on
+        // `channel` so it never tries to render an email
+        // envelope for an SMS row.
+        from_email: null,
+        from_name: null,
+        to_email: null,
+        from_phone: input.fromPhone,
+        to_phone: input.toPhone,
+        subject: 'SMS reply',
+        stripped_body: input.body.slice(0, 8000),
+        raw_body_preview: input.rawPreview.slice(0, 500),
+        received_at: input.receivedAtIso,
+        match_confidence: input.matchConfidence,
+        match_reasons: input.matchReasons,
+        suggested_conversation_ids: suggestedConvIds,
+        suggested_lead_ids: suggestedLeadIds,
+        metadata: {
+          source: 'inbound_sms_orphan',
+          ...input.metadata,
+        },
+      })
+      .select('id')
+      .single()
+    if (error) {
+      if (
+        input.providerMessageId &&
+        (error.message ?? '').toLowerCase().includes('duplicate')
+      ) {
+        // Unique-index race — read the winner.
+        const { data: existing } = await supabase
+          .from('inbound_email_orphans')
+          .select('id, venue_id')
+          .eq('provider', input.provider)
+          .eq('provider_inbound_id', input.providerMessageId)
+          .maybeSingle()
+        if (existing && (existing as { id?: string }).id) {
+          const row = existing as { id: string; venue_id: string | null }
+          return {
+            ok: true,
+            orphanId: row.id,
+            venueId: row.venue_id,
+            created: false,
+            suggestionCount: suggestedConvIds.length,
+          }
+        }
+      }
+      log.error(
+        { errorMessage: error.message },
+        'inbound.sms.orphan_insert_failed'
+      )
+      return { ok: false, reason: 'insert_failed' }
+    }
+    const orphanId = (data as { id: string }).id
+    return {
+      ok: true,
+      orphanId,
+      venueId,
+      created: true,
+      suggestionCount: suggestedConvIds.length,
+    }
+  } catch (err) {
+    log.error({ err }, 'inbound.sms.orphan_insert_threw')
+    return { ok: false, reason: 'insert_failed' }
+  }
 }

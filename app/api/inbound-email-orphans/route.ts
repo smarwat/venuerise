@@ -29,6 +29,9 @@ const QuerySchema = z.object({
   status: z
     .enum(['unresolved', 'linked', 'dismissed', 'ignored', 'all'])
     .default('unresolved'),
+  // Phase 8BT — channel filter. 'all' is the default since
+  // operators see one unified "unmatched replies" queue.
+  channel: z.enum(['email', 'sms', 'all']).default('all'),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
 
@@ -53,6 +56,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const url = new URL(request.url)
   const parsed = QuerySchema.safeParse({
     status: url.searchParams.get('status') ?? undefined,
+    channel: url.searchParams.get('channel') ?? undefined,
     limit: url.searchParams.get('limit') ?? undefined,
   })
   if (!parsed.success) {
@@ -66,15 +70,22 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   // Build the query. RLS limits to the user's venues + non-null
   // venue_id automatically.
+  // Phase 8BT — SELECT widened to include the new `channel`,
+  // `from_phone`, `to_phone` columns added in migration 041
+  // so the queue card can render SMS rows with the right
+  // envelope.
   let q = supabase
     .from('inbound_email_orphans')
     .select(
-      'id, status, from_email, from_name, subject, stripped_body, raw_body_preview, received_at, parsed_at, match_confidence, suggested_conversation_ids, suggested_lead_ids, linked_conversation_id, linked_lead_id, linked_message_id, dismissed_at, dismiss_reason'
+      'id, channel, status, from_email, from_name, from_phone, to_phone, subject, stripped_body, raw_body_preview, received_at, parsed_at, match_confidence, suggested_conversation_ids, suggested_lead_ids, linked_conversation_id, linked_lead_id, linked_message_id, dismissed_at, dismiss_reason'
     )
     .order('created_at', { ascending: false })
     .limit(parsed.data.limit)
   if (parsed.data.status !== 'all') {
     q = q.eq('status', parsed.data.status)
+  }
+  if (parsed.data.channel !== 'all') {
+    q = q.eq('channel', parsed.data.channel)
   }
 
   const { data, error } = await q

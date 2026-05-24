@@ -6539,3 +6539,13 @@ is free-text — multiple shapes (`+1XXX`, `XXX`, `(XXX)
 XXX-XXXX`) are tried.
 
 See `docs/INBOUND-SMS-CAPTURE.md`.
+
+## Phase 8BT — SMS orphan queue (informational)
+
+Extends `inbound_email_orphans` with `channel`. No billing
+impact. Twilio inbound charges happen at the webhook layer
+regardless of whether we capture or drop. Link / dismiss are
+existing routes; no new audit actions; reuses email orphan
+audit actions with `channel` in metadata.
+
+See `docs/SMS-ORPHAN-QUEUE.md`.

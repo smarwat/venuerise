@@ -91,10 +91,13 @@ export async function POST(
   //    + body fields regardless of RLS. Tenant check happens
   //    next via assertOwnsConversation.
   const svc = createServiceClient()
+  // Phase 8BT — SELECT widened to include the new channel +
+  // phone fields so the metadata branch below can stamp the
+  // right shape for SMS orphans.
   const { data: orphanRow, error: orphanErr } = await svc
     .from('inbound_email_orphans')
     .select(
-      'id, venue_id, status, from_email, from_name, subject, stripped_body, raw_body_preview, received_at, provider, provider_inbound_id, match_confidence'
+      'id, channel, venue_id, status, from_email, from_name, from_phone, to_phone, subject, stripped_body, raw_body_preview, received_at, provider, provider_inbound_id, match_confidence'
     )
     .eq('id', orphanId)
     .maybeSingle()
@@ -103,10 +106,13 @@ export async function POST(
   }
   const orphan = orphanRow as {
     id: string
+    channel: 'email' | 'sms' | null
     venue_id: string | null
     status: string
     from_email: string | null
     from_name: string | null
+    from_phone: string | null
+    to_phone: string | null
     subject: string | null
     stripped_body: string | null
     raw_body_preview: string | null
@@ -115,6 +121,9 @@ export async function POST(
     provider_inbound_id: string | null
     match_confidence: number
   }
+  // Legacy rows (created before migration 041) have channel=null
+  // → treat as email per the column default.
+  const channel: 'email' | 'sms' = orphan.channel ?? 'email'
 
   // 2. Already-acted orphans get 409 so the UI can refresh.
   if (orphan.status !== 'unresolved') {
@@ -173,25 +182,41 @@ export async function POST(
     )
   }
 
-  const messageMetadata: Record<string, unknown> = {
-    source: 'inbound_email_orphan_link',
-    channel_type: 'email',
+  // Phase 8BT — branch metadata shape on the orphan's channel.
+  // Email keeps the 8BQ shape exactly. SMS swaps in
+  // channel_type='sms' + phone envelope. Both flavors stamp
+  // operator-vouched parse_confidence so the existing
+  // ParseReviewBadge stays quiet on the linked bubble.
+  const baseMetadata: Record<string, unknown> = {
     inbound_provider: orphan.provider,
     inbound_provider_message_id: orphan.provider_inbound_id,
-    inbound_from_email: orphan.from_email,
-    inbound_from_name: orphan.from_name,
-    inbound_subject: orphan.subject,
     inbound_orphan_id: orphan.id,
     inbound_orphan_match_confidence: orphan.match_confidence,
-    // The original capture failed automatic matching; surface
-    // that on the row metadata so the existing 8BG
-    // ParseReviewBadge lights up as "needs review = false"
-    // (operator vouched for it by clicking link).
     parse_needs_review: false,
     parse_confidence: 100,
     parse_confidence_reasons: ['operator_linked_from_orphan_queue'],
-    parser_version: '8BQ_v1',
+    parser_version: channel === 'sms' ? '8BT_v1' : '8BQ_v1',
+    manually_linked: true,
+    linked_by_user_id: user.id,
+    linked_at: new Date().toISOString(),
   }
+  const messageMetadata: Record<string, unknown> =
+    channel === 'sms'
+      ? {
+          ...baseMetadata,
+          source: 'inbound_sms_orphan_link',
+          channel_type: 'sms',
+          inbound_from_phone: orphan.from_phone,
+          inbound_to_phone: orphan.to_phone,
+        }
+      : {
+          ...baseMetadata,
+          source: 'inbound_email_orphan_link',
+          channel_type: 'email',
+          inbound_from_email: orphan.from_email,
+          inbound_from_name: orphan.from_name,
+          inbound_subject: orphan.subject,
+        }
 
   let insertedMessageId: string | null = null
   try {
@@ -268,6 +293,7 @@ export async function POST(
     userAgent: request.headers.get('user-agent'),
     metadata: {
       orphan_id: orphanId,
+      channel,
       conversation_id: parsed.data.conversation_id,
       lead_id: convLeadId,
       linked_message_id: insertedMessageId,

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Mail,
+  MessageSquare,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -50,9 +51,15 @@ import { cn } from '@/lib/utils'
 
 interface OrphanRow {
   id: string
+  // Phase 8BT — channel discriminator. Legacy rows default to
+  // 'email' via the migration; the component branches on this
+  // for icon + sender display.
+  channel: 'email' | 'sms'
   status: 'unresolved' | 'linked' | 'dismissed' | 'ignored'
   from_email: string | null
   from_name: string | null
+  from_phone: string | null
+  to_phone: string | null
   subject: string | null
   body_preview: string
   received_at: string | null
@@ -115,8 +122,16 @@ function timeAgo(iso: string | null): string {
 }
 
 function senderDisplay(o: OrphanRow): string {
+  if (o.channel === 'sms') {
+    return o.from_phone ?? 'Unknown number'
+  }
   if (o.from_name && o.from_email) return `${o.from_name} <${o.from_email}>`
   return o.from_name ?? o.from_email ?? 'Unknown sender'
+}
+
+/** Channel-appropriate row label shown above the sender line. */
+function channelLabel(channel: OrphanRow['channel']): string {
+  return channel === 'sms' ? 'SMS reply' : 'Email reply'
 }
 
 function previewLabel(c: ConversationPreview): string {
@@ -350,7 +365,7 @@ export default function UnmatchedEmailQueueCard({
           )}
           <div className="px-4 py-2 text-[10.5px] text-[#64748B] border-t border-[#F1F5F9] bg-[#F8FAFC]">
             <Mail className="w-2.5 h-2.5 inline mr-1" />
-            Linked replies appear in the conversation as a lead message. AI does not auto-respond.
+            Linked replies (email or SMS) appear in the conversation as a lead message. AI does not auto-respond.
           </div>
         </div>
       )}
@@ -411,7 +426,17 @@ function OrphanRowItem(props: {
     <li className="px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
+          {/* Phase 8BT — channel-aware row header. Email rows
+              show Mail + sender + subject; SMS rows show
+              MessageSquare + phone + a "SMS reply" label
+              (subject is the SMS placeholder we set at
+              orphan-creation time). */}
           <div className="flex items-center gap-1.5 mb-0.5">
+            {orphan.channel === 'sms' ? (
+              <MessageSquare className="w-3 h-3 text-[#1D4ED8] shrink-0" />
+            ) : (
+              <Mail className="w-3 h-3 text-[#475569] shrink-0" />
+            )}
             <span className="text-[12.5px] font-semibold text-[#0F172A] truncate">
               {senderDisplay(orphan)}
             </span>
@@ -419,10 +444,18 @@ function OrphanRowItem(props: {
               · {timeAgo(orphan.received_at ?? orphan.parsed_at)}
             </span>
           </div>
-          {orphan.subject && (
-            <div className="text-[11.5px] text-[#475569] truncate mb-1">
-              {orphan.subject}
+          {orphan.channel === 'sms' ? (
+            <div className="text-[11.5px] text-[#475569] mb-1 inline-flex items-center gap-1">
+              <span className="inline-flex items-center rounded-full bg-[#EFF6FF] text-[#1D4ED8] px-1.5 py-[1px] text-[10px] font-medium border border-[#BFDBFE]">
+                {channelLabel(orphan.channel)}
+              </span>
             </div>
+          ) : (
+            orphan.subject && (
+              <div className="text-[11.5px] text-[#475569] truncate mb-1">
+                {orphan.subject}
+              </div>
+            )
           )}
           <p className="text-[11.5px] text-[#64748B] leading-snug line-clamp-2">
             {orphan.body_preview}

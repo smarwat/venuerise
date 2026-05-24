@@ -282,3 +282,25 @@ Rationale: SMS is intimate + high-risk + asymmetric. A surprise AI auto-response
 - Strict no-AI guard preserved through link action.
 
 After 8BT, SMS will be a complete two-way channel with a safety net for unmatched replies — matching the email surface end-to-end.
+
+---
+
+## Phase 8BT update — orphans persist to the shared queue
+
+The "Known limitations" entry above about unmatched / low-
+confidence inbound being dropped silently is now resolved.
+8BT extends `inbound_email_orphans` with a `channel` column
+and routes unmatched SMS into the same operator-facing queue
+that handles email orphans.
+
+Path changes in `processInboundSmsReply`:
+- HIGH / MEDIUM match (clear conversation) → unchanged,
+  insert message
+- NONE / LOW / `needsReview=true` → **persist as orphan**
+  via `createInboundSmsOrphan()` with venue + suggestions
+  pre-inferred from the matcher
+
+Operators see one queue card for both channels. Link inserts
+as `role:'lead'` with `channel_type='sms'`. No AI auto-fire.
+
+See `docs/SMS-ORPHAN-QUEUE.md` for full spec.

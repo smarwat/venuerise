@@ -464,6 +464,13 @@ interface HealthBody {
     inbound_sms_reply_matching: 'mounted'
     inbound_sms_dedupe: 'mounted'
     inbound_sms_no_ai_guard: 'mounted'
+    // Phase 8BT — SMS orphan queue (shares the email orphan table)
+    inbound_sms_orphan_queue: 'mounted'
+    inbound_sms_orphan_persistence: 'mounted'
+    inbound_sms_orphan_linking: 'mounted'
+    inbound_sms_orphan_dismissal: 'mounted'
+    inbound_sms_orphan_no_ai_guard: 'mounted'
+    unmatched_replies_queue_multichannel: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3194,6 +3201,34 @@ export async function GET(request: Request) {
       inbound_sms_reply_matching: 'mounted',
       inbound_sms_dedupe: 'mounted',
       inbound_sms_no_ai_guard: 'mounted',
+      // Phase 8BT — SMS orphan queue. Reuses the email orphan
+      // table via the migration-041 `channel` column. Webhook
+      // persists no/low-match inbound SMS as orphans; existing
+      // /api/inbound-email-orphans routes serve both channels
+      // (channel filter optional). UI labels render
+      // channel-aware (Mail vs MessageSquare). See
+      // docs/SMS-ORPHAN-QUEUE.md.
+      //   - inbound_sms_orphan_queue: shared with email queue;
+      //     UnmatchedEmailQueueCard renders both.
+      //   - inbound_sms_orphan_persistence: webhook switches
+      //     from "ignore" to "persist orphan" when match
+      //     is none / low / needsReview.
+      //   - inbound_sms_orphan_linking: link route branches on
+      //     orphan.channel — SMS orphans insert role:'lead'
+      //     with channel_type:'sms' metadata.
+      //   - inbound_sms_orphan_dismissal: dismiss route works
+      //     for both channels; audit row carries `channel`.
+      //   - inbound_sms_orphan_no_ai_guard: NEVER triggers AI
+      //     on persist, link, or dismiss.
+      //   - unmatched_replies_queue_multichannel: the queue UI
+      //     surfaces email + SMS together as one operator
+      //     surface.
+      inbound_sms_orphan_queue: 'mounted',
+      inbound_sms_orphan_persistence: 'mounted',
+      inbound_sms_orphan_linking: 'mounted',
+      inbound_sms_orphan_dismissal: 'mounted',
+      inbound_sms_orphan_no_ai_guard: 'mounted',
+      unmatched_replies_queue_multichannel: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

@@ -3,6 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { createServiceClient } from '@/lib/supabase/service'
 import { log } from '@/lib/log'
 import { normalizePhoneForSms } from '@/lib/integrations/delivery/sms'
+import { createInboundSmsOrphan } from '@/lib/integrations/inbound/orphans'
 
 /**
  * Phase 8BS — Inbound SMS capture (Twilio).
@@ -423,41 +424,78 @@ export async function processInboundSmsReply(
 
   // 2. Match to a conversation.
   const match = await matchInboundSmsToConversation(payload)
-  if (!match.conversationId || !match.venueId) {
-    // No match — 8BT will persist these as orphans. For now,
-    // log + ignore so the operator at least sees the pino
-    // breadcrumb in production.
-    log.info(
-      {
-        matchMethod: match.matchMethod,
-        matchConfidence: match.matchConfidence,
-        reasonCount: match.reasons.length,
-      },
-      'inbound.sms.no_match'
-    )
-    return {
-      ok: true,
-      ignored: true,
-      reason: match.matchMethod === 'none' ? 'no_match' : 'low_confidence_skipped',
-      match,
+
+  // Phase 8BT — persist no/low-confidence inbound as an
+  // orphan in the shared `inbound_email_orphans` table
+  // (channel='sms') so operators can manually link or dismiss
+  // from the inbox queue card. Replaces the pre-8BT "log +
+  // drop" path.
+  const shouldOrphan =
+    !match.conversationId || !match.venueId || match.needsReview
+  if (shouldOrphan) {
+    // Collect suggested conversation/lead ids from the match
+    // attempt — even when no confident pick was possible, the
+    // matcher might have surfaced candidates the operator can
+    // one-click link to.
+    const preInferredConvIds =
+      match.conversationId && match.matchConfidence !== 'high'
+        ? [match.conversationId]
+        : []
+    const preInferredLeadIds = match.leadId ? [match.leadId] : []
+
+    const orphanMetadata: Record<string, unknown> = {
+      sms_num_media: payload.numMedia,
+      match_method: match.matchMethod,
+      match_confidence: match.matchConfidence,
     }
-  }
-  if (match.needsReview) {
-    // Low-confidence lead-phone match with multiple
-    // conversations. Don't auto-insert until 8BT lands the
-    // orphan queue (which will hold these for operator
-    // review).
+    if (payload.numMedia > 0) {
+      orphanMetadata.had_attachments = true
+      orphanMetadata.attachments_ignored_count = payload.numMedia
+    }
+
+    const orphanResult = await createInboundSmsOrphan({
+      fromPhone: payload.fromPhone,
+      toPhone: payload.toPhone,
+      body: payload.body,
+      rawPreview: payload.body.slice(0, 500),
+      provider: payload.provider,
+      providerMessageId: payload.providerMessageId,
+      matchConfidence:
+        match.matchConfidence === 'high'
+          ? 95
+          : match.matchConfidence === 'medium'
+            ? 70
+            : match.matchConfidence === 'low'
+              ? 40
+              : 0,
+      matchReasons: match.reasons,
+      receivedAtIso: payload.receivedAt,
+      preInferredVenueId: match.venueId,
+      preInferredLeadId: match.leadId,
+      preInferredConversationIds: preInferredConvIds,
+      preInferredLeadIds,
+      metadata: orphanMetadata,
+    })
+
     log.info(
       {
         matchMethod: match.matchMethod,
         matchConfidence: match.matchConfidence,
+        orphanCreated: orphanResult.ok ? orphanResult.created : false,
+        orphanVenueId: orphanResult.ok ? orphanResult.venueId : null,
       },
-      'inbound.sms.low_confidence_skipped'
+      match.matchMethod === 'none'
+        ? 'inbound.sms.orphaned_no_match'
+        : 'inbound.sms.orphaned_needs_review'
     )
+
     return {
       ok: true,
       ignored: true,
-      reason: 'needs_review_skipped',
+      reason:
+        match.matchMethod === 'none'
+          ? 'orphaned_no_match'
+          : 'orphaned_needs_review',
       match,
     }
   }
@@ -525,7 +563,10 @@ export async function processInboundSmsReply(
     return {
       ok: true,
       messageId,
-      conversationId: match.conversationId,
+      // Guaranteed non-null at this point — the shouldOrphan
+      // early-return above filtered out null cases. Coerce so
+      // the typed flow into InboundSmsProcessResult is clean.
+      conversationId: match.conversationId ?? undefined,
       match,
     }
   } catch (err) {

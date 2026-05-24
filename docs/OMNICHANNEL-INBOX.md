@@ -892,3 +892,19 @@ After 8BR + 8BS, SMS is on the same footing as email circa 8BO
 callback + retry are the remaining gaps.
 
 See `docs/INBOUND-SMS-CAPTURE.md`.
+
+---
+
+## Phase 8BT — SMS safety net (shared with email queue)
+
+Unmatched inbound SMS now persists in the same review queue
+operators already use for unmatched email. One UI surface,
+one set of routes, channel-aware rendering. Strict no-AI
+guard preserved through persist / link / dismiss.
+
+After 8BT, both email and SMS are fully two-way channels
+with safety nets on the inbound side. The remaining SMS
+work is the outbound lifecycle callback + retry (8BU) and
+the reply-method switching UI (8BV).
+
+See `docs/SMS-ORPHAN-QUEUE.md`.

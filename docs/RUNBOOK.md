@@ -6574,3 +6574,30 @@ console.
 
 See `docs/INBOUND-SMS-CAPTURE.md` for full spec + matching
 strategy + QA checklist.
+
+## Phase 8BT — SMS orphan queue (shared with email)
+
+Migration: `041_extend_orphans_for_sms.sql` (applied; adds
+`channel`, `from_phone`, `to_phone` columns + check constraint
++ 2 indexes to `inbound_email_orphans`).
+
+No new env vars. No new routes. Existing
+`/api/inbound-email-orphans/*` routes now serve both channels.
+
+When `INBOUND_SMS_ENABLED=1` + valid Twilio config, inbound
+SMS that can't be confidently matched persists as a
+`channel='sms'` orphan instead of being dropped. Operator
+sees both channels in the same inbox queue card.
+
+Health flags:
+- `inbound_sms_orphan_queue`
+- `inbound_sms_orphan_persistence`
+- `inbound_sms_orphan_linking`
+- `inbound_sms_orphan_dismissal`
+- `inbound_sms_orphan_no_ai_guard`
+- `unmatched_replies_queue_multichannel`
+
+Rollback: roll back migration 041 (drop new columns + indexes).
+SMS orphans will revert to being dropped silently again.
+
+See `docs/SMS-ORPHAN-QUEUE.md`.

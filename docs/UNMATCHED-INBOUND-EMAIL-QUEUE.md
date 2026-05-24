@@ -484,3 +484,29 @@ limit. The list route remains a read-only GET (scanner-exempt).
 - **No keyboard nav** in the result list (arrow keys to
   highlight, Enter to select). Click only. Defer if not
   surfaced by pilot feedback.
+
+---
+
+## Phase 8BT update — now multichannel
+
+The queue now holds both email and SMS orphans. Migration 041
+added `channel`, `from_phone`, `to_phone` columns to
+`inbound_email_orphans`. The table name stays the same for
+back-compat; renaming is a low-priority polish.
+
+UI changes:
+- Per-row channel icon (Mail vs MessageSquare).
+- SMS rows display the sender phone instead of email + name.
+- SMS rows show a small blue "SMS reply" chip in place of
+  subject.
+- Footer copy updated to "Linked replies (email or SMS)…".
+
+API changes:
+- `GET /api/inbound-email-orphans` accepts `?channel=email|sms|all`
+  (default `all`); response includes `channel`, `from_phone`,
+  `to_phone`.
+- Link route branches on `orphan.channel` — SMS inserts with
+  `channel_type='sms'` metadata.
+- Dismiss / audit metadata carry `channel`.
+
+See `docs/SMS-ORPHAN-QUEUE.md`.
