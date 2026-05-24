@@ -306,6 +306,14 @@ export const RATE_LIMIT_DOMAINS = {
     leadForwardTheKnot:    'inbound:channel:the-knot',
     leadForwardWeddingWire:'inbound:channel:weddingwire',
     metaWebhook:           'inbound:channel:meta-webhook',
+    // Phase 8BO — inbound email reply capture. The webhook is
+    // HMAC-authenticated, but we still rate-limit by sender
+    // IP so a misconfigured upstream provider can't flood us
+    // (and so abuse-events sees the pattern). The bucket is
+    // shared across providers (Resend Inbound, Postmark,
+    // SendGrid, Cloudflare Email Workers) because they all
+    // POST through this one route.
+    inboundEmailReply:     'inbound:channel:email-reply',
   },
   manualChannel: {
     markSentManually:      'channel:manual-sent',

@@ -428,6 +428,11 @@ interface HealthBody {
     outbound_email_reply_method_direct: 'mounted'
     outbound_email_delivery_status_pills: 'mounted'
     outbound_email_failure_honesty: 'mounted'
+    // Phase 8BO — inbound email reply capture
+    inbound_email_capture: 'mounted' | 'disabled'
+    inbound_email_header_matching: 'mounted'
+    inbound_email_recent_recipient_fallback: 'mounted'
+    inbound_email_no_auto_ai_trigger: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3001,6 +3006,37 @@ export async function GET(request: Request) {
       outbound_email_reply_method_direct: 'mounted',
       outbound_email_delivery_status_pills: 'mounted',
       outbound_email_failure_honesty: 'mounted',
+      // Phase 8BO — Inbound email reply capture. Provider-
+      // agnostic HMAC-authenticated webhook at /api/inbound/email
+      // (see docs/INBOUND-EMAIL-CAPTURE.md). Closes the email
+      // loop opened in 8BN: lead replies land back in the
+      // conversation thread as `role:'lead'` instead of falling
+      // into the configured Reply-To inbox.
+      //   - inbound_email_capture: 'mounted' when both
+      //     INBOUND_EMAIL_ENABLED is on AND
+      //     INBOUND_EMAIL_WEBHOOK_SECRET is set; 'disabled'
+      //     otherwise. Disabled state returns 503 to the
+      //     provider so misconfiguration is loud, not silent.
+      //   - inbound_email_header_matching: high-confidence match
+      //     via In-Reply-To / References → outbound_messages
+      //     .provider_message_id. Confidence 95.
+      //   - inbound_email_recent_recipient_fallback: medium-
+      //     confidence match via "From address received an
+      //     outbound from us in the last 30 days". Confidence 70.
+      //   - inbound_email_no_auto_ai_trigger: captured replies
+      //     do NOT auto-fire the AI orchestrator. The operator
+      //     must respond manually. (Revisit in 8BP.)
+      inbound_email_capture:
+        process.env.INBOUND_EMAIL_ENABLED &&
+        !['', '0', 'false', 'no', 'off'].includes(
+          (process.env.INBOUND_EMAIL_ENABLED ?? '').trim().toLowerCase()
+        ) &&
+        !!process.env.INBOUND_EMAIL_WEBHOOK_SECRET
+          ? 'mounted'
+          : 'disabled',
+      inbound_email_header_matching: 'mounted',
+      inbound_email_recent_recipient_fallback: 'mounted',
+      inbound_email_no_auto_ai_trigger: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

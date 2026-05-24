@@ -806,3 +806,23 @@ What this means for the inbox model:
   platform-default false.
 - **Inbound email parsing was NOT added.** A lead reply to a
   composer-sent email will not auto-populate the thread.
+
+---
+
+## Phase 8BO — email becomes the first true two-way channel
+
+With inbound reply capture wired (Phase 8BO), the `email` channel
+is now the FIRST channel in VenueRise that has both:
+
+- Real outbound (Phase 8BN) — `Direct` reply method delivers
+  via Resend when configured
+- Real inbound (Phase 8BO) — provider-agnostic HMAC-authenticated
+  webhook at `/api/inbound/email` captures lead replies back into
+  the conversation thread as `role: 'lead'`
+
+Manual channels (Instagram / Facebook / The Knot / WeddingWire)
+still require operator copy-and-paste in both directions.
+Website widget is in-product only. SMS remains internal_only
+until 8BR/8BS ship.
+
+See `docs/INBOUND-EMAIL-CAPTURE.md` for the inbound spec.

@@ -241,3 +241,26 @@ Phrases this surface is NOT allowed to use:
   platform-wide From.
 - **8BQ — SMS outbound via Twilio.** Mirror this 8BN pattern
   for the `sms` reply method.
+
+---
+
+## Phase 8BO update — inbound reply capture wired
+
+Phase 8BO closes the email loop opened here. When a lead replies
+to a composer-sent email, the reply now lands back in the
+conversation thread as `role: 'lead'` via the new HMAC-
+authenticated webhook at `/api/inbound/email`. See
+`docs/INBOUND-EMAIL-CAPTURE.md` for the full spec.
+
+The "Reply-To limitation" caveat above is now (mostly) addressed:
+
+- **Matched replies** (via `In-Reply-To` header) → auto-appear in
+  the right conversation with high confidence.
+- **Header-stripped replies** → fall back to recent-recipient
+  matching (medium confidence).
+- **Orphan replies** (cold inbound, no prior outbound) → still
+  drop; future enhancement.
+
+`messages.metadata.delivery_status = 'sent'` (outbound) and the
+corresponding inbound reply now share the same conversation, so
+operators see a true two-way thread.

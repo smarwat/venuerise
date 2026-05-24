@@ -6385,3 +6385,34 @@ either way.
 
 See `docs/OUTBOUND-EMAIL-DELIVERY.md` for the full spec, QA
 checklist, and honesty contract.
+
+## Phase 8BO — Inbound email reply capture
+
+New env vars:
+- `INBOUND_EMAIL_ENABLED` (default `0`)
+- `INBOUND_EMAIL_WEBHOOK_SECRET` (required when enabled; generate
+  with `openssl rand -hex 32`)
+
+Set `INBOUND_EMAIL_ENABLED=1` + a webhook secret, then configure
+your inbound provider (Resend Inbound / Postmark / SendGrid /
+Cloudflare Email Workers) to POST normalized JSON to
+`https://<your-deploy>/api/inbound/email` with the HMAC-SHA256
+signature as `x-inbound-email-signature: sha256=<hex>`.
+
+When OFF: the route returns **503** to the provider (not 404) so
+misconfiguration is loud, not silent. When ON: lead replies land
+in the conversation thread as `role:'lead'` with the existing
+8BG ParseReviewBadge flagging low-confidence matches.
+
+Health flags:
+- `inbound_email_capture: 'mounted' | 'disabled'`
+- `inbound_email_header_matching: 'mounted'`
+- `inbound_email_recent_recipient_fallback: 'mounted'`
+- `inbound_email_no_auto_ai_trigger: 'mounted'`
+
+Rollback: set `INBOUND_EMAIL_ENABLED=0`. Existing captured
+messages stay in the thread; no further inbound is accepted
+until re-enabled.
+
+See `docs/INBOUND-EMAIL-CAPTURE.md` for the full spec, payload
+shape, matching strategy, and QA checklist.
