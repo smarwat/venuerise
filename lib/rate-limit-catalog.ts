@@ -326,6 +326,14 @@ export const RATE_LIMIT_DOMAINS = {
     retryEmail:            'message:delivery:retry-email',
     markFallback:          'message:delivery:mark-fallback',
   },
+
+  // ── Phase 8BQ — unmatched inbound email queue (operator side) ──────────
+  // Per-user-per-orphan keys so a runaway click on a single
+  // orphan can't deny review of other orphans.
+  inboundEmailOrphan: {
+    link:                  'inbound-email-orphan:link',
+    dismiss:               'inbound-email-orphan:dismiss',
+  },
 } as const
 
 export type RateLimitDomain = typeof RATE_LIMIT_DOMAINS

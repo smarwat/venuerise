@@ -839,3 +839,16 @@ Manual channels (Instagram / Facebook / The Knot /
 WeddingWire) are unchanged.
 
 See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md`.
+
+---
+
+## Phase 8BQ — unmatched inbound email safety net
+
+Email replies the 8BO matcher can't confidently tie to a
+conversation now land in a persistent review queue (table
+`inbound_email_orphans`) instead of being silently dropped.
+The inbox page surfaces a small amber chip when the queue is
+non-empty; operators can Link or Dismiss each orphan. No AI
+auto-fires on link.
+
+See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.

@@ -439,6 +439,12 @@ interface HealthBody {
     email_delivery_retry: 'mounted'
     email_delivery_manual_fallback: 'mounted'
     email_delivery_honest_accepted_vs_delivered: 'mounted'
+    // Phase 8BQ — unmatched inbound email queue
+    inbound_email_orphan_queue: 'mounted'
+    inbound_email_orphan_persistence: 'mounted'
+    inbound_email_orphan_linking: 'mounted'
+    inbound_email_orphan_dismissal: 'mounted'
+    inbound_email_orphan_no_ai_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3070,6 +3076,27 @@ export async function GET(request: Request) {
       email_delivery_retry: 'mounted',
       email_delivery_manual_fallback: 'mounted',
       email_delivery_honest_accepted_vs_delivered: 'mounted',
+      // Phase 8BQ — Unmatched inbound email queue. Migration 040
+      // creates inbound_email_orphans. The 8BO webhook now
+      // persists orphan replies via createInboundEmailOrphan
+      // instead of silently dropping them. Three routes expose
+      // the queue:
+      //   - GET  /api/inbound-email-orphans
+      //   - POST /api/inbound-email-orphans/[id]/link
+      //   - POST /api/inbound-email-orphans/[id]/dismiss
+      // UnmatchedEmailQueueCard mounts on the inbox index page
+      // and is hidden when unresolved_count is 0.
+      //
+      // Strict no-AI guard: linking inserts as role:'lead' but
+      // does NOT trigger the orchestrator. Operators must
+      // manually compose any response.
+      //
+      // See docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md.
+      inbound_email_orphan_queue: 'mounted',
+      inbound_email_orphan_persistence: 'mounted',
+      inbound_email_orphan_linking: 'mounted',
+      inbound_email_orphan_dismissal: 'mounted',
+      inbound_email_orphan_no_ai_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

@@ -4,6 +4,11 @@ import RealtimeMessagesLayer from '@/components/dashboard/inbox/RealtimeMessages
 import WeekTourPanel, {
   type WeekTour,
 } from '@/components/dashboard/inbox/WeekTourPanel'
+// Phase 8BQ — Unmatched inbound email queue. Compact card shown
+// above the empty-state panel when there are unresolved orphans
+// (replies the 8BO matcher couldn't tie to a conversation).
+// Hidden when the count is 0.
+import UnmatchedEmailQueueCard from '@/components/dashboard/messages/UnmatchedEmailQueueCard'
 import { MessageSquare } from 'lucide-react'
 // Phase 8BE-2 — omnichannel inbox loader join. Pulls per-conversation
 // channel metadata (from external_conversations or messages.metadata
@@ -131,7 +136,13 @@ export default async function InboxPage() {
       <ConversationList
         conversations={conversations as Parameters<typeof ConversationList>[0]['conversations']}
       />
-      <div className="hidden lg:flex flex-1 min-h-0 flex-col items-center justify-center px-6 gap-6 py-6 overflow-y-auto">
+      <div className="hidden lg:flex flex-1 min-h-0 flex-col items-stretch justify-start px-6 gap-6 py-6 overflow-y-auto">
+        {/* Phase 8BQ — Unmatched inbound email queue card. Sits at
+            the top of the empty-state column so an operator sees
+            the alert BEFORE they pick a conversation. Hidden when
+            the queue is empty so the inbox stays clean. */}
+        <UnmatchedEmailQueueCard />
+
         {/* Phase 8J — week-at-a-glance panel. Renders ABOVE the empty
             state so the operator's eye lands on actionable tours first
             and the "select a conversation" prompt fills the remaining
@@ -139,8 +150,11 @@ export default async function InboxPage() {
         <WeekTourPanel tours={weekTours} />
 
         {/* Phase 8AI — empty-state card uses the new white surface +
-            soft border to match the rest of the dashboard. */}
-        <div className="bg-white border border-[#E6E8EF] rounded-2xl shadow-card max-w-md w-full px-6 py-7 text-center">
+            soft border to match the rest of the dashboard.
+            Phase 8BQ — `mx-auto` keeps the card centered in the
+            column now that the parent uses items-stretch (to let
+            the orphan queue card span full width). */}
+        <div className="bg-white border border-[#E6E8EF] rounded-2xl shadow-card max-w-md w-full mx-auto px-6 py-7 text-center">
           <div className="w-12 h-12 rounded-2xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3.5">
             <MessageSquare className="w-5 h-5 text-[#0F172A]" />
           </div>

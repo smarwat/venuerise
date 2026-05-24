@@ -347,3 +347,29 @@ loop on the OUTBOUND side that feeds inbound capture:
   that the operator took over outside VenueRise.
 
 See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md`.
+
+---
+
+## Phase 8BQ update — orphans now have a queue
+
+The "we 200 + drop" behavior described above for no-venue
+matches and low-confidence replies is REPLACED by 8BQ.
+Unmatched replies now persist into the new
+`inbound_email_orphans` table and surface in a compact
+inbox-page queue card so operators can manually Link or
+Dismiss them.
+
+Behavior change:
+- `200 { captured: false }` →
+  `200 { captured: false, orphaned: true, orphan_id, confidence, reason }`
+- Operators see a "Unmatched replies: N" chip on the inbox
+  page (hidden when 0).
+- Link = insert as `role:'lead'` in the chosen conversation
+  (no AI auto-trigger).
+- Dismiss = mark with reason, never delete.
+
+See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md` for the full
+spec, RLS posture, audit/rate-limit, and QA checklist.
+
+The "Known limitations" entry above about orphan replies
+being invisible is now resolved.

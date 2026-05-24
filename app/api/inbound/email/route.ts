@@ -41,6 +41,7 @@ import {
   scoreMatchConfidence,
   type MatchSignals,
 } from '@/lib/integrations/inbound/email'
+import { createInboundEmailOrphan } from '@/lib/integrations/inbound/orphans'
 
 const FALSE_VALUES = new Set(['', '0', 'false', 'no', 'off'])
 
@@ -438,24 +439,43 @@ export async function POST(request: NextRequest): Promise<Response> {
   const confidence = scoreMatchConfidence(match.signals)
   const needsReview = confidence.score < INBOUND_REVIEW_THRESHOLD
 
-  // 8. If we never resolved a venue, we have no tenant to write
-  //    this against. Log + 200 so the provider doesn't retry.
-  //    (Future: dead-letter queue for unrouteable replies.)
-  if (!match.venueId) {
-    reqLog.warn(
+  // 8. If we never resolved a venue OR the match confidence is
+  //    below the review threshold, persist this as an ORPHAN
+  //    (Phase 8BQ) instead of silently dropping it. The orphan
+  //    helper expands the venue-detection net (recent outbound
+  //    history + lead-email lookup) and surfaces suggestions so
+  //    an operator can one-click link in the queue UI.
+  //
+  //    Critical: an orphan is NEVER inserted as a `messages` row.
+  //    Linking is a deliberate operator action. AI never fires.
+  if (!match.venueId || needsReview) {
+    const orphanOutcome = await createInboundEmailOrphan({
+      normalized,
+      provider: body.provider,
+      providerInboundId: body.provider_inbound_id ?? null,
+      matchConfidence: confidence.score,
+      matchReasons: confidence.reasons,
+      receivedAtIso: body.received_at ?? null,
+    })
+    reqLog.info(
       {
         fromEmail: normalized.fromEmail,
         referencedCount: refIds.length,
         confidence: confidence.score,
+        orphanCreated: orphanOutcome.ok ? orphanOutcome.created : false,
+        orphanVenueId: orphanOutcome.ok ? orphanOutcome.venueId : null,
       },
-      'inbound.email.no_venue_match'
+      'inbound.email.orphaned'
     )
     return respond(
       NextResponse.json({
         ok: true,
         captured: false,
-        reason: 'no_venue_match',
+        orphaned: orphanOutcome.ok,
+        orphan_id: orphanOutcome.ok ? orphanOutcome.orphanId : null,
+        orphan_created: orphanOutcome.ok ? orphanOutcome.created : false,
         confidence: confidence.score,
+        reason: !match.venueId ? 'no_venue_match' : 'low_confidence',
       })
     )
   }

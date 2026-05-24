@@ -98,6 +98,13 @@ export const AUDIT_ACTIONS = {
   EMAIL_DELIVERY_RETRY_FAILED: 'email_delivery_retry_failed',
   EMAIL_DELIVERY_MANUAL_FALLBACK_MARKED: 'email_delivery_manual_fallback_marked',
 
+  // ── Phase 8BQ — unmatched inbound email queue ───────────────────────────
+  // Webhook-side _created/_duplicate fire from the inbound route
+  // (service role). Operator-side _linked/_dismissed fire from
+  // the two POST routes.
+  INBOUND_EMAIL_ORPHAN_LINKED: 'inbound_email_orphan_linked',
+  INBOUND_EMAIL_ORPHAN_DISMISSED: 'inbound_email_orphan_dismissed',
+
   // ── Digest writes ───────────────────────────────────────────────────────
   DIGEST_PREFERENCES_UPDATE: 'digest_preferences_update',
   DIGEST_MANUAL_SEND: 'digest_manual_send',

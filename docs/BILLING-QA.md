@@ -6477,3 +6477,20 @@ Billing-side notes:
   composer pill shows "Saved in VenueRise" softly).
 
 See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md`.
+
+## Phase 8BQ — Unmatched inbound email queue (informational)
+
+8BQ adds a persistent dead-letter table (`inbound_email_orphans`)
+for inbound email replies the matcher can't tie to a
+conversation. Three new operator routes (list / link / dismiss).
+No billing impact — orphan creation runs on the webhook hot
+path (service role), linking inserts an existing-conversation
+`role:'lead'` message which uses no API budget, dismissing only
+mutates the orphan row.
+
+Suppression / abuse interactions: unchanged. The webhook still
+applies the existing inbound rate limit; orphan rows from
+suppressed addresses (auto-responders / bounce loops) can be
+mass-dismissed via the dropdown reason `auto_responder`.
+
+See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.

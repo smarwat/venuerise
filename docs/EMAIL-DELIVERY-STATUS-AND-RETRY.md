@@ -385,3 +385,14 @@ orphans" pill) would:
 This protects against lost revenue when a venue's lead
 forgets to include the original subject in their reply
 (or when a webmail client strips the In-Reply-To header).
+
+---
+
+## Phase 8BQ update — orphan inbound surface
+
+8BQ doesn't change delivery status semantics for outbound
+sends, but closes a loop on the inbound side: if a lead replies
+to a delivery you sent but the matcher can't tie their email
+back (headers stripped, replied from a different address, etc.),
+the reply now lands in the new unmatched email queue instead
+of disappearing. See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.

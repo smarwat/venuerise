@@ -6450,3 +6450,36 @@ and the UI handles that gracefully.
 
 See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md` for the
 full spec, QA checklist, and event-mapping table.
+
+## Phase 8BQ — Unmatched inbound email queue
+
+No new env vars. Migration 040 adds `public.inbound_email_orphans`
+(safe to apply — additive, no data loss path).
+
+The existing `/api/inbound/email` webhook now persists orphan
+replies (no header match + no recent recipient match, OR
+low-confidence matches) into the new table instead of dropping.
+Three new public routes:
+
+- `GET  /api/inbound-email-orphans` (RLS-scoped list)
+- `POST /api/inbound-email-orphans/[id]/link` (operator-only)
+- `POST /api/inbound-email-orphans/[id]/dismiss` (operator-only)
+
+`UnmatchedEmailQueueCard` mounts on the inbox page and is
+hidden when `unresolved_count` is 0.
+
+Health flags:
+- `inbound_email_orphan_queue`
+- `inbound_email_orphan_persistence`
+- `inbound_email_orphan_linking`
+- `inbound_email_orphan_dismissal`
+- `inbound_email_orphan_no_ai_guard`
+
+Rollback: drop the table + routes. The 8BO webhook will
+revert to silently dropping unmatched replies (see
+`docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md` for the rollback
+SQL).
+
+Critical guardrail: **linking an orphan does NOT trigger AI**.
+Operators compose all responses through the existing inbox
+composer (8BN/8BP delivery pipeline).
