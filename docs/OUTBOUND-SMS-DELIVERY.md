@@ -321,3 +321,20 @@ upstream — no UI code changes needed.
 - After 8BT: **8BU — SMS retry route + status callback** (mirror 8BP for the SMS lifecycle).
 
 Then SMS will be operationally complete + symmetric with email.
+
+---
+
+## Phase 8BS update — inbound capture wired
+
+8BS closes the loop opened here. A lead's text reply to
+`OUTBOUND_SMS_FROM` is now received via a Twilio webhook,
+matched to the source conversation (recent outbound SMS or
+lead phone), and inserted as `role:'lead'`. The "no inbound
+SMS capture" caveat above is (mostly) addressed — see
+`docs/INBOUND-SMS-CAPTURE.md`.
+
+Remaining inbound-side gaps:
+- Unmatched / low-confidence replies still drop silently
+  (8BT will mirror the 8BQ orphan queue).
+- AI never auto-fires on captured SMS — operator must
+  explicitly compose the response via this outbound pipeline.

@@ -4,6 +4,7 @@ import { getJobsRuntime } from '@/lib/jobs/queue'
 import { emailConfigured } from '@/lib/integrations/email'
 import { isOutboundEmailConfigured } from '@/lib/integrations/delivery/email'
 import { isOutboundSmsConfigured } from '@/lib/integrations/delivery/sms'
+import { isInboundSmsEnabled } from '@/lib/integrations/inbound/sms'
 import { getRateLimitStatus, type RateLimitStatus } from '@/lib/rate-limit'
 import { log } from '@/lib/log'
 import { getOrCreateRequestId, withRequestIdHeader } from '@/lib/observability/request-id'
@@ -457,6 +458,12 @@ interface HealthBody {
     outbound_sms_delivery_status_pills: 'mounted'
     outbound_sms_failure_honesty: 'mounted'
     outbound_sms_no_ai_autosend_guard: 'mounted'
+    // Phase 8BS — inbound SMS capture (Twilio)
+    inbound_sms_capture: 'mounted' | 'disabled'
+    inbound_sms_twilio_signature_verification: 'mounted'
+    inbound_sms_reply_matching: 'mounted'
+    inbound_sms_dedupe: 'mounted'
+    inbound_sms_no_ai_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3164,6 +3171,29 @@ export async function GET(request: Request) {
       outbound_sms_delivery_status_pills: 'mounted',
       outbound_sms_failure_honesty: 'mounted',
       outbound_sms_no_ai_autosend_guard: 'mounted',
+      // Phase 8BS — Inbound SMS capture (Twilio). Webhook at
+      // /api/inbound/sms with Twilio HMAC-SHA1 signature
+      // verification. Lead replies to OUTBOUND_SMS_FROM get
+      // matched (recent outbound SMS or lead phone) and
+      // inserted as role:'lead'. NO AI auto-fire. NO orphan
+      // queue this phase. See docs/INBOUND-SMS-CAPTURE.md.
+      //   - inbound_sms_capture: 'mounted' when
+      //     INBOUND_SMS_ENABLED=1 AND TWILIO_AUTH_TOKEN is set.
+      //   - inbound_sms_twilio_signature_verification: HMAC-SHA1
+      //     over the public URL + sorted POST params, dev-only
+      //     bypass gated by INBOUND_SMS_DEV_BYPASS_TOKEN.
+      //   - inbound_sms_reply_matching: 90-day outbound-SMS
+      //     match (HIGH) → lead-phone single-conversation
+      //     (MEDIUM) → ignore low/none.
+      //   - inbound_sms_dedupe: provider_message_id (Twilio
+      //     MessageSid) on messages.metadata.
+      //   - inbound_sms_no_ai_guard: captured rows never
+      //     trigger the AI orchestrator.
+      inbound_sms_capture: isInboundSmsEnabled() ? 'mounted' : 'disabled',
+      inbound_sms_twilio_signature_verification: 'mounted',
+      inbound_sms_reply_matching: 'mounted',
+      inbound_sms_dedupe: 'mounted',
+      inbound_sms_no_ai_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

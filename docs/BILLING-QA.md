@@ -6525,3 +6525,17 @@ Billing-side notes:
   fallback button works for SMS too).
 
 See `docs/OUTBOUND-SMS-DELIVERY.md`.
+
+## Phase 8BS — Inbound SMS capture (informational)
+
+Twilio webhook-based inbound SMS. No new admin routes, no new
+audit actions written this phase (constants exist for the
+future operator surface), reuses existing Twilio auth token,
+no Twilio billing change (Twilio charges per inbound message
+either way; we just capture vs ignore).
+
+Lead phone matching uses operator-entered `lead.phone` which
+is free-text — multiple shapes (`+1XXX`, `XXX`, `(XXX)
+XXX-XXXX`) are tried.
+
+See `docs/INBOUND-SMS-CAPTURE.md`.

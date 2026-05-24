@@ -876,3 +876,19 @@ orphan queue (8BT) are deferred. Manual channels (Instagram /
 The Knot / WeddingWire) are unchanged.
 
 See `docs/OUTBOUND-SMS-DELIVERY.md`.
+
+---
+
+## Phase 8BS — SMS becomes a two-way channel
+
+Inbound SMS capture (Twilio webhook with HMAC-SHA1 signature)
+now lands lead text replies back in the conversation thread as
+`role:'lead'`. Matched by recent outbound SMS history or lead
+phone. No AI auto-fire. No orphan queue yet (8BT). MMS not
+captured.
+
+After 8BR + 8BS, SMS is on the same footing as email circa 8BO
+— outbound + inbound work; orphan safety net + delivery
+callback + retry are the remaining gaps.
+
+See `docs/INBOUND-SMS-CAPTURE.md`.

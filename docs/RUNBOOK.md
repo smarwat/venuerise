@@ -6541,3 +6541,36 @@ operator must enable deliberately and own the compliance
 posture.
 
 See `docs/OUTBOUND-SMS-DELIVERY.md`.
+
+## Phase 8BS — Inbound SMS capture (Twilio)
+
+New env vars:
+- `INBOUND_SMS_ENABLED` (default `0`)
+- `INBOUND_SMS_DEV_BYPASS_TOKEN` (optional, dev-only)
+- Reuses existing `TWILIO_AUTH_TOKEN` for signature verification.
+
+Set `INBOUND_SMS_ENABLED=1` + valid Twilio auth token, then
+configure your Twilio messaging service's inbound webhook URL
+to `https://<your-deploy>/api/inbound/sms` (HTTP POST).
+
+When OFF, the route returns 200 + empty TwiML so Twilio doesn't
+spin its retry budget. When ON, valid Twilio signatures get
+parsed, matched, and inserted as `role:'lead'`.
+
+New route: `POST /api/inbound/sms` (public, anonymous,
+HMAC-authenticated). AUDIT_EXEMPT per the webhook convention.
+Rate-limited via the widget IP bucket.
+
+Health flags:
+- `inbound_sms_capture: 'mounted' | 'disabled'`
+- `inbound_sms_twilio_signature_verification: 'mounted'`
+- `inbound_sms_reply_matching: 'mounted'`
+- `inbound_sms_dedupe: 'mounted'`
+- `inbound_sms_no_ai_guard: 'mounted'`
+
+Rollback: set `INBOUND_SMS_ENABLED=0` (route silently
+accepts + ignores) or unmount the Twilio webhook in their
+console.
+
+See `docs/INBOUND-SMS-CAPTURE.md` for full spec + matching
+strategy + QA checklist.

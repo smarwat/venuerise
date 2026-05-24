@@ -105,6 +105,17 @@ export const AUDIT_ACTIONS = {
   INBOUND_EMAIL_ORPHAN_LINKED: 'inbound_email_orphan_linked',
   INBOUND_EMAIL_ORPHAN_DISMISSED: 'inbound_email_orphan_dismissed',
 
+  // ── Phase 8BS — inbound SMS capture ─────────────────────────────────────
+  // Webhook posture: emitted from the inbound SMS route on
+  // capture / ignored / duplicate paths. Webhooks are
+  // AUDIT_EXEMPT per the Phase 9A "don't touch webhooks" rule;
+  // these constants exist for future surfaces (e.g. an
+  // operator-side relink action) and for cross-doc reference.
+  INBOUND_SMS_RECEIVED: 'inbound_sms_received',
+  INBOUND_SMS_MATCHED: 'inbound_sms_matched',
+  INBOUND_SMS_IGNORED: 'inbound_sms_ignored',
+  INBOUND_SMS_DUPLICATE: 'inbound_sms_duplicate',
+
   // ── Digest writes ───────────────────────────────────────────────────────
   DIGEST_PREFERENCES_UPDATE: 'digest_preferences_update',
   DIGEST_MANUAL_SEND: 'digest_manual_send',

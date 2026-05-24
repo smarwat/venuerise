@@ -314,6 +314,10 @@ export const RATE_LIMIT_DOMAINS = {
     // SendGrid, Cloudflare Email Workers) because they all
     // POST through this one route.
     inboundEmailReply:     'inbound:channel:email-reply',
+    // Phase 8BS — Twilio inbound SMS webhook. Shares the
+    // widget IP bucket like the email inbound route; Twilio's
+    // legitimate egress stream sits well under it.
+    inboundSmsReply:       'inbound:channel:sms-reply',
   },
   manualChannel: {
     markSentManually:      'channel:manual-sent',
