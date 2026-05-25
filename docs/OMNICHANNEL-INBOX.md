@@ -908,3 +908,24 @@ work is the outbound lifecycle callback + retry (8BU) and
 the reply-method switching UI (8BV).
 
 See `docs/SMS-ORPHAN-QUEUE.md`.
+
+---
+
+## Phase 8BU — SMS becomes operationally complete
+
+With outbound (8BR) + inbound (8BS) + orphan queue (8BT) +
+lifecycle/retry (8BU), SMS is now symmetric with email. Both
+channels have:
+- Real outbound delivery
+- Lifecycle pills (Accepted → Sent → Delivered, or Failed /
+  Undelivered / Bounced)
+- Retry routes that update the same bubble in place
+- Manual fallback affordance
+- Inbound capture
+- Unmatched reply safety net
+
+Manual channels (Instagram / Facebook / The Knot / WeddingWire)
+remain manual; switching UI (8BV) and per-venue Twilio numbers
+(8BW) are the natural next phases.
+
+See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.

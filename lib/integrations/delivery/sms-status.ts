@@ -30,8 +30,9 @@ export type SmsDeliveryStatus =
   | 'pending'         // saved + attempting provider send
   | 'queued'          // Twilio accepted (waiting to send)
   | 'accepted'        // Twilio accepted (synonym; some API responses use this)
+  | 'sending'         // Phase 8BU — Twilio's "sending" transient state
   | 'sent'            // Twilio handed off to carrier
-  | 'delivered'       // carrier confirmed handset delivery (future)
+  | 'delivered'       // carrier confirmed handset delivery
   | 'undelivered'     // carrier could not deliver
   | 'failed'          // Twilio rejected or transport failed
   | 'skipped'         // not attempted (kill switch / config / consent)
@@ -42,6 +43,7 @@ const KNOWN: ReadonlySet<SmsDeliveryStatus> = new Set([
   'pending',
   'queued',
   'accepted',
+  'sending',
   'sent',
   'delivered',
   'undelivered',
@@ -56,12 +58,91 @@ export function normalizeSmsDeliveryStatus(input: unknown): SmsDeliveryStatus {
   const raw = input.trim().toLowerCase()
   if (!raw) return 'unknown'
   if (KNOWN.has(raw as SmsDeliveryStatus)) return raw as SmsDeliveryStatus
+  // Twilio raw event aliases.
   switch (raw) {
-    case 'sending':
-      return 'queued'
+    case 'receiving':
+    case 'received':
+      // Inbound-side Twilio statuses; ignored for outbound callback.
+      return 'unknown'
     default:
       return 'unknown'
   }
+}
+
+/**
+ * Phase 8BU — Map a raw Twilio `MessageStatus` / `SmsStatus` field
+ * onto our canonical SmsDeliveryStatus. Defensive: Twilio
+ * occasionally returns `Sent` with a capital S; we lowercase
+ * first.
+ */
+export function normalizeTwilioRawStatus(raw: string | null | undefined): SmsDeliveryStatus {
+  if (!raw) return 'unknown'
+  return normalizeSmsDeliveryStatus(raw)
+}
+
+/**
+ * Phase 8BU — out-of-order webhook protection. Mirrors the email
+ * equivalent (`shouldOverwriteStatus` in email-status.ts).
+ *
+ * Twilio callbacks can arrive out of order — a late `sent`
+ * event after we've already received `delivered` must NOT
+ * downgrade the bubble. Failure events (`failed`/`undelivered`)
+ * are honored even when arriving after success states because
+ * they reflect real carrier outcomes.
+ */
+const SMS_TERMINAL_SUCCESS: ReadonlySet<SmsDeliveryStatus> = new Set([
+  'delivered',
+])
+const SMS_TERMINAL_FAILURE: ReadonlySet<SmsDeliveryStatus> = new Set([
+  'failed',
+  'undelivered',
+])
+const SMS_PRE_SENT: ReadonlySet<SmsDeliveryStatus> = new Set([
+  'pending',
+  'queued',
+  'accepted',
+  'sending',
+])
+
+/**
+ * Phase 8BU — Statuses the SMS retry route accepts. UI may
+ * surface the button on a wider set per `canRetry`, but the
+ * route re-checks here.
+ */
+const SMS_RETRYABLE: ReadonlySet<SmsDeliveryStatus> = new Set([
+  'failed',
+  'undelivered',
+  'skipped',
+])
+
+export function isSmsStatusRetryable(status: SmsDeliveryStatus): boolean {
+  return SMS_RETRYABLE.has(status)
+}
+
+export function shouldOverwriteSmsStatus(
+  current: SmsDeliveryStatus,
+  next: SmsDeliveryStatus
+): boolean {
+  if (current === next) return false
+  // Never overwrite operator-marked manual fallback.
+  if (current === 'manual_fallback' && next !== 'manual_fallback') return false
+  // Don't accept `unknown` over any concrete state.
+  if (next === 'unknown') return false
+  // Terminal success (delivered) cannot be downgraded to earlier
+  // pre-sent or `sent` states. A subsequent `undelivered`/`failed`
+  // IS allowed — carriers can rescind delivery on rare bounces.
+  if (SMS_TERMINAL_SUCCESS.has(current)) {
+    if (SMS_PRE_SENT.has(next) || next === 'sent') return false
+  }
+  // Terminal failure cannot be downgraded to pre-sent. A late
+  // `delivered` after `failed` is suspicious but Twilio doesn't
+  // emit that ordering — we let it through if it ever happens.
+  if (SMS_TERMINAL_FAILURE.has(current) && SMS_PRE_SENT.has(next)) {
+    return false
+  }
+  // `sent` cannot be downgraded to pre-sent.
+  if (current === 'sent' && SMS_PRE_SENT.has(next)) return false
+  return true
 }
 
 export type StatusTone =
@@ -105,11 +186,20 @@ export function getSmsDeliveryDisplay(
         canRetry: false,
         canMarkManual: false,
       }
+    case 'sending':
+      return {
+        label: 'Sending SMS',
+        helper: 'Provider is dispatching to the carrier.',
+        tone: 'info',
+        isTerminal: false,
+        canRetry: false,
+        canMarkManual: false,
+      }
     case 'sent':
       return {
         label: 'SMS sent',
         helper:
-          'Provider has handed the message to the carrier. We mark Delivered only when the status callback confirms it (not wired this phase).',
+          'Provider has handed the message to the carrier. We mark Delivered only when the status callback confirms it.',
         tone: 'success',
         isTerminal: false,
         canRetry: false,
@@ -130,7 +220,9 @@ export function getSmsDeliveryDisplay(
         helper: 'Carrier could not deliver this message.',
         tone: 'danger',
         isTerminal: true,
-        canRetry: false,
+        // Phase 8BU — retry available; route still re-checks
+        // suppression + recipient validity before sending.
+        canRetry: true,
         canMarkManual: true,
       }
     case 'failed':
@@ -139,7 +231,7 @@ export function getSmsDeliveryDisplay(
         helper: 'Provider rejected or transport failed.',
         tone: 'danger',
         isTerminal: true,
-        canRetry: false,
+        canRetry: true,
         canMarkManual: true,
       }
     case 'skipped':
@@ -149,7 +241,10 @@ export function getSmsDeliveryDisplay(
           'SMS was not attempted (sending disabled, missing configuration, or invalid recipient).',
         tone: 'neutral',
         isTerminal: false,
-        canRetry: false,
+        // Retryable once SMS delivery is configured. The retry
+        // route re-verifies isOutboundSmsConfigured + a clean
+        // destination before sending.
+        canRetry: true,
         canMarkManual: true,
       }
     case 'manual_fallback':

@@ -64,6 +64,33 @@ export function isOutboundSmsConfigured(): boolean {
   )
 }
 
+/**
+ * Phase 8BU — Twilio outbound status callback. Returns the
+ * public URL we want Twilio to POST status updates to, or
+ * null if the callback isn't enabled / no public URL is set.
+ *
+ * Twilio webhooks require an absolute https URL. NEXT_PUBLIC_APP_URL
+ * is the project convention (already used by 8BO inbound URL
+ * reconstruction). When unset (local dev without a tunnel),
+ * we omit the callback rather than sending Twilio a bogus
+ * localhost URL that would 404.
+ */
+function isStatusCallbackEnabled(): boolean {
+  const raw = process.env.TWILIO_SMS_STATUS_CALLBACK_ENABLED
+  if (raw == null) return false
+  return !FALSE_VALUES.has(raw.trim().toLowerCase())
+}
+
+function statusCallbackUrl(): string | null {
+  if (!isStatusCallbackEnabled()) return null
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim().replace(/\/+$/, '')
+  if (!appUrl) return null
+  // Twilio rejects non-https callback URLs in production; the
+  // env-set base URL is expected to be https in deployed
+  // environments. Local dev usually leaves the kill switch off.
+  return `${appUrl}/api/twilio/sms/status`
+}
+
 function maxBodyLength(): number {
   const raw = process.env.OUTBOUND_SMS_MAX_LENGTH
   if (!raw) return DEFAULT_MAX_BODY
@@ -269,6 +296,17 @@ export async function sendOutboundSms(
   form.set('To', to)
   form.set('From', from)
   form.set('Body', body)
+  // Phase 8BU — opt-in StatusCallback for the lifecycle events
+  // (queued / sent / delivered / undelivered / failed). Omitted
+  // when the env kill switch is off OR NEXT_PUBLIC_APP_URL is
+  // unset (local dev). Twilio will simply not POST status
+  // updates in that case — the bubble pill stays on the
+  // immediate response ("Accepted by SMS" / "SMS sent") as it
+  // did pre-8BU.
+  const callbackUrl = statusCallbackUrl()
+  if (callbackUrl) {
+    form.set('StatusCallback', callbackUrl)
+  }
   // Tag with our context so Twilio's console makes the source
   // obvious during ops. We use the `ProvideFeedback=false` field
   // implicitly; status callback wiring is deferred.

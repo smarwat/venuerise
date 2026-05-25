@@ -396,3 +396,14 @@ to a delivery you sent but the matcher can't tie their email
 back (headers stripped, replied from a different address, etc.),
 the reply now lands in the new unmatched email queue instead
 of disappearing. See `docs/UNMATCHED-INBOUND-EMAIL-QUEUE.md`.
+
+---
+
+## Phase 8BU note — SMS now has the same lifecycle
+
+The pipeline this doc describes for email (canonical statuses,
+webhook patcher, retry route, mark-handled-manually) now has
+a parallel implementation for SMS. The `DeliveryStatusPill`
+component shared by both channels routes Retry clicks to the
+correct endpoint (`retry-email` for email, `retry-sms` for
+SMS). See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.

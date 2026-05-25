@@ -116,6 +116,17 @@ export const AUDIT_ACTIONS = {
   INBOUND_SMS_IGNORED: 'inbound_sms_ignored',
   INBOUND_SMS_DUPLICATE: 'inbound_sms_duplicate',
 
+  // ── Phase 8BU — SMS delivery callback + retry ──────────────────────────
+  // Retry actions fire from /api/messages/[id]/retry-sms. The
+  // callback _received/_ignored constants exist for future
+  // operator-side surfaces; the callback route itself is
+  // AUDIT_EXEMPT per the webhook convention.
+  SMS_DELIVERY_RETRY_ATTEMPTED: 'sms_delivery_retry_attempted',
+  SMS_DELIVERY_RETRY_SUCCEEDED: 'sms_delivery_retry_succeeded',
+  SMS_DELIVERY_RETRY_FAILED: 'sms_delivery_retry_failed',
+  SMS_DELIVERY_STATUS_CALLBACK_RECEIVED: 'sms_delivery_status_callback_received',
+  SMS_DELIVERY_STATUS_CALLBACK_IGNORED: 'sms_delivery_status_callback_ignored',
+
   // ── Digest writes ───────────────────────────────────────────────────────
   DIGEST_PREFERENCES_UPDATE: 'digest_preferences_update',
   DIGEST_MANUAL_SEND: 'digest_manual_send',

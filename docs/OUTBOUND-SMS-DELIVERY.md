@@ -338,3 +338,25 @@ Remaining inbound-side gaps:
   (8BT will mirror the 8BQ orphan queue).
 - AI never auto-fires on captured SMS — operator must
   explicitly compose the response via this outbound pipeline.
+
+---
+
+## Phase 8BU update — delivery lifecycle + retry wired
+
+The two limitations called out above (no status callback, no
+retry route) are now resolved. See
+`docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.
+
+When `TWILIO_SMS_STATUS_CALLBACK_ENABLED=1`:
+- Outbound sends include `StatusCallback=<APP>/api/twilio/sms/status`.
+- Twilio POSTs queued/sent/delivered/undelivered/failed events.
+- The route HMAC-verifies, patches `messages.metadata`, and
+  the inbox pill flips through the lifecycle in real time.
+
+Failed / undelivered / skipped SMS bubbles now expose a
+**Retry** button (no duplicate row) plus the existing
+**Mark handled manually** affordance.
+
+The "Accepted by SMS / SMS sent" copy from 8BR is preserved
+honestly — the pill only escalates to **Delivered** when
+Twilio confirms it via the callback.

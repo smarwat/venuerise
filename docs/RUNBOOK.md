@@ -6601,3 +6601,28 @@ Rollback: roll back migration 041 (drop new columns + indexes).
 SMS orphans will revert to being dropped silently again.
 
 See `docs/SMS-ORPHAN-QUEUE.md`.
+
+## Phase 8BU — SMS delivery callback + retry
+
+New env var:
+- `TWILIO_SMS_STATUS_CALLBACK_ENABLED` (default `0`)
+- Reuses existing `TWILIO_AUTH_TOKEN` + `NEXT_PUBLIC_APP_URL`.
+
+When ON: outbound SMS sends include `StatusCallback=<APP>/api/twilio/sms/status`. Twilio POSTs lifecycle events; the route HMAC-verifies and patches `messages.metadata`. Configure the same URL in Twilio messaging service settings.
+
+New public routes:
+- `POST /api/twilio/sms/status` (HMAC-authenticated; AUDIT_EXEMPT; widget IP-bucket rate-limit)
+- `POST /api/messages/[id]/retry-sms` (operator-only; per-user-per-message rate-limit; 5-retry cap)
+
+Health flags:
+- `sms_delivery_status_callback: 'mounted' | 'disabled'`
+- `sms_delivery_status_signature_verification`
+- `sms_delivery_status_message_patch`
+- `sms_delivery_retry`
+- `sms_delivery_retry_ui`
+- `sms_delivery_honest_sent_vs_delivered`
+- `sms_delivery_no_ai_autosend_guard`
+
+Rollback: set `TWILIO_SMS_STATUS_CALLBACK_ENABLED=0`. New sends will omit the callback; the route will silently 200 on any incoming POST. Bubble pills stop escalating past "Accepted by SMS"/"SMS sent" but never go backward.
+
+See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md` for the full spec.

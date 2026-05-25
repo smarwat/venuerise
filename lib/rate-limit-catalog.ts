@@ -318,6 +318,11 @@ export const RATE_LIMIT_DOMAINS = {
     // widget IP bucket like the email inbound route; Twilio's
     // legitimate egress stream sits well under it.
     inboundSmsReply:       'inbound:channel:sms-reply',
+    // Phase 8BU — Twilio outbound SMS status callback. Same
+    // posture as inboundSmsReply — HMAC-authenticated +
+    // widget IP bucket (10/min). Twilio's status webhook
+    // stream sits well under the cap.
+    smsStatusCallback:     'inbound:channel:sms-status-callback',
   },
   manualChannel: {
     markSentManually:      'channel:manual-sent',
@@ -329,6 +334,8 @@ export const RATE_LIMIT_DOMAINS = {
   messageDelivery: {
     retryEmail:            'message:delivery:retry-email',
     markFallback:          'message:delivery:mark-fallback',
+    // Phase 8BU — SMS retry parallel to the email retry bucket.
+    retrySms:              'message:delivery:retry-sms',
   },
 
   // ── Phase 8BQ — unmatched inbound email queue (operator side) ──────────

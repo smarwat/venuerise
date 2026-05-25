@@ -218,16 +218,10 @@ export default function DeliveryStatusPill(props: DeliveryPillProps) {
       : ('skipped' as const)
     canonicalStr = c
     const smsDisplay = getSmsDeliveryDisplay(c)
-    display = {
-      label: smsDisplay.label,
-      helper: smsDisplay.helper,
-      tone: smsDisplay.tone,
-      isTerminal: smsDisplay.isTerminal,
-      // SMS has no retry route yet — hide retry UI even if
-      // the dictionary's canRetry says otherwise.
-      canRetry: false,
-      canMarkManual: smsDisplay.canMarkManual,
-    }
+    // Phase 8BU — SMS retry is now live via
+    // /api/messages/[id]/retry-sms. Honor the dictionary's
+    // canRetry directly.
+    display = smsDisplay
   } else {
     const c: EmailDeliveryStatus = hasDeliveryStatus
       ? normalizeEmailDeliveryStatus(deliveryStatus)
@@ -252,13 +246,12 @@ export default function DeliveryStatusPill(props: DeliveryPillProps) {
       )} min). You may retry.`
     : safeError ?? display.helper
 
-  // Retry is email-only this phase (8BR didn't add an SMS
-  // retry route). Fallback works for both email and SMS so an
-  // operator can declare "I texted them from my phone" after
-  // a Twilio failure.
+  // Phase 8BU — SMS retry route now exists; allow Retry for
+  // both channels. The pill picks the correct endpoint inside
+  // `onRetry` based on replyMethod.
   const showRetry =
     !!messageId &&
-    isEmail &&
+    (isEmail || isSms) &&
     !disabled &&
     (display.canRetry || stale) &&
     (retryCount ?? 0) < MAX_RETRIES &&
@@ -271,10 +264,14 @@ export default function DeliveryStatusPill(props: DeliveryPillProps) {
     setLocalError(null)
     setActing('retry')
     try {
-      const res = await fetch(
-        `/api/messages/${encodeURIComponent(messageId)}/retry-email`,
-        { method: 'POST' }
-      )
+      // Phase 8BU — route SMS retries to the SMS endpoint;
+      // email retries continue to /retry-email. Default email
+      // to avoid sending SMS retries to the email endpoint by
+      // mistake when replyMethod is missing.
+      const endpoint = isSms
+        ? `/api/messages/${encodeURIComponent(messageId)}/retry-sms`
+        : `/api/messages/${encodeURIComponent(messageId)}/retry-email`
+      const res = await fetch(endpoint, { method: 'POST' })
       const json = await res.json().catch(() => null)
       if (!res.ok || (json && json.ok === false)) {
         // Surface a short safe error; the realtime layer will

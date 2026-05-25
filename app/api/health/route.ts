@@ -471,6 +471,14 @@ interface HealthBody {
     inbound_sms_orphan_dismissal: 'mounted'
     inbound_sms_orphan_no_ai_guard: 'mounted'
     unmatched_replies_queue_multichannel: 'mounted'
+    // Phase 8BU — SMS delivery status callback + retry
+    sms_delivery_status_callback: 'mounted' | 'disabled'
+    sms_delivery_status_signature_verification: 'mounted'
+    sms_delivery_status_message_patch: 'mounted'
+    sms_delivery_retry: 'mounted'
+    sms_delivery_retry_ui: 'mounted'
+    sms_delivery_honest_sent_vs_delivered: 'mounted'
+    sms_delivery_no_ai_autosend_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3229,6 +3237,48 @@ export async function GET(request: Request) {
       inbound_sms_orphan_dismissal: 'mounted',
       inbound_sms_orphan_no_ai_guard: 'mounted',
       unmatched_replies_queue_multichannel: 'mounted',
+      // Phase 8BU — SMS delivery callback + retry. Closes the
+      // last outbound-SMS gap from 8BR.
+      //   - sms_delivery_status_callback: 'mounted' when
+      //     TWILIO_SMS_STATUS_CALLBACK_ENABLED=1 + auth token
+      //     present. When 'disabled', sends omit the
+      //     StatusCallback param and the bubble pill never
+      //     escalates past "Accepted by SMS"/"SMS sent".
+      //   - sms_delivery_status_signature_verification:
+      //     callback route reuses the inbound-SMS HMAC-SHA1
+      //     verifier (8BS).
+      //   - sms_delivery_status_message_patch: callback patches
+      //     messages.metadata by MessageSid + reply_method='sms'
+      //     + delivery_provider='twilio'. Honors
+      //     shouldOverwriteSmsStatus so late events can't
+      //     downgrade delivered → sent.
+      //   - sms_delivery_retry: POST /api/messages/[id]/retry-sms
+      //     re-attempts via sendOutboundSms without creating a
+      //     duplicate bubble. 5-retry cap; rate-limited
+      //     per-user-per-message.
+      //   - sms_delivery_retry_ui: DeliveryStatusPill now
+      //     surfaces the Retry button for SMS failed /
+      //     undelivered / skipped (was: email-only).
+      //   - sms_delivery_honest_sent_vs_delivered: pill says
+      //     "Accepted by SMS" / "SMS sent" until the callback
+      //     fires `delivered`; never claims Delivered without
+      //     provider confirmation.
+      //   - sms_delivery_no_ai_autosend_guard: SMS retries +
+      //     callback patches never trigger AI.
+      sms_delivery_status_callback:
+        process.env.TWILIO_SMS_STATUS_CALLBACK_ENABLED &&
+        !['', '0', 'false', 'no', 'off'].includes(
+          (process.env.TWILIO_SMS_STATUS_CALLBACK_ENABLED ?? '').trim().toLowerCase()
+        ) &&
+        !!process.env.TWILIO_AUTH_TOKEN
+          ? 'mounted'
+          : 'disabled',
+      sms_delivery_status_signature_verification: 'mounted',
+      sms_delivery_status_message_patch: 'mounted',
+      sms_delivery_retry: 'mounted',
+      sms_delivery_retry_ui: 'mounted',
+      sms_delivery_honest_sent_vs_delivered: 'mounted',
+      sms_delivery_no_ai_autosend_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

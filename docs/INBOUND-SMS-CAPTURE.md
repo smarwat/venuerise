@@ -304,3 +304,14 @@ Operators see one queue card for both channels. Link inserts
 as `role:'lead'` with `channel_type='sms'`. No AI auto-fire.
 
 See `docs/SMS-ORPHAN-QUEUE.md` for full spec.
+
+---
+
+## Phase 8BU note — shared signature verifier
+
+The outbound status callback in 8BU reuses
+`verifyTwilioSmsSignature()` exported from
+`lib/integrations/inbound/sms.ts`. Both Twilio webhooks (inbound
+and status callback) go through one HMAC-SHA1 verifier — same
+auth token, same posture, same dev-bypass header. See
+`docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.

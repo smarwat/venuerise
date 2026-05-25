@@ -6549,3 +6549,16 @@ existing routes; no new audit actions; reuses email orphan
 audit actions with `channel` in metadata.
 
 See `docs/SMS-ORPHAN-QUEUE.md`.
+
+## Phase 8BU — SMS lifecycle + retry (informational)
+
+No billing impact. Twilio bills per-segment for outbound and
+status callbacks both directions; we just capture lifecycle
+events on the inbox bubble. Retry sends a new Twilio request
+(billed) but updates the existing bubble in place — no
+duplicate billing on the VenueRise side.
+
+5-retry cap per message protects against runaway Twilio
+charges on a stuck destination.
+
+See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.

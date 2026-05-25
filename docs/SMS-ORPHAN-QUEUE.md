@@ -389,3 +389,12 @@ the resolver's default. Small UI scope; high operator value
 now that both channels are real.
 
 Pick based on which gap is hurting the pilot venues more.
+
+---
+
+## Phase 8BU note — orphan flow unaffected
+
+8BU only touches outbound lifecycle + retry. Orphan-side
+inbound capture, persistence, and link/dismiss are unchanged.
+The shared queue card continues to render both channels
+side-by-side. See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.
