@@ -346,8 +346,16 @@ export default function UnmatchedEmailQueueCard({
               Loading…
             </div>
           ) : orphans.length === 0 ? (
-            <div className="px-4 py-6 text-center text-[12px] text-[#64748B]">
-              No unmatched replies right now.
+            // Phase 8BW — channel-neutral empty state. Operators
+            // reach this view after dismissing/linking everything
+            // in the queue; explain what would land here next.
+            <div className="px-4 py-6 text-center">
+              <p className="text-[12.5px] font-semibold text-[#0F172A]">
+                No unmatched replies
+              </p>
+              <p className="mt-1 text-[11px] text-[#64748B]">
+                Email and SMS replies that need review will appear here.
+              </p>
             </div>
           ) : (
             <ul className="divide-y divide-[#F1F5F9]">
@@ -363,9 +371,13 @@ export default function UnmatchedEmailQueueCard({
               ))}
             </ul>
           )}
+          {/* Phase 8BW — channel-neutral footer copy. Explicitly
+              names both surfaces and reaffirms the no-auto-AI
+              guarantee operators rely on. */}
           <div className="px-4 py-2 text-[10.5px] text-[#64748B] border-t border-[#F1F5F9] bg-[#F8FAFC]">
-            <Mail className="w-2.5 h-2.5 inline mr-1" />
-            Linked replies (email or SMS) appear in the conversation as a lead message. AI does not auto-respond.
+            <MessageSquare className="w-2.5 h-2.5 inline mr-1" />
+            Linked replies appear in the selected conversation as lead messages.
+            AI does not auto-respond.
           </div>
         </div>
       )}

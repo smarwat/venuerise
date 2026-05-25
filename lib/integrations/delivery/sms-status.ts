@@ -178,9 +178,10 @@ export function getSmsDeliveryDisplay(
     case 'queued':
     case 'accepted':
       return {
+        // Phase 8BW — copy polish. Spec preferred phrasing.
         label: 'Accepted by SMS',
         helper:
-          'The SMS provider accepted the message. Carrier delivery is not yet confirmed.',
+          'Twilio accepted this text for delivery. This does not mean the lead read it.',
         tone: 'success',
         isTerminal: false,
         canRetry: false,
@@ -189,7 +190,7 @@ export function getSmsDeliveryDisplay(
     case 'sending':
       return {
         label: 'Sending SMS',
-        helper: 'Provider is dispatching to the carrier.',
+        helper: 'Twilio is dispatching this message to the carrier.',
         tone: 'info',
         isTerminal: false,
         canRetry: false,
@@ -199,7 +200,7 @@ export function getSmsDeliveryDisplay(
       return {
         label: 'SMS sent',
         helper:
-          'Provider has handed the message to the carrier. We mark Delivered only when the status callback confirms it.',
+          'Twilio sent this text to the carrier. Delivery has not been confirmed yet.',
         tone: 'success',
         isTerminal: false,
         canRetry: false,
@@ -207,8 +208,9 @@ export function getSmsDeliveryDisplay(
       }
     case 'delivered':
       return {
-        label: 'Delivered',
-        helper: 'Carrier confirmed delivery to the recipient handset.',
+        label: 'SMS delivered',
+        helper:
+          'Twilio received carrier confirmation that the handset received the message.',
         tone: 'success',
         isTerminal: true,
         canRetry: false,

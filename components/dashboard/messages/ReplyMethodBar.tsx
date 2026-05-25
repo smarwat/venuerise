@@ -2,7 +2,17 @@
 
 import { Fragment, useMemo } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Check, ChevronDown } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  Mail,
+  MessageSquare,
+  Instagram,
+  Facebook,
+  Globe,
+  Inbox,
+  Sparkles,
+} from 'lucide-react'
 import {
   deliveryModeLabel,
   deliveryModeTone,
@@ -59,6 +69,41 @@ interface Props {
    */
   switchOptions?: ReplyMethodOption[]
   onSelectReplyMethod?: (option: ReplyMethodOption) => void
+}
+
+/**
+ * Phase 8BW — small channel-icon glyph for the dropdown items.
+ * Operators scan the dropdown by icon faster than by reading
+ * the label. We intentionally keep the same Mail / MessageSquare
+ * icons the DeliveryStatusPill uses so the visual vocabulary
+ * stays consistent across the inbox.
+ */
+function ReplyMethodIcon({
+  method,
+  className,
+}: {
+  method: ReplyMethodKey
+  className?: string
+}) {
+  switch (method) {
+    case 'email':
+      return <Mail className={className} />
+    case 'sms':
+      return <MessageSquare className={className} />
+    case 'instagram':
+      return <Instagram className={className} />
+    case 'facebook':
+      return <Facebook className={className} />
+    case 'the_knot':
+    case 'weddingwire':
+    case 'meta_lead_ads':
+      return <Sparkles className={className} />
+    case 'website':
+      return <Globe className={className} />
+    case 'internal':
+    default:
+      return <Inbox className={className} />
+  }
 }
 
 function modeHelper(mode: ReplyDeliveryMode, label: string): string {
@@ -142,10 +187,17 @@ export default function ReplyMethodBar({
           <DropdownMenu.Trigger asChild>
             <button
               type="button"
-              className="group inline-flex items-baseline gap-1.5 min-w-0 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 hover:bg-white border border-transparent hover:border-[#E2E8F0] focus:outline-none focus:border-[#1D4ED8] focus:ring-[2px] focus:ring-[#3B82F6]/15 transition-colors"
+              className="group inline-flex items-center gap-1.5 min-w-0 rounded-md px-1.5 py-0.5 -mx-1.5 -my-0.5 hover:bg-white border border-transparent hover:border-[#E2E8F0] focus:outline-none focus:border-[#1D4ED8] focus:ring-[2px] focus:ring-[#3B82F6]/15 transition-colors"
               aria-label="Change reply method"
             >
               <span className="text-[11px] text-[#94A3B8]">Replying via</span>
+              {/* Phase 8BW — channel icon makes the active method
+                  recognizable at a glance, especially when the
+                  destination truncates. */}
+              <ReplyMethodIcon
+                method={reply.method}
+                className="w-3 h-3 text-[#475569] shrink-0"
+              />
               <span className="text-[12px] font-semibold text-[#0F172A] truncate">
                 {reply.methodLabel}
               </span>
@@ -190,6 +242,12 @@ export default function ReplyMethodBar({
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Phase 8BW — same channel-icon glyph used
+                            on the trigger for visual consistency. */}
+                        <ReplyMethodIcon
+                          method={opt.method}
+                          className="w-3 h-3 text-[#475569] shrink-0"
+                        />
                         <span className="text-[12.5px] font-semibold text-[#0F172A]">
                           {opt.methodLabel}
                         </span>

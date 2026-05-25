@@ -336,8 +336,11 @@ export default function DeliveryStatusPill(props: DeliveryPillProps) {
           type="button"
           onClick={onRetry}
           disabled={!!acting}
-          title="Retry email delivery"
-          aria-label="Retry email delivery"
+          // Phase 8BW — channel-aware label. The pill renders for
+          // both email and SMS retries now (8BU); a static "Retry
+          // email delivery" misleads operators on SMS rows.
+          title={isSms ? 'Retry SMS delivery' : 'Retry email delivery'}
+          aria-label={isSms ? 'Retry SMS delivery' : 'Retry email delivery'}
           className={cn(
             'inline-flex items-center gap-0.5 rounded-full border px-1.5 py-[1px] text-[10px] font-semibold transition-colors',
             onDark

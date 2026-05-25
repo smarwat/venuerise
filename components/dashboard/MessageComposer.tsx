@@ -395,12 +395,49 @@ export default function MessageComposer({
         </div>
       )}
 
+      {/* Phase 8BW — honest footer copy. Pre-8BN the message
+          only saved internally regardless of channel; now the
+          send route may actually deliver via Resend or Twilio.
+          The footer reflects what the NEXT send will do based on
+          mode + selected reply method. AI mode always reminds
+          the operator that AI does not auto-send. */}
       <p className="text-[10px] text-center text-[#94A3B8]">
         <Sparkles className="w-2.5 h-2.5 inline mr-1" />
-        {mode === 'human'
-          ? 'Your reply will be saved as a venue-side message.'
-          : 'AI drafts are for your review — nothing is sent automatically.'}
+        {composerFooterCopy(mode, selected)}
       </p>
     </div>
   )
+}
+
+/**
+ * Phase 8BW — return honest copy for the composer footer.
+ * Never claims direct delivery without the resolver having
+ * said `direct`; for `internal_only` / `manual` we say the
+ * reply will be saved in VenueRise (the source of truth).
+ * AI mode always carries the no-auto-send guarantee.
+ */
+function composerFooterCopy(
+  mode: 'ai' | 'human',
+  selected: ReplyMethodOption | null
+): string {
+  if (mode === 'ai') {
+    return 'AI drafts are for your review — nothing is sent automatically.'
+  }
+  if (!selected) {
+    return 'Your reply will be saved as a venue-side message.'
+  }
+  if (selected.deliveryMode === 'direct') {
+    if (selected.method === 'email') {
+      return 'Your reply will be sent via email when you click send.'
+    }
+    if (selected.method === 'sms') {
+      return 'Your reply will be sent via SMS when you click send.'
+    }
+    return `Your reply will be sent via ${selected.methodLabel} when you click send.`
+  }
+  if (selected.deliveryMode === 'manual') {
+    return `Reply in ${selected.methodLabel}, then mark sent so the inbox stays accurate.`
+  }
+  // internal_only / unavailable
+  return 'Your reply will be saved in VenueRise only.'
 }

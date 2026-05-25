@@ -5,7 +5,7 @@ import ConversationThread from '@/components/dashboard/ConversationThread'
 import MessageComposer from '@/components/dashboard/MessageComposer'
 import TourLifecycleStrip from '@/components/dashboard/inbox/TourLifecycleStrip'
 import { Badge } from '@/components/dashboard/ui/Badge'
-import { MoreHorizontal, Star, Share2 } from 'lucide-react'
+import { MoreHorizontal, Star, Share2, MessageSquare } from 'lucide-react'
 // Phase 8BE-2 — per-conversation channel metadata join. Same
 // helper as the inbox index page; populates `conv.channel_type`
 // so the sidebar badge lights up here too.
@@ -236,8 +236,21 @@ export default async function InboxThreadPage({ params }: { params: Promise<{ le
             })()}
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-[13px] text-[#64748B]">
-            No conversation started yet. AI will initiate once the lead is qualified.
+          // Phase 8BW — copy fix. The prior version implied AI
+          // would auto-initiate; that's not guaranteed (AI only
+          // drafts; operator clicks Send). Stay neutral about
+          // who starts the thread.
+          <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-[#F1F5F9] flex items-center justify-center mb-3">
+              <MessageSquare className="w-5 h-5 text-[#0F172A]" />
+            </div>
+            <h3 className="text-[14px] font-semibold text-[#0F172A] mb-1">
+              No messages yet
+            </h3>
+            <p className="text-[12px] text-[#64748B] max-w-xs leading-relaxed">
+              Start the conversation with an email or SMS reply when this lead
+              is ready.
+            </p>
           </div>
         )}
       </div>

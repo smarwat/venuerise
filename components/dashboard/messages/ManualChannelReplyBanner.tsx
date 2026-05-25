@@ -170,10 +170,18 @@ export default function ManualChannelReplyBanner({
         )}
       </div>
 
+      {/* Phase 8BW — copy refresh. Email + SMS direct sending
+          shipped (8BN / 8BR), so the prior "autonomous sending is
+          disabled platform-wide" line was misleading. This
+          banner is specifically about source channels VenueRise
+          cannot reach (Instagram, The Knot, etc.); we make that
+          explicit and surface the email/SMS escape hatch when
+          the lead has those contacts on file. */}
       <p className="text-[10.5px] text-[#92400E]/80 leading-relaxed">
-        Autonomous sending is disabled platform-wide. This banner reflects
-        the connector posture today; direct send support ships in a future
-        connector phase.
+        VenueRise does not have a direct send connector for{' '}
+        <span className="font-medium">{caps.displayName}</span> yet. Direct
+        email and SMS are available for leads with those contact methods on
+        file — switch via the reply method picker.
       </p>
     </div>
   )

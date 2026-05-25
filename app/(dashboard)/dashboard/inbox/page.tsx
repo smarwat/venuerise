@@ -172,18 +172,38 @@ export default async function InboxPage() {
             soft border to match the rest of the dashboard.
             Phase 8BQ — `mx-auto` keeps the card centered in the
             column now that the parent uses items-stretch (to let
-            the orphan queue card span full width). */}
+            the orphan queue card span full width).
+            Phase 8BW — copy fix: the conversation list lives on
+            the LEFT rail (8AK flip), not the right. Also branches
+            on whether the venue has any conversations at all —
+            a brand-new venue gets a channel-neutral onboarding
+            line, an active venue gets the standard "pick one"
+            prompt. */}
         <div className="bg-white border border-[#E6E8EF] rounded-2xl shadow-card max-w-md w-full mx-auto px-6 py-7 text-center">
           <div className="w-12 h-12 rounded-2xl bg-[#F1F5F9] flex items-center justify-center mx-auto mb-3.5">
             <MessageSquare className="w-5 h-5 text-[#0F172A]" />
           </div>
-          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-1.5">
-            Select a conversation
-          </h3>
-          <p className="text-[12.5px] text-[#475569] leading-relaxed">
-            Click a lead from the right panel to view their messages and reply
-            with AI or manually.
-          </p>
+          {conversations.length === 0 ? (
+            <>
+              <h3 className="text-[15px] font-semibold text-[#0F172A] mb-1.5">
+                No conversations yet
+              </h3>
+              <p className="text-[12.5px] text-[#475569] leading-relaxed">
+                New inquiries from your website, email, SMS, or connected
+                channels will appear here.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 className="text-[15px] font-semibold text-[#0F172A] mb-1.5">
+                Select a conversation
+              </h3>
+              <p className="text-[12.5px] text-[#475569] leading-relaxed">
+                Pick a lead from the list on the left to view their messages
+                and reply with email, SMS, or an AI draft.
+              </p>
+            </>
+          )}
         </div>
       </div>
 

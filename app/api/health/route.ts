@@ -485,6 +485,15 @@ interface HealthBody {
     reply_method_switching_metadata_integrity: 'mounted'
     reply_method_switching_ai_context: 'mounted'
     reply_method_switching_no_ai_autosend_guard: 'mounted'
+    // Phase 8BW — inbox demo polish + operator workflow QA
+    inbox_demo_polish: 'mounted'
+    inbox_empty_states: 'mounted'
+    inbox_delivery_pill_qa: 'mounted'
+    inbox_reply_method_switcher_qa: 'mounted'
+    inbox_ai_draft_honesty: 'mounted'
+    inbox_unmatched_replies_polish: 'mounted'
+    inbox_manual_channel_workflow_qa: 'mounted'
+    inbox_operator_workflow_qa_doc: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3322,6 +3331,53 @@ export async function GET(request: Request) {
       reply_method_switching_metadata_integrity: 'mounted',
       reply_method_switching_ai_context: 'mounted',
       reply_method_switching_no_ai_autosend_guard: 'mounted',
+      // ── Phase 8BW — Inbox Demo Polish + Operator Workflow QA ─
+      // Pure UI / copy / docs phase. No new API routes, no DB
+      // changes, no new env vars. Focused on demo-readiness and
+      // operator clarity now that email + SMS are both two-way.
+      //
+      //   - inbox_demo_polish: rolling marker that this polish
+      //     phase shipped. Bump if a later phase rebuilds
+      //     anything covered by the operator QA doc.
+      //   - inbox_empty_states: inbox index now branches between
+      //     "no conversations yet" (true empty venue) and "select
+      //     a conversation" (active venue). Per-lead empty
+      //     conversation shows a channel-neutral "no messages
+      //     yet" card instead of the prior AI-auto-initiate
+      //     promise.
+      //   - inbox_delivery_pill_qa: Retry button title + ARIA
+      //     label are channel-aware ("Retry SMS delivery" for
+      //     SMS rows). Accepted / Sent / Delivered helper copy
+      //     polished to spec wording; "Delivered" never claimed
+      //     before the provider event fires.
+      //   - inbox_reply_method_switcher_qa: ReplyMethodBar
+      //     dropdown trigger + items now carry channel icons
+      //     (Mail / MessageSquare / Instagram / Facebook / etc.)
+      //     for at-a-glance recognition.
+      //   - inbox_ai_draft_honesty: composer footer copy is now
+      //     mode + method aware. "You + email direct" says "sent
+      //     via email"; "You + SMS direct" says "sent via SMS";
+      //     internal/manual says "saved in VenueRise only"; AI
+      //     mode always says drafts are not auto-sent.
+      //   - inbox_unmatched_replies_polish: queue card footer is
+      //     channel-neutral; expanded-empty state surfaces
+      //     "no unmatched replies"; channel-aware row rendering
+      //     (Mail vs MessageSquare) preserved.
+      //   - inbox_manual_channel_workflow_qa: stale "autonomous
+      //     sending is disabled platform-wide" footer line on
+      //     ManualChannelReplyBanner replaced with accurate copy
+      //     that points to the email/SMS escape hatch.
+      //   - inbox_operator_workflow_qa_doc: docs/INBOX-OPERATOR-
+      //     WORKFLOW-QA.md consolidates the entire operator
+      //     surface for pilot QA + demo presenters.
+      inbox_demo_polish: 'mounted',
+      inbox_empty_states: 'mounted',
+      inbox_delivery_pill_qa: 'mounted',
+      inbox_reply_method_switcher_qa: 'mounted',
+      inbox_ai_draft_honesty: 'mounted',
+      inbox_unmatched_replies_polish: 'mounted',
+      inbox_manual_channel_workflow_qa: 'mounted',
+      inbox_operator_workflow_qa_doc: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

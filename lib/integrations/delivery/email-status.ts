@@ -159,9 +159,12 @@ export function getEmailDeliveryDisplay(
     case 'accepted':
     case 'sent':
       return {
+        // Phase 8BW — copy polish. Operators need to know that
+        // "Accepted" does NOT mean "in the inbox" — the provider
+        // can still bounce or filter to spam.
         label: 'Accepted by Email',
         helper:
-          'The email provider accepted the message. We mark Delivered only when a provider delivery event confirms it.',
+          'The email provider accepted this message for delivery. This does not guarantee inbox placement.',
         tone: 'success',
         isTerminal: false,
         canRetry: false,
@@ -170,7 +173,7 @@ export function getEmailDeliveryDisplay(
     case 'delivered':
       return {
         label: 'Delivered',
-        helper: 'Provider confirmed delivery to the recipient mail server.',
+        helper: 'The provider confirmed delivery to the recipient mail server.',
         tone: 'success',
         isTerminal: true,
         canRetry: false,
