@@ -317,3 +317,81 @@ and phone — SMS appears in `switchOptions[]` but the bar
 still defaults to email. Switching UI deferred to 8BT.
 
 See `docs/OUTBOUND-SMS-DELIVERY.md`.
+
+---
+
+## Phase 8BV update — operator can now SWITCH reply method per message
+
+The `switchOptions[]` array that `resolveReplyMethod()` has
+returned since 8BM is now actionable. When a lead has more
+than one viable reply path (typically email + SMS), the
+`ReplyMethodBar` swaps the static method label for a Radix
+DropdownMenu listing every option the resolver surfaced.
+
+### Behavior
+
+- Default selection = resolver's pick (no change from prior).
+- Dropdown only renders when `switchOptions.length > 1`.
+  Single-method leads see the existing static bar.
+- Each option shows: method label, destination (email / phone
+  where safe), delivery-mode pill (`Direct` / `Manual` /
+  `Internal` / `Unavailable`), and a one-line helper.
+- Active selection marked with a check + the bar's outer
+  delivery-mode pill flips to match the chosen channel.
+- Selection is **per-composer session only** — never persisted
+  to the DB and never to localStorage. Navigating to a
+  different conversation resets to that lead's default.
+
+### Server authority preserved
+
+The composer stamps `reply_method`, `reply_delivery_mode`,
+`reply_destination`, and `channel_type` from the SELECTED
+option. The send route
+(`/api/conversations/[id]/messages`) re-verifies
+`isOutboundEmailConfigured()` / `isOutboundSmsConfigured()`
+before any external send and downgrades to `internal_only`
+when the chosen channel isn't actually wired. Honesty
+contract: no message ever claims direct delivery the server
+didn't authorize.
+
+### AI draft hint
+
+`/api/ai/draft` now accepts an advisory `reply_method` (and
+`reply_delivery_mode`) field. When the operator selected
+SMS, the system prompt enforces 1–2 sentence, plain-text
+drafts ≤ 280 characters with no email signoff. Email keeps
+the default 2–4 sentence shape. Other short-form channels
+(Instagram / Facebook / The Knot / WeddingWire) inherit
+the SMS-ish short shape. The hint is advisory only — the
+route never gates safety / confidence / autopilot on it.
+
+### Manual channels
+
+Instagram / Facebook / The Knot / WeddingWire / Meta lead
+ads still default to their channel-native manual method.
+If the lead also has email or phone, those options appear
+in the dropdown as alternative methods — the operator must
+explicitly select one to switch away from the manual flow.
+Auto-switching never happens.
+
+### Edge cases
+
+- Lead with only email → no dropdown, current behavior.
+- Lead with only phone → no dropdown, current behavior.
+- SMS disabled → if SMS appears at all, it shows as
+  `Internal` ("Saved in VenueRise only. SMS sending is not
+  connected"). Selecting + sending saves only, no Twilio
+  call.
+- Email disabled → symmetric.
+- AI draft → switching method does not auto-send. Using a
+  draft preserves the operator's selected method.
+- Conversation switch → selected method resets to the new
+  lead's default.
+
+### Not in this phase
+
+- Persisting operator's last-used method per lead /
+  workspace (could land later if pilots ask).
+- Per-venue Twilio numbers (8BW candidate).
+- Inbound channel switching (the inbound channel of a thread
+  is immutable — what changes is the OUTBOUND reply method).

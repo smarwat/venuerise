@@ -6626,3 +6626,50 @@ Health flags:
 Rollback: set `TWILIO_SMS_STATUS_CALLBACK_ENABLED=0`. New sends will omit the callback; the route will silently 200 on any incoming POST. Bubble pills stop escalating past "Accepted by SMS"/"SMS sent" but never go backward.
 
 See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md` for the full spec.
+
+---
+
+## Phase 8BV — Reply method switching UI
+
+The inbox composer now lets operators choose between any
+reply-method option the resolver returned (commonly Email vs
+SMS). No new env vars, no new routes, no new tables.
+
+### Operator-visible behavior
+
+- Leads with both email + phone: the ReplyMethodBar shows a
+  small dropdown ("Email · sarah@gmail.com ▾"). Click to
+  pick SMS, copy the destination changes, the delivery-mode
+  pill updates, the next send goes through that channel.
+- Single-method leads see the existing static bar.
+- Selection resets when navigating to another conversation.
+
+### Operator + buyer guarantees
+
+- The server still re-verifies `isOutboundEmailConfigured()`
+  / `isOutboundSmsConfigured()` before any external send.
+  Switching to a disabled channel saves the message
+  internally with an honest skip reason; no false delivery
+  claim ever ships.
+- AI drafts honor the selected method by shape (SMS = short
+  plain text; email = normal). Safety / confidence /
+  autopilot guardrails unchanged.
+- AI never auto-sends. Switching channel does not trigger
+  an automated reply.
+
+### Troubleshooting
+
+- "I don't see the dropdown" → the lead only has one
+  contact method, or the resolver returned a single option.
+  Add an email / phone on the lead record to surface the
+  picker.
+- "I picked SMS but it saved internally" → SMS is not
+  configured for this workspace (`OUTBOUND_SMS_DELIVERY_ENABLED`
+  off or Twilio creds missing). The pill says "Saved in
+  VenueRise — SMS sending is not connected."
+- "The AI draft was too long for SMS" → confirm the
+  composer's dropdown actually shows SMS as the selected
+  method before clicking the AI button; the hint is sent
+  with the request.
+
+See `docs/INBOX-REPLY-METHOD-QA.md` for full QA matrix.

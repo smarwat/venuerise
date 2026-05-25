@@ -360,3 +360,33 @@ Failed / undelivered / skipped SMS bubbles now expose a
 The "Accepted by SMS / SMS sent" copy from 8BR is preserved
 honestly — the pill only escalates to **Delivered** when
 Twilio confirms it via the callback.
+
+---
+
+## Phase 8BV — operator can switch reply method per message
+
+For leads with both email and phone, the composer's
+ReplyMethodBar now exposes a dropdown letting the operator
+choose SMS for a specific reply (even when the resolver's
+default was email).
+
+When SMS is selected:
+
+- `reply_method='sms'`, `reply_delivery_mode='direct'`
+  (when configured) are stamped on the outgoing message.
+- The send route re-verifies `isOutboundSmsConfigured()`
+  before calling `sendOutboundSms()`. If SMS is disabled,
+  the message is saved with `delivery_status='skipped'`
+  and `delivery_skip_reason='delivery_disabled'` (no
+  Twilio call, no false send claim).
+- The DeliveryStatusPill renders the SMS lifecycle
+  (Sending SMS → SMS sent → SMS delivered) per 8BU.
+- AI drafts requested in SMS mode come back short
+  (1–2 sentences, ≤ 280 chars, plain text, no signoff).
+
+If the operator switches BACK to email mid-conversation,
+the next send goes through the email pipeline; the prior
+SMS sends remain in the thread with their SMS pills.
+
+Selection is composer-session only — never persisted to
+the DB.

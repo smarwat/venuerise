@@ -479,6 +479,12 @@ interface HealthBody {
     sms_delivery_retry_ui: 'mounted'
     sms_delivery_honest_sent_vs_delivered: 'mounted'
     sms_delivery_no_ai_autosend_guard: 'mounted'
+    // Phase 8BV — reply method switching UI
+    reply_method_switching_ui: 'mounted'
+    reply_method_switching_email_sms: 'mounted'
+    reply_method_switching_metadata_integrity: 'mounted'
+    reply_method_switching_ai_context: 'mounted'
+    reply_method_switching_no_ai_autosend_guard: 'mounted'
   }
   uptime_ms: number
   ts: string
@@ -3279,6 +3285,43 @@ export async function GET(request: Request) {
       sms_delivery_retry_ui: 'mounted',
       sms_delivery_honest_sent_vs_delivered: 'mounted',
       sms_delivery_no_ai_autosend_guard: 'mounted',
+      // ── Phase 8BV — Reply Method Switching UI ─────────────────
+      // The composer now hosts a Radix DropdownMenu that lets the
+      // operator pick between any reply-method option the
+      // resolver returned (commonly Email vs SMS for leads with
+      // both contact methods). Pure UI / state wiring — no new
+      // backend routes, no new DB tables, no env vars.
+      //
+      //   - reply_method_switching_ui: ReplyMethodBar renders a
+      //     dropdown when switchOptions.length > 1; falls back
+      //     to the static 8BM bar otherwise. Per-conversation
+      //     session state — resets on conversation navigation.
+      //   - reply_method_switching_email_sms: leads with both
+      //     email + phone surface a clean Email/SMS picker;
+      //     selecting flips both the bar's delivery-mode pill
+      //     and the outgoing message metadata immediately.
+      //   - reply_method_switching_metadata_integrity: the
+      //     composer stamps reply_method / reply_delivery_mode /
+      //     reply_destination / channel_type from the SELECTED
+      //     option (not the resolver's default) on every send.
+      //     The server route still re-verifies whether the
+      //     chosen channel is actually wired before any external
+      //     send (downgrades to internal_only honestly when not).
+      //   - reply_method_switching_ai_context: /api/ai/draft now
+      //     accepts an optional reply_method hint. When the
+      //     operator switched to SMS, the system prompt enforces
+      //     1–2 sentence, plain-text drafts; email keeps its
+      //     normal 2–4 sentence shape. No safety changes; no
+      //     auto-send.
+      //   - reply_method_switching_no_ai_autosend_guard: AI
+      //     drafts remain draft-only; switching to SMS does NOT
+      //     fire an automatic SMS reply. Operator still clicks
+      //     Send.
+      reply_method_switching_ui: 'mounted',
+      reply_method_switching_email_sms: 'mounted',
+      reply_method_switching_metadata_integrity: 'mounted',
+      reply_method_switching_ai_context: 'mounted',
+      reply_method_switching_no_ai_autosend_guard: 'mounted',
     },
     uptime_ms: Date.now() - startedAt,
     ts: new Date().toISOString(),

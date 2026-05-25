@@ -929,3 +929,25 @@ remain manual; switching UI (8BV) and per-venue Twilio numbers
 (8BW) are the natural next phases.
 
 See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.
+
+---
+
+## Phase 8BV — operator-selectable reply method (UI)
+
+When the resolver returns multiple viable reply paths for a
+lead (typically email + SMS), the composer's `ReplyMethodBar`
+becomes interactive — a Radix DropdownMenu listing every
+option with its destination, delivery mode, and helper text.
+
+The selection is composer-session scoped. The send route
+re-verifies channel configuration before any external send,
+so client-claimed `direct` mode that isn't actually wired
+silently downgrades to `internal_only` (matches the 8BN /
+8BR honesty contract).
+
+The AI draft route accepts an advisory `reply_method` hint
+so SMS drafts come back short + plain-text and email drafts
+keep their normal shape. Safety, confidence, and autopilot
+guardrails are unchanged by the hint.
+
+See `docs/INBOX-REPLY-METHOD-QA.md` for full behavior.

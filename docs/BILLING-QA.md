@@ -6562,3 +6562,22 @@ duplicate billing on the VenueRise side.
 charges on a stuck destination.
 
 See `docs/SMS-DELIVERY-STATUS-AND-RETRY.md`.
+
+---
+
+## Phase 8BV — reply method switching (UI-only phase)
+
+No billing-surface changes in this phase. The composer
+dropdown is pure UI/state wiring on top of the existing
+`/api/conversations/[id]/messages` route, so:
+
+- Send rate-limits unchanged (per-user-per-conversation).
+- AI draft rate-limits unchanged.
+- Subscription gate (`requireActiveSubscription`) unchanged
+  — applies equally whether the operator picks Email or SMS.
+- No new audit actions, no new audit-coverage entries.
+
+Operator-billing concern: switching to SMS may incur
+Twilio per-segment charges that email does not. Surface
+this in pilot onboarding if the venue is new to SMS billing
+posture (already covered in OUTBOUND-SMS-DELIVERY).

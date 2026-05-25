@@ -88,6 +88,29 @@ const BodySchema = z.object({
   // Default 1 preserves the 8AK single-draft contract for any caller
   // that hasn't updated.
   variant_count: z.number().int().min(1).max(3).optional(),
+  // Phase 8BV — when the composer's reply-method dropdown sits on
+  // SMS, drafts come back too long + too email-shaped. The route
+  // honors the operator's selected method by tweaking ONLY the
+  // system prompt's length + tone rules; tokens / audit / safety
+  // posture stay identical. An unknown value falls back to the
+  // email-shaped default (no validation error — the field is
+  // advisory). Allowlist mirrors the resolver's ReplyMethodKey.
+  reply_method: z
+    .enum([
+      'email',
+      'sms',
+      'instagram',
+      'facebook',
+      'the_knot',
+      'weddingwire',
+      'meta_lead_ads',
+      'website',
+      'internal',
+    ])
+    .optional(),
+  reply_delivery_mode: z
+    .enum(['direct', 'manual', 'internal_only', 'unavailable'])
+    .optional(),
 })
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -128,6 +151,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Coerce to the 1-3 range; the Zod schema already enforces this, but
   // an explicit default here keeps the rest of the handler readable.
   const variantCount = parsed.data.variant_count ?? 1
+  // Phase 8BV — selected reply method from the composer's dropdown.
+  // Advisory only: drives prompt shape (SMS = short + plain, email
+  // = normal) but never gates send authorization. Defaults to
+  // 'email' shape when unset — matches the pre-8BV behavior.
+  const replyMethodHint = parsed.data.reply_method ?? 'email'
 
   // 3. Ownership: lead must belong to a venue the caller has
   // SALES_ROLES on. Cross-tenant access → 404 (matches /api/ai/chat
@@ -277,6 +305,24 @@ export async function POST(request: NextRequest): Promise<Response> {
   - 50 or lower = uncertain, missing context, or hedging.
   Pick the number that honestly reflects your confidence; do not always pick 100. Do not add any other text on the CONFIDENCE line.`
 
+  // Phase 8BV — channel-shaped length/format rules. SMS replies
+  // must be short, plain, and conversational (carrier truncation
+  // + reader phone screen). Email keeps the 2–4 sentence default.
+  // Manual native channels (Instagram / Facebook / Knot) inherit
+  // the SMS-ish short rule because those threads are also
+  // short-form. Anything else falls back to email shape.
+  const isShortFormChannel =
+    replyMethodHint === 'sms' ||
+    replyMethodHint === 'instagram' ||
+    replyMethodHint === 'facebook' ||
+    replyMethodHint === 'the_knot' ||
+    replyMethodHint === 'weddingwire'
+  const channelLengthRule = isShortFormChannel
+    ? replyMethodHint === 'sms'
+      ? `• Keep each variant 1–2 short sentences. Aim for under 280 characters. Plain text only — no markdown, no email signoff, no long paragraphs. End with ONE clear next step.`
+      : `• Keep each variant 1–3 short sentences suited to a ${replyMethodHint} thread. Plain text only — no markdown, no formal email signoff. End with ONE clear next step.`
+    : `• Keep each variant 2–4 sentences. End with ONE clear next step.`
+
   const systemPrompt = [
     `You are ${persona} at ${venue.name}. Tone: ${tone}.`,
     `You are rewriting an existing draft reply to a wedding-venue lead`,
@@ -286,7 +332,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     `• Never mention you are AI, a bot, or automated.`,
     `• Never quote hard prices — say "starting from" or invite a chat.`,
     `• Address the lead by first name (${firstName}).`,
-    `• Keep each variant 2–4 sentences. End with ONE clear next step.`,
+    channelLengthRule,
     variantOutputRule,
     confidenceOutputRule,
   ].join('\n')
@@ -567,6 +613,10 @@ export async function POST(request: NextRequest): Promise<Response> {
       variantCountRequested: variantCount,
       variantCountReturned: drafts.length,
       hasInstruction: Boolean(instruction && instruction.trim().length > 0),
+      // Phase 8BV — visibility into how often operators are picking
+      // SMS vs email at draft time. No PII; just the hint key.
+      replyMethodHint,
+      isShortFormChannel,
       aiActionId: (actionRow as { id?: string } | null)?.id ?? null,
       // Phase 8AV — log per-call confidence range so operators can
       // diff how often the model is rating itself low vs the

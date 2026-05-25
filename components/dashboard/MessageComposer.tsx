@@ -1,10 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Send, Paperclip, Mic, Sparkles, User, Bot, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ReplyMethodBar from './messages/ReplyMethodBar'
-import type { ReplyMethod } from '@/lib/integrations/channels/reply-method'
+import type {
+  ReplyMethod,
+  ReplyMethodOption,
+} from '@/lib/integrations/channels/reply-method'
 
 interface Props {
   conversationId: string
@@ -15,8 +18,71 @@ interface Props {
    * conversation. Built on the server (inbox thread page) so the
    * client component stays presentational. When omitted, the bar
    * is hidden and the composer behaves as before.
+   *
+   * Phase 8BV — the resolver already returns `switchOptions[]`
+   * inside this object. The composer now owns the per-session
+   * selected method so the operator can pick Email vs SMS (or
+   * any other available channel) on a per-message basis. The
+   * server route always re-verifies whether the chosen channel
+   * is wired before any external send.
    */
   replyMethod?: ReplyMethod | null
+}
+
+/**
+ * Build a ReplyMethodOption that mirrors the resolver's default
+ * pick on `replyMethod`. Used as the initial selected option when
+ * the page only passed `replyMethod` (no explicit selected option).
+ */
+function defaultSelectedOption(reply: ReplyMethod): ReplyMethodOption {
+  const fromSwitch = reply.switchOptions.find((o) => o.method === reply.method)
+  if (fromSwitch) return fromSwitch
+  // Defensive — the resolver always includes the active method in
+  // switchOptions, but if a future refactor changes that, we still
+  // render a self-consistent option built from the active fields.
+  return {
+    method: reply.method,
+    methodLabel: reply.methodLabel,
+    destinationLabel: reply.destinationLabel,
+    deliveryMode: reply.deliveryMode,
+    helperText: reply.helperText,
+  }
+}
+
+/**
+ * Project the currently-selected option back into the `ReplyMethod`
+ * shape so `ReplyMethodBar` can render its pill / helper text
+ * directly from `selected` without prop drilling. Source channel and
+ * `switchOptions` stay pinned to the original resolver output — only
+ * the active method shifts.
+ */
+function projectReplyMethod(
+  base: ReplyMethod,
+  selected: ReplyMethodOption
+): ReplyMethod {
+  // Warning is mode-derived; recompute here so a downgrade from
+  // direct→internal flips the helper copy honestly.
+  const warning = (() => {
+    if (selected.deliveryMode === 'direct') return null
+    if (selected.deliveryMode === 'manual') {
+      return `${selected.methodLabel} does not accept direct sending. Copy your response into ${selected.methodLabel} after writing.`
+    }
+    if (selected.deliveryMode === 'unavailable') {
+      return 'No working delivery path for this channel yet. Reply will be saved in VenueRise.'
+    }
+    return selected.method === 'website'
+      ? 'Reply saved in the in-product widget thread.'
+      : `Reply will be saved in VenueRise — ${selected.methodLabel.toLowerCase()} sending is not connected yet.`
+  })()
+  return {
+    ...base,
+    method: selected.method,
+    methodLabel: selected.methodLabel,
+    destinationLabel: selected.destinationLabel,
+    deliveryMode: selected.deliveryMode,
+    helperText: selected.helperText,
+    warning,
+  }
 }
 
 export default function MessageComposer({
@@ -43,6 +109,37 @@ export default function MessageComposer({
   const [error, setError] = useState<string | null>(null)
   const [aiDraft, setAiDraft] = useState<string | null>(null)
 
+  // Phase 8BV — per-conversation selected reply method. Initialized
+  // from the resolver's default pick; the operator can switch via
+  // the dropdown in `ReplyMethodBar` when multiple options exist.
+  // Resets when `conversationId` or `replyMethod` changes so
+  // navigating to a different lead lands on that lead's default.
+  const [selected, setSelected] = useState<ReplyMethodOption | null>(() =>
+    replyMethod ? defaultSelectedOption(replyMethod) : null
+  )
+  useEffect(() => {
+    setSelected(replyMethod ? defaultSelectedOption(replyMethod) : null)
+    // Stale AI draft from the prior lead would be confusing — clear
+    // it on conversation change.
+    setAiDraft(null)
+    setError(null)
+    setText('')
+    // We deliberately listen on conversationId AND replyMethod.method
+    // so any server-side resolver change (e.g. lead phone added)
+    // refreshes the default without forcing a hard remount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, replyMethod?.method, replyMethod?.deliveryMode])
+
+  // Project the currently-selected option back into a `ReplyMethod`
+  // shape for the bar. Source channel + switchOptions never change
+  // mid-conversation; only the active method / destination / mode
+  // tracks the dropdown.
+  const projectedReply = useMemo(() => {
+    if (!replyMethod) return null
+    if (!selected) return replyMethod
+    return projectReplyMethod(replyMethod, selected)
+  }, [replyMethod, selected])
+
   const send = async () => {
     const trimmed = text.trim()
     if (!trimmed) return
@@ -62,12 +159,18 @@ export default function MessageComposer({
         //      to deliver externally (today: never; future phases
         //      will flip deliveryMode to 'direct' as connectors
         //      ship).
+        //
+        // Phase 8BV — the SELECTED option (not the resolver's
+        // default) drives every metadata field below. The server
+        // route still re-verifies whether the chosen channel is
+        // actually wired before any external send.
         const meta: Record<string, unknown> = {
           source: 'operator_composer',
         }
         if (replyMethod) {
-          meta.reply_method = replyMethod.method
-          meta.reply_delivery_mode = replyMethod.deliveryMode
+          const active = selected ?? defaultSelectedOption(replyMethod)
+          meta.reply_method = active.method
+          meta.reply_delivery_mode = active.deliveryMode
           if (replyMethod.sourceChannel) {
             meta.channel_type = replyMethod.sourceChannel
           }
@@ -77,8 +180,8 @@ export default function MessageComposer({
           // so the operator's own activity log shows where they
           // intended to send (and not where the platform
           // delivered, which today is nowhere external).
-          if (replyMethod.destinationLabel) {
-            meta.reply_destination = replyMethod.destinationLabel
+          if (active.destinationLabel) {
+            meta.reply_destination = active.destinationLabel
           }
         }
         const res = await fetch(
@@ -107,15 +210,25 @@ export default function MessageComposer({
       // typed text is the seed (current_draft) — it is NEVER
       // inserted as a lead message. The route returns variants;
       // we surface the first one inline for one-click approval.
+      //
+      // Phase 8BV — pass the selected reply method so SMS drafts
+      // come back short + conversational and email drafts keep
+      // their normal length. The route validates + clamps; an
+      // unknown value just falls back to the email-shaped default.
+      const draftBody: Record<string, unknown> = {
+        lead_id: leadId,
+        current_draft: trimmed.slice(0, 8000),
+        instruction: 'Polish into a warm, on-brand venue reply.',
+        variant_count: 1,
+      }
+      if (selected) {
+        draftBody.reply_method = selected.method
+        draftBody.reply_delivery_mode = selected.deliveryMode
+      }
       const res = await fetch('/api/ai/draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lead_id: leadId,
-          current_draft: trimmed.slice(0, 8000),
-          instruction: 'Polish into a warm, on-brand venue reply.',
-          variant_count: 1,
-        }),
+        body: JSON.stringify(draftBody),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => null)
@@ -145,6 +258,10 @@ export default function MessageComposer({
     setText(aiDraft)
     setMode('human')
     setAiDraft(null)
+    // Phase 8BV — DO NOT touch `selected` here. The operator picked
+    // a reply method before generating the draft; using the draft
+    // must preserve that choice so the next send goes through the
+    // same channel.
   }
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -164,8 +281,16 @@ export default function MessageComposer({
           so the operator sees source channel + delivery mode
           BEFORE they start typing. Renders only when the page
           resolved a method (i.e. the lead/conversation row was
-          loaded server-side). */}
-      {replyMethod && <ReplyMethodBar reply={replyMethod} />}
+          loaded server-side).
+          Phase 8BV — When the resolver returned >1 option the bar
+          renders a dropdown that calls back into setSelected. */}
+      {projectedReply && (
+        <ReplyMethodBar
+          reply={projectedReply}
+          switchOptions={projectedReply.switchOptions}
+          onSelectReplyMethod={(opt) => setSelected(opt)}
+        />
+      )}
       <div className="flex items-center gap-2 mb-1">
         <div className="flex bg-[#F1F5F9] border border-[#E2E8F0] rounded-full p-0.5">
           <button

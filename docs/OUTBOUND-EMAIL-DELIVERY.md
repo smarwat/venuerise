@@ -289,3 +289,27 @@ Operators can also:
 
 See `docs/EMAIL-DELIVERY-STATUS-AND-RETRY.md` for the full
 spec, status dictionary, and webhook event mapping.
+
+---
+
+## Phase 8BV — operator can switch reply method per message
+
+The composer now hosts a Radix DropdownMenu (when the
+resolver returned `switchOptions.length > 1`). For leads
+with both email and phone, the operator can pick SMS for
+this one reply without leaving the composer.
+
+For email specifically, behavior is unchanged when email
+remains selected — the resolver's existing
+`emailDirectDeliveryEnabled` flag drives `Direct` vs
+`Internal`, the send route still calls `sendOutboundEmail()`,
+and the delivery-status pill flow (Accepted → Delivered) is
+preserved.
+
+If the operator switches AWAY from email, this route is
+simply not invoked for that message — the SMS path takes
+over (see `docs/OUTBOUND-SMS-DELIVERY.md`).
+
+The AI draft route now accepts an optional `reply_method`
+hint. When email is selected (or the field is omitted),
+draft shape is identical to pre-8BV.
