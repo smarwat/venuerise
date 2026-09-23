@@ -1,6 +1,8 @@
-# VenueRise — AI Revenue Operations Landing Page
+# VenueRise — AI Revenue Operations for Wedding Venues
 
-Premium Next.js landing page for VenueRise, an AI-powered revenue operations system for wedding venues.
+**Live: [venuerise.com](https://venuerise.com)**
+
+Next.js application powering VenueRise, an AI-powered revenue operations system for wedding venues: lead qualification, conversation handling, tour scheduling, and follow-up run by a multi-agent pipeline.
 
 ## Tech Stack
 
@@ -21,7 +23,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+The dev server prints its local URL on start. The production deployment is at [venuerise.com](https://venuerise.com).
 
 ## Build for production
 
